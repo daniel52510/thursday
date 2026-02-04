@@ -18,11 +18,11 @@ The creation of a semi-agentic assistant can benefit users greatly. Additionally
 - Storage: SQLite
 
 ## Milestones:
-**v0.1 - LLama Implementation and Text Chat + Tool Router
-**v0.2 - Real Smart Home Controls
-**v0.3 - Safety & Security Layer
-**v0.4 - Voice Loop (Wake Word Implementation)
-**v0.5 - Raspberry Pi Node Publish Events & Spatial Awareness
+- **v0.1** - LLama Implementation and Text Chat + Tool Router
+- **v0.2** - Real Smart Home Controls
+- **v0.3** - Safety & Security Layer
+- **v0.4** - Voice Loop (Wake Word Implementation)
+- **v0.5** - Raspberry Pi Node Publish Events & Spatial Awareness
 
 ## Status
 - Early Design / Scaffolding Stage
