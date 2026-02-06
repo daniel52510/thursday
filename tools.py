@@ -17,8 +17,9 @@ class ToolResult(BaseModel):
 
 #Tool Result Function to Get Time
 def get_time(_:Dict[str, Any]) -> ToolResult:
-    now = datetime.now(timezone.utc).isoformat()
-    return ToolResult(ok=True, tool_name="get_time", data={"utc": now})
+    now = datetime.now(timezone.utc)
+    dt_local = now.astimezone()
+    return ToolResult(ok=True, tool_name="get_time", data={"time": dt_local.strftime("%I:%M %p").lstrip("0")})
 
 #Tool Result to echo text
 def echo(args: Dict[str, Any]) -> ToolResult:
