@@ -1,5 +1,6 @@
 import requests
 import json
+from pydantic import ValidationError
 from agent_schemas import AgentResponse
 from tools import execute_tool
 
@@ -47,6 +48,37 @@ Assistant:
 URL = "http://localhost:11434/api/generate"
 MODEL = "qwen2.5:7b-instruct"
 
+def validate_payload(raw_json):
+    try:
+        parsed_json = json.loads(raw_json)
+        agent = AgentResponse.model_validate(parsed_json)
+    except json.JSONDecodeError as e:
+      print("Error in JSON!")
+    except ValidationError as e:
+      print("Error in Validation!")
+    repair_prompt = f"""
+    Insert repair prompt here.
+    """
+    #new payload created with repair_prompt
+    new_payload = {
+       "model": MODEL,
+       "system": SYSTEM_PROMPT,
+       "prompt": repair_prompt,
+       "format": "json",
+       "stream": False,
+    }
+
+    resp = requests.post(URL, json=new_payload, timeout=60)
+    resp.raise_for_status()
+    raw = resp.json()["response"]
+    parsed_json = json.loads(raw)
+    agent = AgentResponse.model_validate(parsed_json)
+
+    return agent
+    
+agent = AgentResponse.model_validate(parsed)
+
+results = [execute_tool(call) for call in agent.tool_calls]
 def run_prompt(user_prompt: str):
     payload = {
         "model": MODEL,
@@ -55,7 +87,6 @@ def run_prompt(user_prompt: str):
         "format": "json",
         "stream": False,
     }
-
     resp = requests.post(URL, json=payload, timeout=60)
     resp.raise_for_status()
 
@@ -63,23 +94,7 @@ def run_prompt(user_prompt: str):
     #print("RAW:", raw)
 
     parsed = json.loads(raw)
-    agent = AgentResponse.model_validate(parsed)
-
-    results = [execute_tool(call) for call in agent.tool_calls]
-
-    #if results:
-        #first = results[0]
-        #if first.ok:
-            #print("It is:", first.data.get("time"))
-        #else:
-            #print("Tool error:", first.error)
-    #else:
-        #print("No tools were called.")
-
-    #print("Reply:", agent.reply)
-    #print("Tool calls:", [c.model_dump() for c in agent.tool_calls])
-    #print("Tool results:", [r.model_dump() if hasattr(r, "model_dump") else r for r in results])
-    #print()
+    # we are taking in parameters parsed_json and return an agent with a validated schema. The model will try to validate 2-3 times 
     if agent.tool_calls:
       tool_results_json = [r.model_dump() for r in results]
       followup_prompt = f"""
@@ -112,4 +127,4 @@ def run_prompt(user_prompt: str):
         print(agent.reply)
 
 
-run_prompt("Where am I?")
+run_prompt("Why am I (the creator of THURSDAY) so awesome?")
