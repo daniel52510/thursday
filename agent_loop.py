@@ -48,37 +48,58 @@ Assistant:
 URL = "http://localhost:11434/api/generate"
 MODEL = "qwen2.5:7b-instruct"
 
-def validate_payload(raw_json):
-    try:
-        parsed_json = json.loads(raw_json)
-        agent = AgentResponse.model_validate(parsed_json)
-    except json.JSONDecodeError as e:
-      print("Error in JSON!")
-    except ValidationError as e:
-      print("Error in Validation!")
-    repair_prompt = f"""
-    Insert repair prompt here.
-    """
-    #new payload created with repair_prompt
-    new_payload = {
-       "model": MODEL,
-       "system": SYSTEM_PROMPT,
-       "prompt": repair_prompt,
-       "format": "json",
-       "stream": False,
-    }
-
-    resp = requests.post(URL, json=new_payload, timeout=60)
+# we are taking in parameters parsed_json and return an agent with a validated schema. The model will try to validate 2-3 times 
+def validate_response(payload, mode):
+    retries=0
+    raw = "<bad_output>"
+    resp = requests.post(URL, json=payload, timeout=60)
     resp.raise_for_status()
-    raw = resp.json()["response"]
-    parsed_json = json.loads(raw)
-    agent = AgentResponse.model_validate(parsed_json)
+    while(retries < 3):
+        try:
+            raw = resp.json()["response"]
+            parsed_json = json.loads(raw)
+            agent = AgentResponse.model_validate(parsed_json)
+            return agent
+        except (json.JSONDecodeError, ValidationError) as e:
+            print("Error in Validation!")
+            if(mode == "final"):
+                repair_prompt = f"""
+                JSON returned resulted in {e}. Since this is the case, reprocess the prompt and remember the following rules.
+                BAD_OUTPUT_START {raw} BAD_OUTPUT_END
+                Rules:
+                - If you use a tool, keep "reply" short and confirm what you are doing.
+                - If no tool is needed, set "tool_calls" to [] and answer normally in "reply".
+                - Never invent tools.
+                - tool_calls MUST BE []
+                - Never include keys other than "reply" and "tool_calls".
+                - "tool_calls" must always be present (use [] if none).
+                        You MUST respond with ONLY  valid JSON (no markdown, no extra text). The JSON MUST match the same shape as in the SYSTEM_PROMPT.
+                """.strip()
+            else:
+                repair_prompt = f"""
+                JSON returned resulted in {e}. Since this is the case, reprocess the prompt and remember the following rules.
+                BAD_OUTPUT_START {raw} BAD_OUTPUT_END
+                Rules:
+                - If you use a tool, keep "reply" short and confirm what you are doing.
+                - If no tool is needed, set "tool_calls" to [] and answer normally in "reply".
+                - Never invent tools.
+                - Never include keys other than "reply" and "tool_calls".
+                - "tool_calls" must always be present (use [] if none).
+                - You MUST respond with ONLY  valid JSON (no markdown, no extra text). The JSON MUST match the same shape as in the SYSTEM_PROMPT.
+                """.strip()
+            #new payload created with repair_prompt
+            payload = {
+            "model": MODEL,
+            "system": SYSTEM_PROMPT,
+            "prompt": repair_prompt,
+            "format": "json",
+            "stream": False,
+            }
+            #resp is sending a request to the API for
+            resp = requests.post(URL, json=payload, timeout=60)
+            resp.raise_for_status()
+            retries += 1
 
-    return agent
-    
-agent = AgentResponse.model_validate(parsed)
-
-results = [execute_tool(call) for call in agent.tool_calls]
 def run_prompt(user_prompt: str):
     payload = {
         "model": MODEL,
@@ -87,23 +108,15 @@ def run_prompt(user_prompt: str):
         "format": "json",
         "stream": False,
     }
-    resp = requests.post(URL, json=payload, timeout=60)
-    resp.raise_for_status()
-
-    raw = resp.json()["response"]
-    #print("RAW:", raw)
-
-    parsed = json.loads(raw)
-    # we are taking in parameters parsed_json and return an agent with a validated schema. The model will try to validate 2-3 times 
+    agent = validate_response(payload,"first")
+    results = [execute_tool(call) for call in agent.tool_calls]
     if agent.tool_calls:
       tool_results_json = [r.model_dump() for r in results]
       followup_prompt = f"""
       ORIGINAL_USER_QUESTION:
       {user_prompt}
-
         TOOL_RESULTS_JSON:
         {json.dumps(tool_results_json)}
-
         TASK:
         Write the final answer to the ORIGINAL_USER_QUESTION for the user.
         Use TOOL_RESULTS_JSON values.
@@ -112,17 +125,15 @@ def run_prompt(user_prompt: str):
         reply MUST be a direct answer (no meta phrases like "based on the results").
         This is the FINAL response. Do not mention tools or results. Just answer.
       """.strip()
-      response2 = requests.post(URL, json={
+      payload2 = {
           "model": MODEL,
           "system": SYSTEM_PROMPT,
           "prompt": followup_prompt,
           "format": "json",
           "stream": False,
-          }, timeout=60).json()
-        
-      raw2 = response2["response"]
-      agent2 = AgentResponse.model_validate(json.loads(raw2))
-      print("FINAL Reply:", agent2.reply)
+          }
+      agent2 = validate_response(payload2,"final")
+      print(agent2.reply)
     else:
         print(agent.reply)
 
