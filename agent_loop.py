@@ -138,4 +138,4 @@ def run_prompt(user_prompt: str):
         print(agent.reply)
 
 
-run_prompt("Why am I (the creator of THURSDAY) so awesome?")
+run_prompt("What time is it in Los Angeles?")
