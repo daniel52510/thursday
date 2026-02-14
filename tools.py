@@ -19,16 +19,17 @@ class ToolResult(BaseModel):
 #Tool Result Function to Get Time
 def get_time(args: Dict[str, Any]) -> ToolResult:
     """
-    Args:
+    Args
         - tz: Optional IANA timezone string (e.g. "America/New_York", "Europe/Berlin", Asia/Tokyo).
         - If tz is omitted, use the machine's local timezone (ONLY CORRECT if THURSDAY runs on a user's machine).
-    Returns:
+    Returns
         - uts-iso: ISO Timestamp in UTC
         - local-iso: ISO Timestamp in requested tz (or machine local)
         - tz: timezone used
         - offset_seconds: UTC offset in seconds for that tz at that moment (DST-safe).
     """
-    tz_name = str(args.get("tz", "")).strip() or None
+    tz_name = (args.get("timezone") or args.get("tz") or "")
+    tz_name = str(tz_name).strip() or None
     now_utc = datetime.now(timezone.utc)
 
     try:
