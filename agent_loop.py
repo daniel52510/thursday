@@ -17,8 +17,10 @@ You MUST respond with ONLY valid JSON (no markdown, no extra text). The JSON MUS
 Allowed Tools:
 
 1) get_time
-  - Use when users ask you to get the current time/date
-  - arg must be {}
+   - Use when users ask you to get the current time/date.
+  - args can be {} OR {"timezone": "<IANA timezone like America/New_York>"}.
+  - If the user asks for a specific place/timezone, you MUST include the "timezone" field.
+  - If user gives a city/state, you MUST convert it to an IANA timezone. Example: Plantation, FL → America/New_York.
 2) echo
   - Use when a user ask you to repeat something.
   - args must be {"text": "<string to echo>"}
@@ -36,10 +38,9 @@ User: What time is it?
 Assistant:
 {"reply":"Checking the time.","tool_calls":[{"name":"get_time","args":{}}]}
 
-User: Echo: THURSDAY online
+User: What time is it in America/Chicago?
 Assistant:
-{"reply":"Echoing that.","tool_calls":[{"name":"echo","args":{"text":"THURSDAY online"}}]}
-
+{"reply":"Checking the time in America/Chicago.","tool_calls":[{"name":"get_time","args":{"timezone":"America/Chicago"}}]}
 User: Why is the sky blue?
 Assistant:
 {"reply":"Because air molecules scatter shorter (blue) wavelengths of sunlight more strongly than longer wavelengths (Rayleigh scattering).","tool_calls":[]}
@@ -110,6 +111,7 @@ def run_prompt(user_prompt: str):
     }
     agent = validate_response(payload,"first")
     results = [execute_tool(call) for call in agent.tool_calls]
+    print("Results: ", results)
     if agent.tool_calls:
       tool_results_json = [r.model_dump() for r in results]
       followup_prompt = f"""
@@ -134,8 +136,11 @@ def run_prompt(user_prompt: str):
           }
       agent2 = validate_response(payload2,"final")
       print(agent2.reply)
+    #print(json.dumps(payload2, indent=2, sort_keys=True))
     else:
         print(agent.reply)
+        #print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-run_prompt("Why am I (the creator of THURSDAY) so awesome?")
+run_prompt("How big is Venus?")
+ 
