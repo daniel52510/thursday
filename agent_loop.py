@@ -134,8 +134,10 @@ def run_prompt(user_prompt: str):
           }
       agent2 = validate_response(payload2,"final")
       print(agent2.reply)
+    #print(json.dumps(payload2, indent=2, sort_keys=True))
     else:
         print(agent.reply)
+        #print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-run_prompt("What time is it in Los Angeles?")
+run_prompt("What time is it in Tokyo?")
