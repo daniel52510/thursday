@@ -3,6 +3,7 @@ import json
 from pydantic import ValidationError
 from agent_schemas import AgentResponse
 from tools import execute_tool
+from typing import Literal
 
 SYSTEM_PROMPT= """
 You are THURSDAY (Tool-Handling, User-Respecting, Self-Hosted Digital Assistant (Yours)) a local-first assistant.
@@ -17,7 +18,7 @@ You MUST respond with ONLY valid JSON (no markdown, no extra text). The JSON MUS
 Allowed Tools:
 
 1) get_time
-   - Use when users ask you to get the current time/date.
+  - Use when users ask you to get the current time/date.
   - args can be {} OR {"timezone": "<IANA timezone like America/New_York>"}.
   - If the user asks for a specific place/timezone, you MUST include the "timezone" field.
   - If user gives a city/state, you MUST convert it to an IANA timezone. Example: Plantation, FL → America/New_York.
@@ -50,7 +51,7 @@ URL = "http://localhost:11434/api/generate"
 MODEL = "qwen2.5:7b-instruct"
 
 # we are taking in parameters parsed_json and return an agent with a validated schema. The model will try to validate 2-3 times 
-def validate_response(payload, mode):
+def validate_response(payload: dict, mode: Literal["first", "final"]) -> AgentResponse:
     retries=0
     raw = "<bad_output>"
     resp = requests.post(URL, json=payload, timeout=60)
@@ -100,6 +101,7 @@ def validate_response(payload, mode):
             resp = requests.post(URL, json=payload, timeout=60)
             resp.raise_for_status()
             retries += 1
+    raise RuntimeError(f"Failed to validate model output after {retries} retries. Last output: {raw}")
 
 def run_prompt(user_prompt: str):
     payload = {
@@ -124,8 +126,7 @@ def run_prompt(user_prompt: str):
         Use TOOL_RESULTS_JSON values.
         Return ONLY AgentResponse JSON.
         tool_calls MUST be [].
-        reply MUST be a direct answer (no meta phrases like "based on the results").
-        This is the FINAL response. Do not mention tools or results. Just answer.
+        This is the FINAL response. Do not mention tools or results. Answer naturally as you would like FRIDAY from Iron Man or TARS from Interstellar to answer.
       """.strip()
       payload2 = {
           "model": MODEL,
