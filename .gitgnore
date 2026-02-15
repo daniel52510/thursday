@@ -1,0 +1,37 @@
+.venv
+# Virtual environments
+.venv/
+venv/
+.env/
+
+# Python cache / bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# OS / editor junk
+.DS_Store
+.vscode/
+.idea/
+
+# Local secrets / env files
+.env
+.env.*
+
+# SQLite (if you store local memory/db)
+*.sqlite3
+*.db
