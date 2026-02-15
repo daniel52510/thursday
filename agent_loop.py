@@ -103,7 +103,7 @@ Rules:
 """.strip()
 
 URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/generate")
-MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:9b")
+MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 
 def should_extract_facts(text: str) -> bool:
