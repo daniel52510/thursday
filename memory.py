@@ -129,10 +129,25 @@ class MemoryDB:
             })
         return out
 
-    def get_memory_context(self, history_limit: int = 20, include_tools: bool = False):
+    def get_memory_context(self, history_limit: int = 20, include_tools: bool = False) -> Dict[str, Any]:
         facts = self.list_facts()
         msgs = self.recent_messages(history_limit)
-        memory_context = []
+
+        # Compact recent message history for prompt injection
+        cleaned_msgs: List[dict] = []
         for m in msgs:
-            print("Message:", m)  # Debug print to show message details
-              
+            entry = {"role": m["role"], "content": m["content"]}
+            if include_tools:
+                entry["tool_name"] = m["tool_name"]
+                # Keep tool output only if you really want it; can be noisy.
+                entry["tool_result"] = m["tool_result"]
+            cleaned_msgs.append(entry)
+
+        # Clean facts: do not return None/empty-string values
+        cleaned_facts: Dict[str, Any] = {}
+        for key, value in facts.items():
+            if value is None or value == "":
+                continue
+            cleaned_facts[key] = value
+
+        return {"facts": cleaned_facts, "recent_messages": cleaned_msgs}

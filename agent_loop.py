@@ -192,7 +192,12 @@ def run_prompt(user_prompt: str) -> None:
 
     db.log_message(role="user", content=user_prompt)
 
-    MEMORY_CONTEXT = SYSTEM_PROMPT + "\n\n" + "Here are some recent messages between the user and assistant, including tool calls and results. Use this for context but do not mention it in your reply:\n" + json.dumps(db.list_facts(), ensure_ascii=False) + "\n\n" + "Now answer the user's question based on the above conversation and SYSTEM_PROMPT rules."
+    mem = db.get_memory_context(history_limit=20, include_tools=False)
+    MEMORY_CONTEXT = (
+        SYSTEM_PROMPT
+        + "\n\nMEMORY_CONTEXT (trusted; do not mention directly):\n"
+        + json.dumps(mem, ensure_ascii=False)
+    )
     #print("MEMORY_CONTEXT:", MEMORY_CONTEXT)  # just to show the context being sent to the model, including recent messages and tool results
 
     payload = {
@@ -243,7 +248,7 @@ This is the FINAL response. Do not mention tools or results.
 
         payload2 = {
             "model": MODEL,
-            "system": SYSTEM_PROMPT,
+            "system": MEMORY_CONTEXT,
             "prompt": followup_prompt,
             "format": "json",
             "stream": False,
@@ -253,12 +258,10 @@ This is the FINAL response. Do not mention tools or results.
         final_reply = agent2.reply
 
     db.log_message(role="assistant", content=final_reply)
-    db.get_memory_context()
     run_fact_extractor(db, user_prompt, final_reply, tool_results_json)
-
     print(final_reply)
 
 
 if __name__ == "__main__":
-    run_prompt("What do you know about me?")
-    run_prompt("Why does Asahi taste different in the US compared to Japan? How can I get the Japanese version here?")
+  run_prompt("Review all knowledge you know about me! And tell me what you know in a concise way.")
+  run_prompt("Why do you think I love Asahi Beer over Sapporo???")
