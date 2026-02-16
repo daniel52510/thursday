@@ -253,7 +253,7 @@ This is the FINAL response. Do not mention tools or results.
         final_reply = agent2.reply
 
     db.log_message(role="assistant", content=final_reply)
-
+    db.get_memory_context()
     run_fact_extractor(db, user_prompt, final_reply, tool_results_json)
 
     print(final_reply)
@@ -261,4 +261,4 @@ This is the FINAL response. Do not mention tools or results.
 
 if __name__ == "__main__":
     run_prompt("What do you know about me?")
-    run_prompt("Given the MEMORY_CONTEXT you have now. Do you believe it is good enough to remember information?")
+    run_prompt("Why does Asahi taste different in the US compared to Japan? How can I get the Japanese version here?")

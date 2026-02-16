@@ -128,3 +128,11 @@ class MemoryDB:
                 "created_at": r["created_at"],
             })
         return out
+
+    def get_memory_context(self, history_limit: int = 20, include_tools: bool = False):
+        facts = self.list_facts()
+        msgs = self.recent_messages(history_limit)
+        memory_context = []
+        for m in msgs:
+            print("Message:", m)  # Debug print to show message details
+              
