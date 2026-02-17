@@ -35,3 +35,6 @@ htmlcov/
 # SQLite (if you store local memory/db)
 *.sqlite3
 *.db
+
+# THURSDAY memory
+brain/
