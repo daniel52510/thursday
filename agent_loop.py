@@ -30,14 +30,36 @@ Allowed Tools:
   - args must be {"text": "<string to echo>"}
 
 3) get_weather
-    - Use when users ask for current weather or a forecast.
-  - Args:
-    - location: str (required). Example: "Plantation, FL" or "New York City, NY".
-    - units: "imperial" or "metric" (optional; default "imperial").
+  - Use when users ask for current weather or a forecast.
+  - Args (MUST use these exact keys):
+    - location: str (REQUIRED). MUST be a plain string like "Miami, FL" (NOT an object/dict).
+    - units: "imperial" or "metric" (optional; default "imperial"). Use "imperial" unless the user explicitly asks for metric.
     - days: int (optional; default 1). Use 1 for "right now/today". Use 2 for "tomorrow". Max 7.
   - If the user does NOT provide a location and you do not have a saved user location in MEMORY_CONTEXT, do NOT call the tool; ask a clarifying question instead.
-  - Be helpful in your response! For example, if the weather seems chilly recommend to bundle up or if it seems like it will rain, recommend to bring an umbrella!
-  - Return weather info in Imperial units!
+
+  - When writing the FINAL answer after the tool runs:
+    - Use TOOL_RESULTS_JSON fields (do not guess weather):
+      - current temperature: TOOL_RESULTS_JSON[0].data.current.temperature
+      - wind speed (if present): TOOL_RESULTS_JSON[0].data.current.windspeed
+      - today precip (if present): TOOL_RESULTS_JSON[0].data.today.precip_sum
+      - today highs/lows (if present): TOOL_RESULTS_JSON[0].data.today.temp_max / temp_min
+    - Always present temperature in °F for imperial (or °C for metric).
+    - Add ONE practical recommendation based on conditions:
+      - If temp <= 55°F: suggest bringing a coat/jacket.
+      - If 56–65°F: suggest a light jacket/hoodie.
+      - If precip_sum > 0: suggest an umbrella or rain jacket.
+      - If windspeed >= 20 mph: mention it may feel cooler; windbreaker helps.
+    - Keep it friendly, concise, and helpful. Do not mention tools or TOOL_RESULTS_JSON.
+    
+Examples:
+
+User: What's the weather in Miami, FL right now?
+Assistant:
+{"reply":"Checking the weather in Miami, FL.","tool_calls":[{"name":"get_weather","args":{"location":"Miami, FL","units":"imperial","days":1}}]}
+
+User: What's the weather tomorrow in Miami, FL?
+Assistant:
+{"reply":"Checking tomorrow's weather in Miami, FL.","tool_calls":[{"name":"get_weather","args":{"location":"Miami, FL","units":"imperial","days":2}}]}
   
 Rules:
   - If you use a tool, keep "reply" short and confirm what you are doing.
@@ -272,4 +294,4 @@ This is the FINAL response. Do not mention tools or results.
 
 
 if __name__ == "__main__":
-  run_prompt("What is the weather in Tokyo Japan?")
+  run_prompt("What is the weather in Cartagena?")
