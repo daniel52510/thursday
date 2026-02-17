@@ -3,10 +3,11 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable, Dict, Literal, Optional
 from pydantic import BaseModel, Field
+import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo"]
+    name: Literal["get_time", "echo", "get_weather"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -66,6 +67,93 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     #dt_local = now.astimezone()
     #return ToolResult(ok=True, tool_name="get_time", data={"time": dt_local.strftime("%I:%M %p").lstrip("0")})
 
+def get_weather(args: Dict[str, Any]) -> ToolResult:
+    """
+    Args
+        - location: str (required)
+        - units: Literal["imperial","metric"] = "imperial"
+        - days: int = 1
+    """ 
+    location = (args.get("location"))
+    location = str(location).strip() or None
+    if not location:
+        return ToolResult(ok=False, tool_name="get_weather", error="missing_location")
+    units = "imperial"
+    days_raw = args.get("days", 1)
+    try:
+        days = int(days_raw)
+    except (TypeError, ValueError):
+        days = 1
+    # Clamp forecast length to a safe range
+    days = max(1, min(days, 7))
+    
+    GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
+
+    resp = requests.get(
+        GEOCODE_URL,
+        params={
+            "name": location,
+            "count": 5,
+            "language": "en",
+            "format": "json",
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    geo = resp.json()
+
+    results = geo.get("results") or []
+    if not results:
+        return ToolResult(
+        ok=False,
+        tool_name="get_weather",
+        error="geocode_no_results",
+        data={"input_location": location}
+        )
+    best = results[0]  # for now; later you can choose best more carefully
+    lat = best["latitude"]
+    lon = best["longitude"]
+    
+    FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+    resp = requests.get(
+        FORECAST_URL,
+        params={
+        "latitude": lat,
+        "longitude": lon,
+        "current_weather": "true",
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+        "timezone": "auto",
+        "forecast_days": days,
+        # Units
+        "temperature_unit": "fahrenheit" if units == "imperial" else "celsius",
+        "wind_speed_unit": "mph" if units == "imperial" else "kmh",
+        "precipitation_unit": "inch" if units == "imperial" else "mm",
+        },
+        timeout=10
+    )
+    resp.raise_for_status()
+    wx = resp.json()
+    current = wx.get("current_weather") or {}
+    daily = wx.get("daily") or {}
+
+    return ToolResult(ok=True, tool_name="get_weather", data={
+    "input_location": location,
+    "resolved_location": ", ".join(
+        [x for x in [best.get("name"), best.get("admin1"), best.get("country")] if x]
+    ),
+    "latitude": lat,
+    "longitude": lon,
+    "timezone": wx.get("timezone"),
+    "units": units,
+    "current": current,
+    "today": {
+        "date": (daily.get("time") or [None])[0],
+        "temp_max": (daily.get("temperature_2m_max") or [None])[0],
+        "temp_min": (daily.get("temperature_2m_min") or [None])[0],
+        "precip_sum": (daily.get("precipitation_sum") or [None])[0],
+    }
+})
+
 #Tool Result to echo text
 def echo(args: Dict[str, Any]) -> ToolResult:
     text = str(args.get("text", ""))
@@ -75,6 +163,7 @@ def echo(args: Dict[str, Any]) -> ToolResult:
 TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "get_time": get_time,
     "echo": echo,
+    "get_weather": get_weather,
 }
 
 def execute_tool(call: ToolCall) -> ToolResult:

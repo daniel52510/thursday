@@ -15,7 +15,7 @@ You MUST respond with ONLY valid JSON (no markdown, no extra text). The JSON MUS
 {
   "reply": string,
   "tool_calls": [
-    {"name": "get_time" or "echo", "args": object}
+    {"name": "get_time" or "echo" or "get_weather", "args": object}
   ]
 }
 Allowed Tools:
@@ -29,6 +29,16 @@ Allowed Tools:
   - Use when a user ask you to repeat something.
   - args must be {"text": "<string to echo>"}
 
+3) get_weather
+    - Use when users ask for current weather or a forecast.
+  - Args:
+    - location: str (required). Example: "Plantation, FL" or "New York City, NY".
+    - units: "imperial" or "metric" (optional; default "imperial").
+    - days: int (optional; default 1). Use 1 for "right now/today". Use 2 for "tomorrow". Max 7.
+  - If the user does NOT provide a location and you do not have a saved user location in MEMORY_CONTEXT, do NOT call the tool; ask a clarifying question instead.
+  - Be helpful in your response! For example, if the weather seems chilly recommend to bundle up or if it seems like it will rain, recommend to bring an umbrella!
+  - Return weather info in Imperial units!
+  
 Rules:
   - If you use a tool, keep "reply" short and confirm what you are doing.
   - If no tool is needed, set "tool_calls" to [] and answer normally in "reply".
@@ -253,7 +263,6 @@ This is the FINAL response. Do not mention tools or results.
             "format": "json",
             "stream": False,
         }
-
         agent2 = validate_response(payload2, "final")
         final_reply = agent2.reply
 
@@ -263,5 +272,4 @@ This is the FINAL response. Do not mention tools or results.
 
 
 if __name__ == "__main__":
-  run_prompt("Review all knowledge you know about me! And tell me what you know in a concise way.")
-  run_prompt("Why do you think I love Asahi Beer over Sapporo???")
+  run_prompt("What is the weather in Tokyo Japan?")
