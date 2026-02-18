@@ -219,7 +219,7 @@ TOOL_RESULTS_JSON:
     db.upsert_facts([f.model_dump() for f in extraction.facts])
 
 
-def run_prompt(user_prompt: str) -> None:
+def run_prompt(user_prompt: str) -> str:
     db = initalize_db()
 
     db.log_message(role="user", content=user_prompt)
@@ -287,10 +287,12 @@ This is the FINAL response. Do not mention tools or results.
         }
         agent2 = validate_response(payload2, "final")
         final_reply = agent2.reply
+        return final_reply
 
     db.log_message(role="assistant", content=final_reply)
     run_fact_extractor(db, user_prompt, final_reply, tool_results_json)
     print(final_reply)
+    return final_reply
 
 
 if __name__ == "__main__":
