@@ -1,0 +1,7 @@
+[theme]
+font= "monospace"
+base="dark"
+primaryColor="#7c5cff"
+backgroundColor="#0b0d12"
+secondaryColor="#121622"
+textColor="#e7e9ee"

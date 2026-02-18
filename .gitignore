@@ -38,3 +38,7 @@ htmlcov/
 
 # THURSDAY memory
 brain/
+
+#voice aiff created
+out/
+out/tts

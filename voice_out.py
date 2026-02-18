@@ -1,8 +1,7 @@
 from pathlib import Path
 import subprocess
 from datetime import datetime
-
-OUT_DIR = Path("out/tts")
+OUT_DIR = Path("out/tts/")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def speak_to_wav(text: str) -> str:
