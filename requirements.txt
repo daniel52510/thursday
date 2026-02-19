@@ -1,3 +1,4 @@
 pydantic>=2.6,<3
 requests>=2.31,<3
 urllib3>=2,<3
+streamlit>=1.30,<2

@@ -17,10 +17,25 @@ for m in st.session_state.messages:
 
 if st.session_state.last_audio_path:
     p = Path(st.session_state.last_audio_path)
+if st.session_state.last_audio_path:
+    p = Path(st.session_state.last_audio_path)
     if p.exists() and p.stat().st_size > 0:
-        st.audio(p.read_bytes(), format="audio/aiff")
+        audio_bytes = p.read_bytes()
+
+        # Hidden, autoplaying audio element
+        import base64
+        b64 = base64.b64encode(audio_bytes).decode()
+
+        st.markdown(
+            f"""
+            <audio autoplay>
+              <source src="data:audio/wav;base64,{b64}" type="audio/wav">
+            </audio>
+            """,
+            unsafe_allow_html=True,
+        )
     else:
-        st.warning("Audio File Missing or Empty. Try Again.")
+        st.warning("Audio file missing or empty. Try again.")
 
 user_text = st.chat_input("Say something to THURSDAY...")
 
@@ -30,7 +45,8 @@ if user_text:
     reply_text = run_prompt(user_text) or ""
     st.session_state.messages.append({"role": "assistant", "text": reply_text})
 
-    # Generate audio and store path; playback happens on the next run
-    st.session_state.last_audio_path = speak_to_wav(reply_text)
+    audio_path = speak_to_wav(reply_text)
+    if audio_path:
+        st.session_state.last_audio_path = audio_path
 
     st.rerun()
