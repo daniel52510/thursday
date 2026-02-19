@@ -14,6 +14,7 @@ You are THURSDAY (Tool-Handling, User-Respecting, Self-Hosted Digital Assistant 
 You MUST respond with ONLY valid JSON (no markdown, no extra text). The JSON MUST match this exact shape:
 {
   "reply": string,
+  "tts_text": string | null,
   "tool_calls": [
     {"name": "get_time" or "echo" or "get_weather", "args": object}
   ]
@@ -55,32 +56,30 @@ Examples:
 
 User: What's the weather in Miami, FL right now?
 Assistant:
-{"reply":"Checking the weather in Miami, FL.","tool_calls":[{"name":"get_weather","args":{"location":"Miami, FL","units":"imperial","days":1}}]}
-
+{"reply":"Checking the weather in Miami, FL.","tts_text":"Checking the weather in Miami, FL.","tool_calls":[{"name":"get_weather","args":{"location":"Miami, FL","units":"imperial","days":1}}]}
 User: What's the weather tomorrow in Miami, FL?
 Assistant:
-{"reply":"Checking tomorrow's weather in Miami, FL.","tool_calls":[{"name":"get_weather","args":{"location":"Miami, FL","units":"imperial","days":2}}]}
-  
+{"reply":"Checking tomorrow's weather in Miami, FL.","tts_text":"Checking tomorrow's weather in Miami, FL.","tool_calls":[{"name":"get_weather","args":{"location":"Miami, FL","units":"imperial","days":2}}]}  
 Rules:
   - If you use a tool, keep "reply" short and confirm what you are doing.
   - If no tool is needed, set "tool_calls" to [] and answer normally in "reply".
   - Never invent tools.
-  - Never include keys other than "reply" and "tool_calls".
+  - Never include keys other than "reply", "tts_text", and "tool_calls".
+  - "tts_text" MUST always be present. Use null if you have nothing special to say.
+  - "tts_text" must be optimized for speaking (1–3 sentences, no code blocks, no JSON, no tool mentions).
   - "tool_calls" must always be present (use [] if none).
 
 Examples:
 
 User: What time is it?
 Assistant:
-{"reply":"Checking the time.","tool_calls":[{"name":"get_time","args":{}}]}
-
+{"reply":"Checking the time.","tts_text":"Checking the time.","tool_calls":[{"name":"get_time","args":{}}]}
 User: What time is it in America/Chicago?
 Assistant:
-{"reply":"Checking the time in America/Chicago.","tool_calls":[{"name":"get_time","args":{"timezone":"America/Chicago"}}]}
-
+{"reply":"Checking the time in America/Chicago.","tts_text":"Checking the time in America/Chicago.","tool_calls":[{"name":"get_time","args":{"timezone":"America/Chicago"}}]}
 User: Why is the sky blue?
 Assistant:
-{"reply":"Because air molecules scatter shorter (blue) wavelengths of sunlight more strongly than longer wavelengths (Rayleigh scattering).","tool_calls":[]}
+{"reply":"Because air molecules scatter shorter (blue) wavelengths of sunlight more strongly than longer wavelengths (Rayleigh scattering).","tts_text":"Because air molecules scatter blue light more strongly than other colors. That’s called Rayleigh scattering.","tool_calls":[]}
 """.strip()
 
 FACT_EXTRACTOR_SYSTEM = """
@@ -152,7 +151,7 @@ Rules:
 - If no tool is needed, set \"tool_calls\" to [].
 - Never invent tools.
 - tool_calls MUST be [].
-- Never include keys other than \"reply\" and \"tool_calls\".
+- Never include keys other than \"reply\", \"tts_text\", and \"tool_calls\".
 - \"tool_calls\" must always be present.
 You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
 """.strip()
@@ -164,7 +163,7 @@ Rules:
 - If you use a tool, keep \"reply\" short and confirm what you are doing.
 - If no tool is needed, set \"tool_calls\" to [].
 - Never invent tools.
-- Never include keys other than \"reply\" and \"tool_calls\".
+- Never include keys other than \"reply\", \"tts_text\", and \"tool_calls\".
 - \"tool_calls\" must always be present.
 You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
 """.strip()
@@ -219,7 +218,7 @@ TOOL_RESULTS_JSON:
     db.upsert_facts([f.model_dump() for f in extraction.facts])
 
 
-def run_prompt(user_prompt: str) -> str:
+def run_prompt(user_prompt: str) -> AgentResponse:
     db = initalize_db()
 
     db.log_message(role="user", content=user_prompt)
@@ -287,12 +286,17 @@ This is the FINAL response. Do not mention tools or results.
         }
         agent2 = validate_response(payload2, "final")
         final_reply = agent2.reply
-        return final_reply
+        final_tts = agent2.tts_text or agent2.reply
+
+        db.log_message(role="assistant", content=final_reply)
+        run_fact_extractor(db, user_prompt, final_reply, tool_results_json)
+        return agent2
+
 
     db.log_message(role="assistant", content=final_reply)
     run_fact_extractor(db, user_prompt, final_reply, tool_results_json)
     print(final_reply)
-    return final_reply
+    return agent
 
 
 if __name__ == "__main__":
