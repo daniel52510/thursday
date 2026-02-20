@@ -35,7 +35,7 @@ def speak_to_wav(text: str) -> str | None:
             text=text,
             language="English",
             speaker="Sohee",  # or "Aiden"
-            instruct="Calm, warm, confident, slightly playful. Short, clear sentences.",
+            instruct="Calm, warm, confident, slightly playful.",
         )
         sf.write(str(out_wav), wavs[0], sr, subtype="PCM_16")
         return str(out_wav)
@@ -45,7 +45,7 @@ def speak_to_wav(text: str) -> str | None:
         tmp_aiff = OUT_DIR / "last_tmp.aiff"
         subprocess.run(["say", text, "-o", str(tmp_aiff)], check=False)
         subprocess.run(
-            ["afconvert", str(tmp_aiff), str(out_wav), "-f", "WAVE", "-d", "PCM_16"],
+            ["afconvert", str(tmp_aiff), str(out_wav), "-f", "WAVE", "-d", "LEI16"],
             check=False,
         )
         return str(out_wav)

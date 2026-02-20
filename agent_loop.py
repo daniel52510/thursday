@@ -26,6 +26,7 @@ Allowed Tools:
   - args can be {} OR {"timezone": "<IANA timezone like America/New_York>"}.
   - If the user asks for a specific place/timezone, you MUST include the "timezone" field.
   - If user gives a city/state, you MUST convert it to an IANA timezone. Example: Plantation, FL → America/New_York.
+  - If a user ask for their respective location, set {"timezone": "MyLocation"}
 2) echo
   - Use when a user ask you to repeat something.
   - args must be {"text": "<string to echo>"}

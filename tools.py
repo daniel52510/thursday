@@ -23,6 +23,7 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     Args
         - tz: Optional IANA timezone string (e.g. "America/New_York", "Europe/Berlin", Asia/Tokyo).
         - If tz is omitted, use the machine's local timezone (ONLY CORRECT if THURSDAY runs on a user's machine).
+        - If user prompts their location, then return MyLocation as the value for tz.
     Returns
         - uts-iso: ISO Timestamp in UTC
         - local-iso: ISO Timestamp in requested tz (or machine local)
@@ -31,13 +32,14 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     """
     tz_name = (args.get("timezone") or args.get("tz") or "")
     tz_name = str(tz_name).strip() or None
+    print("TZ_NAME: ", tz_name)
     now_utc = datetime.now(timezone.utc)
-
     try:
-        if tz_name:
+        if tz_name is type(str) and not None:
             tz = ZoneInfo(tz_name)
             now_local = now_utc.astimezone(tz)
             used_tz = tz_name
+        #creating elif and else statement (NEEDED) to allow graceful erroring if location does not exist or if user ask about own location
         else:
             now_local = now_utc.astimezone()
             used_tz = str(now_local.tzinfo) if now_local.tzinfo else "local"
