@@ -35,14 +35,17 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     print("TZ_NAME: ", tz_name)
     now_utc = datetime.now(timezone.utc)
     try:
-        if tz_name is type(str) and not None:
+        if tz_name is not None:
+            print("reaching this conditional!")
             tz = ZoneInfo(tz_name)
             now_local = now_utc.astimezone(tz)
+            print("NOW_LOCAL: ", now_local)
             used_tz = tz_name
         #creating elif and else statement (NEEDED) to allow graceful erroring if location does not exist or if user ask about own location
         else:
-            now_local = now_utc.astimezone()
-            used_tz = str(now_local.tzinfo) if now_local.tzinfo else "local"
+            #now_local = now_utc.astimezone()
+            return ToolResult(ok=False, tool_name="get_time", error="missing_location")
+            #used_tz = str(now_local.tzinfo) if now_local.tzinfo else "local"
 
         offset = now_local.utcoffset()
         offset_seconds = int(offset.total_seconds()) if offset else 0
@@ -70,14 +73,70 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     #return ToolResult(ok=True, tool_name="get_time", data={"time": dt_local.strftime("%I:%M %p").lstrip("0")})
 
 def get_weather(args: Dict[str, Any]) -> ToolResult:
+    US_STATES = {
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
+}
     """
     Args
         - location: str (required)
         - units: Literal["imperial","metric"] = "imperial"
-        - days: int = 1
+        - days: int = 2
     """ 
     location = (args.get("location"))
-    location = str(location).strip() or None
+    location = str(location).strip()
+    new_location = location.split(',',1)[0]
+    state = ""
+    if ',' in location:
+        state = location[-2] + location[-1]
     if not location:
         return ToolResult(ok=False, tool_name="get_weather", error="missing_location")
     units = "imperial"
@@ -90,11 +149,13 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     days = max(1, min(days, 7))
     
     GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
-
+    #LOCATION is being resolved by City, State and not just City when searching the USA
+    print("NEW_LOCATION: ", new_location)
+    print("STATE: ", state )
     resp = requests.get(
         GEOCODE_URL,
         params={
-            "name": location,
+            "name": new_location,
             "count": 5,
             "language": "en",
             "format": "json",
@@ -112,6 +173,7 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
         error="geocode_no_results",
         data={"input_location": location}
         )
+    #Gotta figure out results so that for US states, it is linked to state abbreviations!
     best = results[0]  # for now; later you can choose best more carefully
     lat = best["latitude"]
     lon = best["longitude"]
