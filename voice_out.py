@@ -34,8 +34,8 @@ def speak_to_wav(text: str) -> str | None:
         wavs, sr = model.generate_custom_voice(
             text=text,
             language="English",
-            speaker="Sohee",  # or "Aiden"
-            instruct="Calm, warm, confident, slightly playful.",
+            speaker="Sohee",
+            instruct="Native American English, slight accent. Calm, warm, confident, slightly playful. Roleplay as someone who is from Singapore.",
         )
         sf.write(str(out_wav), wavs[0], sr, subtype="PCM_16")
         return str(out_wav)

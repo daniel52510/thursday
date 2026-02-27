@@ -73,73 +73,24 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     #return ToolResult(ok=True, tool_name="get_time", data={"time": dt_local.strftime("%I:%M %p").lstrip("0")})
 
 def get_weather(args: Dict[str, Any]) -> ToolResult:
-    US_STATES = {
-    "AL": "Alabama",
-    "AK": "Alaska",
-    "AZ": "Arizona",
-    "AR": "Arkansas",
-    "CA": "California",
-    "CO": "Colorado",
-    "CT": "Connecticut",
-    "DE": "Delaware",
-    "FL": "Florida",
-    "GA": "Georgia",
-    "HI": "Hawaii",
-    "ID": "Idaho",
-    "IL": "Illinois",
-    "IN": "Indiana",
-    "IA": "Iowa",
-    "KS": "Kansas",
-    "KY": "Kentucky",
-    "LA": "Louisiana",
-    "ME": "Maine",
-    "MD": "Maryland",
-    "MA": "Massachusetts",
-    "MI": "Michigan",
-    "MN": "Minnesota",
-    "MS": "Mississippi",
-    "MO": "Missouri",
-    "MT": "Montana",
-    "NE": "Nebraska",
-    "NV": "Nevada",
-    "NH": "New Hampshire",
-    "NJ": "New Jersey",
-    "NM": "New Mexico",
-    "NY": "New York",
-    "NC": "North Carolina",
-    "ND": "North Dakota",
-    "OH": "Ohio",
-    "OK": "Oklahoma",
-    "OR": "Oregon",
-    "PA": "Pennsylvania",
-    "RI": "Rhode Island",
-    "SC": "South Carolina",
-    "SD": "South Dakota",
-    "TN": "Tennessee",
-    "TX": "Texas",
-    "UT": "Utah",
-    "VT": "Vermont",
-    "VA": "Virginia",
-    "WA": "Washington",
-    "WV": "West Virginia",
-    "WI": "Wisconsin",
-    "WY": "Wyoming",
-}
     """
     Args
         - location: str (required)
         - units: Literal["imperial","metric"] = "imperial"
-        - days: int = 2
+        - days: int
     """ 
-    location = (args.get("location"))
-    location = str(location).strip()
-    new_location = location.split(',',1)[0]
-    state = ""
-    if ',' in location:
-        state = location[-2] + location[-1]
+    location = str(args.get("location")).strip()
+    units = str(args.get("units", "imperial")).lower().strip()
     if not location:
         return ToolResult(ok=False, tool_name="get_weather", error="missing_location")
-    units = "imperial"
+    if units not in ("imperial", "metric"):
+        units = "imperial"
+    parts = [p.strip() for p in location.split(",")]
+    city = parts[0]
+    maybe_state = parts[1] if len(parts) > 1 else ""
+    print("MAYBE-STATE: ", maybe_state)
+    if len(maybe_state) == 2 and maybe_state.isalpha():
+        state = maybe_state.upper()
     days_raw = args.get("days", 1)
     try:
         days = int(days_raw)
@@ -150,12 +101,10 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     
     GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
     #LOCATION is being resolved by City, State and not just City when searching the USA
-    print("NEW_LOCATION: ", new_location)
-    print("STATE: ", state )
     resp = requests.get(
         GEOCODE_URL,
         params={
-            "name": new_location,
+            "name": city,
             "count": 5,
             "language": "en",
             "format": "json",
@@ -166,6 +115,10 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     geo = resp.json()
 
     results = geo.get("results") or []
+    if state:
+        candidates = [r for r in results if (r.get("country_code") == "US") or (r.get("admin1") == maybe_state)]
+        if candidates:
+            results = candidates
     if not results:
         return ToolResult(
         ok=False,
@@ -177,7 +130,9 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     best = results[0]  # for now; later you can choose best more carefully
     lat = best["latitude"]
     lon = best["longitude"]
-    
+
+    print("BEST: ", best)
+
     FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
     resp = requests.get(
         FORECAST_URL,

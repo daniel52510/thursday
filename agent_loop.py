@@ -97,7 +97,6 @@ Rules:
 URL = "http://localhost:11434/api/generate"
 MODEL = "qwen2.5:7b-instruct"
 
-
 def should_extract_facts(text: str) -> bool:
     t = text.lower()
     triggers = [
@@ -180,7 +179,6 @@ You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
     raise RuntimeError(
         f"Failed to validate model output after {retries} retries. Last output: {raw}"
     )
-
 
 def run_fact_extractor(
     db: MemoryDB,
