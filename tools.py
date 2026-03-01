@@ -72,7 +72,7 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     #dt_local = now.astimezone()
     #return ToolResult(ok=True, tool_name="get_time", data={"time": dt_local.strftime("%I:%M %p").lstrip("0")})
 
-def weather_score_candidate(r: dict, expected_admin1, maybe_state_or_country, maybe_state, city) -> int:
+def weather_score_candidate(r: dict, expected_admin1: str, maybe_state_or_country: str, maybe_state: str, city: str) -> int:
     score = 0
     if maybe_state:
         if r.get("country_code") == "US":
@@ -146,7 +146,7 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
         - units: Literal["imperial","metric"] = "imperial"
         - days: int
     """ 
-    location = str(args.get("location")).strip()
+    location = str(args.get("location", "") or "").strip()
     units = str(args.get("units", "imperial")).lower().strip()
     if not location:
         return ToolResult(ok=False, tool_name="get_weather", error="missing_location")
@@ -155,26 +155,40 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     parts = [p.strip() for p in location.split(",")]
     city = parts[0]
     maybe_state_or_country = parts[1] if len(parts) > 1 else ""
+    maybe_state_or_country = maybe_state_or_country.strip()
     print("MAYBE-STATE-OR-COUNTRY: ", maybe_state_or_country)
-    days_raw = args.get("days", 1)
+    days_raw = args.get("days", 2)
     try:
         days = int(days_raw)
     except (TypeError, ValueError):
-        days = 1
+        days = 2
     # Clamp forecast length to a safe range
     days = max(1, min(days, 7))
-    
+
     maybe_state = ""
-    if len(maybe_state_or_country) == 2 and maybe_state_or_country.isalpha():
-        maybe_state = maybe_state_or_country.upper()
+    # Accept either 2-letter state codes ("OH") or full state names ("Ohio") after the comma.
+    if maybe_state_or_country:
+        token = maybe_state_or_country.strip()
+        if len(token) == 2 and token.isalpha():
+            maybe_state = token.upper()
+        else:
+            # Try to map full state name -> abbreviation
+            token_norm = token.lower()
+            for abbr, full in US_STATES.items():
+                if full.lower() == token_norm:
+                    maybe_state = abbr
+                    break
+
     expected_admin1 = US_STATES.get(maybe_state, "")
+    print("EXPECTED-ADMIN1: ", expected_admin1)
     GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
     #LOCATION is being resolved by City, State and not just City when searching the USA
     resp = requests.get(
         GEOCODE_URL,
         params={
+            # Prefer the full user-provided location for geocoding so state/country hints influence ranking.
             "name": city,
-            "count": 5,
+            "count": 10,
             "language": "en",
             "format": "json",
         },
@@ -184,8 +198,14 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     geo = resp.json()
 
     results = geo.get("results") or []
+    print("RESULTS: ", results)
     if maybe_state:
-        candidates = [r for r in results if (r.get("country_code") == "US") and (r.get("admin1") == maybe_state)]
+        # Open-Meteo `admin1` is typically the full state name (e.g., "Florida"), not the 2-letter code.
+        candidates = [
+            r for r in results
+            if (r.get("country_code") == "US") or (r.get("admin1") == expected_admin1)
+        ]
+        print("CANDIDATES", candidates)
         if candidates:
             results = candidates
     if not results:
@@ -196,7 +216,10 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
         data={"input_location": location}
         )
     #Gotta figure out results so that for US states, it is linked to state abbreviations!
-    best = max(results, key=weather_score_candidate(results,expected_admin1,maybe_state_or_country,maybe_state,city))
+    best = max(
+        results,
+        key=lambda r: weather_score_candidate(r, expected_admin1, maybe_state_or_country, maybe_state, city),
+    )
     lat = best["latitude"]
     lon = best["longitude"]
 
