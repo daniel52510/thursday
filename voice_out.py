@@ -24,7 +24,6 @@ def _get_model():
             "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
             device_map="cpu",
             dtype=torch.float32,
-            local_files_only=True,
         )
     return _MODEL
 

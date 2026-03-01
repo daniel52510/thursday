@@ -72,7 +72,74 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     #dt_local = now.astimezone()
     #return ToolResult(ok=True, tool_name="get_time", data={"time": dt_local.strftime("%I:%M %p").lstrip("0")})
 
+def weather_score_candidate(r: dict, expected_admin1, maybe_state_or_country, maybe_state, city) -> int:
+    score = 0
+    if maybe_state:
+        if r.get("country_code") == "US":
+            score += 50
+        if expected_admin1 and r.get("admin1") == expected_admin1:
+            score += 80 
+    if maybe_state_or_country and not maybe_state:
+        if str(r.get("country", "")).lower() == maybe_state_or_country.lower():
+                score += 80
+    if str(r.get("name","")).lower() == city.lower():
+        score += 5
+    return score
+    
+
 def get_weather(args: Dict[str, Any]) -> ToolResult:
+    US_STATES = {
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
+    }
     """
     Args
         - location: str (required)
@@ -87,10 +154,8 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
         units = "imperial"
     parts = [p.strip() for p in location.split(",")]
     city = parts[0]
-    maybe_state = parts[1] if len(parts) > 1 else ""
-    print("MAYBE-STATE: ", maybe_state)
-    if len(maybe_state) == 2 and maybe_state.isalpha():
-        state = maybe_state.upper()
+    maybe_state_or_country = parts[1] if len(parts) > 1 else ""
+    print("MAYBE-STATE-OR-COUNTRY: ", maybe_state_or_country)
     days_raw = args.get("days", 1)
     try:
         days = int(days_raw)
@@ -99,6 +164,10 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     # Clamp forecast length to a safe range
     days = max(1, min(days, 7))
     
+    maybe_state = ""
+    if len(maybe_state_or_country) == 2 and maybe_state_or_country.isalpha():
+        maybe_state = maybe_state_or_country.upper()
+    expected_admin1 = US_STATES.get(maybe_state, "")
     GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
     #LOCATION is being resolved by City, State and not just City when searching the USA
     resp = requests.get(
@@ -111,12 +180,12 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
         },
         timeout=10,
     )
-    resp.raise_for_status()
+    resp.raise_for_status() 
     geo = resp.json()
 
     results = geo.get("results") or []
-    if state:
-        candidates = [r for r in results if (r.get("country_code") == "US") or (r.get("admin1") == maybe_state)]
+    if maybe_state:
+        candidates = [r for r in results if (r.get("country_code") == "US") and (r.get("admin1") == maybe_state)]
         if candidates:
             results = candidates
     if not results:
@@ -127,7 +196,7 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
         data={"input_location": location}
         )
     #Gotta figure out results so that for US states, it is linked to state abbreviations!
-    best = results[0]  # for now; later you can choose best more carefully
+    best = max(results, key=weather_score_candidate(results,expected_admin1,maybe_state_or_country,maybe_state,city))
     lat = best["latitude"]
     lon = best["longitude"]
 
