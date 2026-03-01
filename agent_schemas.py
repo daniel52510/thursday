@@ -1,14 +1,12 @@
 from __future__ import annotations
-
-from typing import Any, Literal
-
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
-
 from tools import ToolCall
 
 
 class AgentResponse(BaseModel):
     reply: str
+    tts_text: Optional[str] = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
 
 class ExtractedFact(BaseModel):

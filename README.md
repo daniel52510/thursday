@@ -26,3 +26,7 @@ The creation of a semi-agentic assistant can benefit users greatly. Additionally
 
 ## Status
 - Early Design / Scaffolding Stage
+
+## venv-tts
+- qwen-tts
+- soundfile
