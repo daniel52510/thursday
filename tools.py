@@ -7,7 +7,7 @@ import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo", "get_weather"]
+    name: Literal["get_time", "echo", "get_weather", "web_search"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -32,7 +32,7 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     """
     tz_name = (args.get("timezone") or args.get("tz") or "")
     tz_name = str(tz_name).strip() or None
-    print("TZ_NAME: ", tz_name)
+    #print("TZ_NAME: ", tz_name)
     now_utc = datetime.now(timezone.utc)
     try:
         if tz_name is not None:
@@ -67,10 +67,6 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
             error="unknown_timezone",
             data={"tz": tz_name or ""},  
         )
-
-    #now = datetime.now(timezone.utc)
-    #dt_local = now.astimezone()
-    #return ToolResult(ok=True, tool_name="get_time", data={"time": dt_local.strftime("%I:%M %p").lstrip("0")})
 
 def weather_score_candidate(r: dict, expected_admin1: str, maybe_state_or_country: str, maybe_state: str, city: str) -> int:
     score = 0
@@ -262,26 +258,29 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
 
 def web_search(args: Dict[str, Any]) -> ToolResult:
     #pasting general request into locally hosted docker container. ToolResult return must be fixed.
+    print("USING WEB_SEARCH!")
     """
     Args
-
+        - query: the query that the user provides to search on the web for. 
+    Returns
+        - results: list of results provided by SearXNG
     """
-    BASE_URL = "http://localhost:55001"
+    query = str(args.get("query").strip()) 
+    BASE_URL = "http://localhost:55003"
     SEARCH_URL = f"{BASE_URL}/search"
 
     params = {
-        "q": "president of Colombia",
+        "q": query,
         "format": "json",
         "language": "en",
         "safesearch": "0",
         "pageno": 1,
     }
-
+    print("PARAMS: ", params)
     resp = requests.get(SEARCH_URL, params=params, timeout=20)
 
-
-    print(f"Status Code: {resp.status_code}")
-    print(f"Response JSON:  {resp.json()}")
+    #print(f"Status Code: {resp.status_code}")
+    #print(f"Response JSON:  {resp.json()}")
 
     content_type = resp.headers.get("content-type", "")
     print(f"Content-Type: {content_type}")
@@ -302,8 +301,8 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
         snippet = r.get("content")
         engine = r.get("engine")
         print(f"\n[{i}] {title}\n     {url}\n     engine={engine}\n           {snippet}")
-
-    return ToolResult(ok=True, tool_name="web_search")
+    #ToolResult return is empty, will fix this when model routes effectively
+    return ToolResult(ok=True, tool_name="web_search",data={"results": results})
 
 #Tool Result to echo text
 def echo(args: Dict[str, Any]) -> ToolResult:
@@ -315,6 +314,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "get_time": get_time,
     "echo": echo,
     "get_weather": get_weather,
+    "web_search": web_search,
 }
 
 def execute_tool(call: ToolCall) -> ToolResult:
@@ -325,3 +325,4 @@ def execute_tool(call: ToolCall) -> ToolResult:
         return fn(call.args)
     except Exception as e:
         return ToolResult(ok=False, tool_name=call.name, error=f"tool_exception: {e}")
+    
