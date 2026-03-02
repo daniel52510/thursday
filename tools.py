@@ -86,7 +86,6 @@ def weather_score_candidate(r: dict, expected_admin1: str, maybe_state_or_countr
         score += 5
     return score
     
-
 def get_weather(args: Dict[str, Any]) -> ToolResult:
     US_STATES = {
     "AL": "Alabama",
@@ -156,7 +155,6 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     city = parts[0]
     maybe_state_or_country = parts[1] if len(parts) > 1 else ""
     maybe_state_or_country = maybe_state_or_country.strip()
-    print("MAYBE-STATE-OR-COUNTRY: ", maybe_state_or_country)
     days_raw = args.get("days", 2)
     try:
         days = int(days_raw)
@@ -180,7 +178,6 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
                     break
 
     expected_admin1 = US_STATES.get(maybe_state, "")
-    print("EXPECTED-ADMIN1: ", expected_admin1)
     GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
     #LOCATION is being resolved by City, State and not just City when searching the USA
     resp = requests.get(
@@ -198,14 +195,12 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     geo = resp.json()
 
     results = geo.get("results") or []
-    print("RESULTS: ", results)
     if maybe_state:
         # Open-Meteo `admin1` is typically the full state name (e.g., "Florida"), not the 2-letter code.
         candidates = [
             r for r in results
             if (r.get("country_code") == "US") or (r.get("admin1") == expected_admin1)
         ]
-        print("CANDIDATES", candidates)
         if candidates:
             results = candidates
     if not results:
@@ -264,6 +259,49 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
         "precip_sum": (daily.get("precipitation_sum") or [None])[0],
     }
 })
+
+def web_search(args: Dict[str, Any]) -> ToolResult:
+    #pasting general request into locally hosted docker container.
+    """
+    Args
+
+    """
+    BASE_URL = "http://localhost:55001"
+    SEARCH_URL = f"{BASE_URL}/search"
+
+    params = {
+        "q": "president of Colombia",
+        "format": "json",
+        "language": "en",
+        "safesearch": "0",
+        "pageno": 1,
+    }
+
+    resp = requests.get(SEARCH_URL, params=params, timeout=20)
+
+
+    print(f"Status Code: {resp.status_code}")
+    print(f"Response JSON:  {resp.json()}")
+
+    content_type = resp.headers.get("content-type", "")
+    print(f"Content-Type: {content_type}")
+
+    try:
+        data = resp.json()
+    except ValueError:
+        print("Response was not JSON. First 500 chars:")
+        print(resp.text[:500])
+        raise
+    results = data.get("results", [])
+    print(f"Results Returned: {len(results)}")
+
+
+    for i, r in enumerate(results[:5], start=1):
+        title= r.get("title")
+        url=r.get("url")
+        snippet = r.get("content")
+        engine = r.get("engine")
+        print(f"\n[{i}] {title}\n     {url}\n     engine={engine}\n           {snippet}")
 
 #Tool Result to echo text
 def echo(args: Dict[str, Any]) -> ToolResult:
