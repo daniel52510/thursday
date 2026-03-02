@@ -261,7 +261,7 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
 })
 
 def web_search(args: Dict[str, Any]) -> ToolResult:
-    #pasting general request into locally hosted docker container.
+    #pasting general request into locally hosted docker container. ToolResult return must be fixed.
     """
     Args
 
@@ -302,6 +302,8 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
         snippet = r.get("content")
         engine = r.get("engine")
         print(f"\n[{i}] {title}\n     {url}\n     engine={engine}\n           {snippet}")
+
+    return ToolResult(ok=True, tool_name="web_search")
 
 #Tool Result to echo text
 def echo(args: Dict[str, Any]) -> ToolResult:
