@@ -7,7 +7,7 @@ import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo", "get_weather"]
+    name: Literal["get_time", "echo", "get_weather", "web_search"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -32,7 +32,7 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     """
     tz_name = (args.get("timezone") or args.get("tz") or "")
     tz_name = str(tz_name).strip() or None
-    print("TZ_NAME: ", tz_name)
+    #print("TZ_NAME: ", tz_name)
     now_utc = datetime.now(timezone.utc)
     try:
         if tz_name is not None:
@@ -68,10 +68,6 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
             data={"tz": tz_name or ""},  
         )
 
-    #now = datetime.now(timezone.utc)
-    #dt_local = now.astimezone()
-    #return ToolResult(ok=True, tool_name="get_time", data={"time": dt_local.strftime("%I:%M %p").lstrip("0")})
-
 def weather_score_candidate(r: dict, expected_admin1: str, maybe_state_or_country: str, maybe_state: str, city: str) -> int:
     score = 0
     if maybe_state:
@@ -86,7 +82,6 @@ def weather_score_candidate(r: dict, expected_admin1: str, maybe_state_or_countr
         score += 5
     return score
     
-
 def get_weather(args: Dict[str, Any]) -> ToolResult:
     US_STATES = {
     "AL": "Alabama",
@@ -156,7 +151,6 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     city = parts[0]
     maybe_state_or_country = parts[1] if len(parts) > 1 else ""
     maybe_state_or_country = maybe_state_or_country.strip()
-    print("MAYBE-STATE-OR-COUNTRY: ", maybe_state_or_country)
     days_raw = args.get("days", 2)
     try:
         days = int(days_raw)
@@ -180,7 +174,6 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
                     break
 
     expected_admin1 = US_STATES.get(maybe_state, "")
-    print("EXPECTED-ADMIN1: ", expected_admin1)
     GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
     #LOCATION is being resolved by City, State and not just City when searching the USA
     resp = requests.get(
@@ -198,14 +191,12 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     geo = resp.json()
 
     results = geo.get("results") or []
-    print("RESULTS: ", results)
     if maybe_state:
         # Open-Meteo `admin1` is typically the full state name (e.g., "Florida"), not the 2-letter code.
         candidates = [
             r for r in results
             if (r.get("country_code") == "US") or (r.get("admin1") == expected_admin1)
         ]
-        print("CANDIDATES", candidates)
         if candidates:
             results = candidates
     if not results:
@@ -265,6 +256,54 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     }
 })
 
+def web_search(args: Dict[str, Any]) -> ToolResult:
+    #pasting general request into locally hosted docker container. ToolResult return must be fixed.
+    print("USING WEB_SEARCH!")
+    """
+    Args
+        - query: the query that the user provides to search on the web for. 
+    Returns
+        - results: list of results provided by SearXNG
+    """
+    query = str(args.get("query").strip()) 
+    BASE_URL = "http://localhost:55000"
+    SEARCH_URL = f"{BASE_URL}/search"
+
+    params = {
+        "q": query,
+        "format": "json",
+        "language": "en",
+        "safesearch": "0",
+        "pageno": 1,
+    }
+    print("PARAMS: ", params)
+    resp = requests.get(SEARCH_URL, params=params, timeout=20)
+
+    #print(f"Status Code: {resp.status_code}")
+    #print(f"Response JSON:  {resp.json()}")
+
+    content_type = resp.headers.get("content-type", "")
+    print(f"Content-Type: {content_type}")
+
+    try:
+        data = resp.json()
+    except ValueError:
+        print("Response was not JSON. First 500 chars:")
+        print(resp.text[:500])
+        raise
+    results = data.get("results", [])
+    print(f"Results Returned: {len(results)}")
+
+
+    for i, r in enumerate(results[:5], start=1):
+        title= r.get("title")
+        url=r.get("url")
+        snippet = r.get("content")
+        engine = r.get("engine")
+        print(f"\n[{i}] {title}\n     {url}\n     engine={engine}\n           {snippet}")
+    #ToolResult return is empty, will fix this when model routes effectively
+    return ToolResult(ok=True, tool_name="web_search",data={"results": results})
+
 #Tool Result to echo text
 def echo(args: Dict[str, Any]) -> ToolResult:
     text = str(args.get("text", ""))
@@ -275,6 +314,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "get_time": get_time,
     "echo": echo,
     "get_weather": get_weather,
+    "web_search": web_search,
 }
 
 def execute_tool(call: ToolCall) -> ToolResult:
@@ -285,3 +325,4 @@ def execute_tool(call: ToolCall) -> ToolResult:
         return fn(call.args)
     except Exception as e:
         return ToolResult(ok=False, tool_name=call.name, error=f"tool_exception: {e}")
+    

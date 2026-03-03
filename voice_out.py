@@ -2,8 +2,12 @@ from pathlib import Path
 import subprocess
 import torch
 import soundfile as sf
+#import os
 #importing os to make qwen TTS offline.
 
+#os.environ["HF_HUB_OFFLINE"] = "1"
+#os.environ["TRANSFORMER_OFFLINE"] = "1"
+#os.environ["HF_DATASET_OFFLINE"] = "1"
 # Qwen TTS
 from qwen_tts import Qwen3TTSModel
 
