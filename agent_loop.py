@@ -3,7 +3,7 @@ from typing import Literal, Optional
 
 import requests
 from pydantic import ValidationError
-
+import os
 from agent_schemas import AgentResponse, FactExtraction
 from memory import MemoryDB
 from tools import execute_tool
@@ -99,7 +99,7 @@ Rules:
 - If nothing worth saving: {"facts":[]}
 """.strip()
 
-URL = "http://localhost:11434/api/generate"
+URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/generate")
 MODEL = "qwen2.5:7b-instruct"
 
 def should_extract_facts(text: str) -> bool:

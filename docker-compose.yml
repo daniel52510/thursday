@@ -1,0 +1,31 @@
+services:
+  thursday-core:
+    build: .
+    container_name: thursday-core
+    env_file: .env
+    depends_on:
+      - ollama
+      - searxng
+    volumes:
+      - ./brain:/app/brain
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    environment:
+      - BASE_URL=http://localhost:55000/
+    ports:
+      - "127.0.0.1:55000:8080"
+      
+volumes:
+  ollama:
