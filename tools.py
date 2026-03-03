@@ -266,7 +266,7 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
         - results: list of results provided by SearXNG
     """
     query = str(args.get("query").strip()) 
-    BASE_URL = "http://localhost:55003"
+    BASE_URL = "http://localhost:55000"
     SEARCH_URL = f"{BASE_URL}/search"
 
     params = {
