@@ -1,32 +1,77 @@
-# Thursday AI Project
-Thursday AI Assistant & Automator. Helps around your home by keeping you connected and up to date with the world!
+# THURSDAY 🤖
+**Tool-Handling, User-Respecting, Self-Hosted Digital Assistant (Yours)**
 
-## Purpose
-The purpose of this project is to create an AI Assistant/Agent that is able to interact not only with the user but also interact with the user's applications. Applications such as
+THURSDAY is a local-first AI assistant designed to feel like a real “home operator”: conversational, up-to-date (via web search tooling), and eventually voice-enabled across Raspberry Pi “satellite” nodes. The goal is simple: **make an assistant that’s genuinely useful day-to-day, while keeping control and privacy in your hands.**
 
-- Google Gmail
-- Apple Music/YouTube
-- Google Calendar/Apple Calendar
-- Google Home/Apple HomeKit
+---
 
-The creation of a semi-agentic assistant can benefit users greatly. Additionally, edge computing will be involved as this AI will be connected to multiple Raspberry Pis around the home in order to provide users with assistance in everyday life as well as any agentic features.
+## Why THURSDAY exists
+Most assistants are either:
+- smart but **not private** (cloud-first),
+- private but **not useful** (offline-only + no tools),
+- or useful but **not reliable** (tooling is brittle, no guardrails, no observability).
 
-## Tools and Dependencies Used
-- LLM Model: LLAMA
-- Language: Python
-- API: FastAPI
-- Storage: SQLite
+THURSDAY is built to be:
+- **Local-first** (run on your own hardware)
+- **Tool-capable** (weather, time, web search, and more)
+- **Extensible** (drop-in tools + standardized ToolResult format)
+- **Deployable** (Docker/Compose, server-ready)
+- **Security-oriented** (treat web content as untrusted; minimize exposure)
 
-## Milestones:
-- **v0.1** - LLama Implementation and Text Chat + Tool Router
-- **v0.2** - Real Smart Home Controls
-- **v0.3** - Safety & Security Layer
-- **v0.4** - Voice Loop (Wake Word Implementation)
-- **v0.5** - Raspberry Pi Node Publish Events & Spatial Awareness
+---
 
-## Status
-- Early Design / Scaffolding Stage
+## Current Capabilities (Progress so far)
+### Core Agent Loop
+- Structured tool-calling with **Pydantic-validated** agent responses
+- Tool execution + ToolResult envelope (success/error/meta) for reliability
+- Second-pass summarization supported (with a push toward **sanitizing tool output before summarizing** for speed)
 
-## venv-tts
-- qwen-tts
-- soundfile
+### Tools
+- **Web Search** via **SearXNG** (container-friendly, local endpoint)
+- **Weather** via **Open-Meteo** (geocode + forecast) with improved disambiguation logic
+- **Time / Timezone** support (IANA timezone handling)
+- More tools planned: tasks, reminders, “open_url”, calendar/email integrations, etc.
+
+### UI / API
+- **FastAPI** server for chat/tool routing
+- **Streamlit** UI (optional front-end; helpful for rapid iteration)
+
+### Infrastructure
+- Docker-ready (THURSDAY + dependencies can be run as services)
+- Designed to move from dev machine → **Ubuntu server** (eventually leveraging RTX 4070 via GPU inference through Ollama)
+
+---
+
+## Architecture (High Level)
+THURSDAY is intentionally modular:
+
+- **THURSDAY (Brain)**: Python app (tool router + memory)
+- **SearXNG (Eyes)**: web_search backend
+- **Ollama (Voice/Brain Runtime)**: local LLM inference endpoint
+- **SQLite (Memory)**: local “brain” database + persistence
+
+Typical container topology
+- `thursday` → calls `searxng` for web_search
+- `thursday` → calls `ollama` for LLM inference
+
+---
+
+## Tech Stack
+- **Language:** Python
+- **API:** FastAPI
+- **UI:** Streamlit (optional)
+- **LLM Runtime:** Ollama
+- **Models:** Qwen (local-first experimentation; configurable)
+- **Web Search:** SearXNG (self-hosted)
+- **Storage:** SQLite (“brain”)
+- **Deployment:** Docker + Docker Compose
+- **Planned Observability:** Prometheus + Grafana
+
+---
+
+## Quick Start (Local Dev)
+### 1) Install deps
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
