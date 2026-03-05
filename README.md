@@ -68,10 +68,3 @@ Typical container topology
 - **Planned Observability:** Prometheus + Grafana
 
 ---
-
-## Quick Start (Local Dev)
-### 1) Install deps
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
