@@ -1,6 +1,6 @@
 services:
   thursday-core:
-    build: .
+    image: ghcr.io/daniel52510/thursday:latest
     container_name: thursday-core
     env_file: .env
     depends_on:
@@ -9,7 +9,7 @@ services:
     volumes:
       - ./brain:/app/brain
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"
 
   ollama:
     image: ollama/ollama:latest
@@ -25,7 +25,7 @@ services:
     environment:
       - BASE_URL=http://localhost:55000/
     ports:
-      - "127.0.0.1:55000:8080"
+      - "55000:8080"
       
 volumes:
   ollama:

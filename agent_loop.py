@@ -176,7 +176,6 @@ You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
                 "model": MODEL,
                 "system": SYSTEM_PROMPT,
                 "prompt": repair_prompt,
-                "format": "json",
                 "stream": False,
             }
             retries += 1
@@ -209,7 +208,6 @@ TOOL_RESULTS_JSON:
         "model": MODEL,
         "system": FACT_EXTRACTOR_SYSTEM,
         "prompt": extractor_prompt,
-        "format": "json",
         "stream": False,
     }
 
@@ -238,7 +236,6 @@ def run_prompt(user_prompt: str) -> AgentResponse:
         "model": MODEL,
         "system": MEMORY_CONTEXT,
         "prompt": user_prompt,
-        "format": "json",
         "stream": False,
     }
 
@@ -284,7 +281,6 @@ This is the FINAL response. Do not mention tools or results.
             "model": MODEL,
             "system": MEMORY_CONTEXT,
             "prompt": followup_prompt,
-            "format": "json",
             "stream": False,
         }
         agent2 = validate_response(payload2, "final")
