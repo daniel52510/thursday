@@ -1,6 +1,8 @@
 services:
   thursday-core:
-    image: ghcr.io/daniel52510/thursday:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: thursday-core
     env_file: .env
     depends_on:
@@ -10,7 +12,25 @@ services:
       - ./brain:/app/brain
     ports:
       - "8000:8000"
-
+  thursday-tts:
+    container_name: thursday-tts
+    build:
+      context: .
+      dockerfile: Dockerfile.tts
+    volumes:
+      - ./out/tts:/app/out/tts
+    ports:
+      - "9000:9000"
+    environment:
+      TTS_DEVICE: cuda:0
+      TTS_DTYPE: bfloat16
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -18,7 +38,13 @@ services:
       - ollama:/root/.ollama
     ports:
       - "127.0.0.1:11434:11434"
-
+    deploy:
+      resources:
+        reservations:
+          devices:
+           - driver: nvidia
+             count: 1
+             capabilities: [gpu]
   searxng:
     image: searxng/searxng:latest
     container_name: searxng

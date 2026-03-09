@@ -82,6 +82,9 @@ Assistant:
 User: What time is it in America/Chicago?
 Assistant:
 {"reply":"Checking the time in America/Chicago.","tts_text":"Checking the time in America/Chicago.","tool_calls":[{"name":"get_time","args":{"timezone":"America/Chicago"}}]}
+User: What time is it in Miami, FL?
+Assistant:
+{"reply":"Checking the time in America/New_York.","tts_text":"Checking the time in America/New_York.","tool_calls":[{"name":"get_time","args":{"timezone":"America/New_York"}}]}
 User: Why is the sky blue?
 Assistant:
 {"reply":"Because air molecules scatter shorter (blue) wavelengths of sunlight more strongly than longer wavelengths (Rayleigh scattering).","tts_text":"Because air molecules scatter blue light more strongly than other colors. That’s called Rayleigh scattering.","tool_calls":[]}
@@ -285,7 +288,6 @@ This is the FINAL response. Do not mention tools or results.
         }
         agent2 = validate_response(payload2, "final")
         final_reply = agent2.reply
-        final_tts = agent2.tts_text or agent2.reply
 
         db.log_message(role="assistant", content=final_reply)
         run_fact_extractor(db, user_prompt, final_reply, tool_results_json)
