@@ -3,7 +3,7 @@ from typing import Literal, Optional
 
 import requests
 from pydantic import ValidationError
-
+import os
 from agent_schemas import AgentResponse, FactExtraction
 from memory import MemoryDB
 from tools import execute_tool
@@ -82,6 +82,9 @@ Assistant:
 User: What time is it in America/Chicago?
 Assistant:
 {"reply":"Checking the time in America/Chicago.","tts_text":"Checking the time in America/Chicago.","tool_calls":[{"name":"get_time","args":{"timezone":"America/Chicago"}}]}
+User: What time is it in Miami, FL?
+Assistant:
+{"reply":"Checking the time in America/New_York.","tts_text":"Checking the time in America/New_York.","tool_calls":[{"name":"get_time","args":{"timezone":"America/New_York"}}]}
 User: Why is the sky blue?
 Assistant:
 {"reply":"Because air molecules scatter shorter (blue) wavelengths of sunlight more strongly than longer wavelengths (Rayleigh scattering).","tts_text":"Because air molecules scatter blue light more strongly than other colors. That’s called Rayleigh scattering.","tool_calls":[]}
@@ -99,7 +102,7 @@ Rules:
 - If nothing worth saving: {"facts":[]}
 """.strip()
 
-URL = "http://localhost:11434/api/generate"
+URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/generate")
 MODEL = "qwen2.5:7b-instruct"
 
 def should_extract_facts(text: str) -> bool:
@@ -176,7 +179,6 @@ You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
                 "model": MODEL,
                 "system": SYSTEM_PROMPT,
                 "prompt": repair_prompt,
-                "format": "json",
                 "stream": False,
             }
             retries += 1
@@ -209,7 +211,6 @@ TOOL_RESULTS_JSON:
         "model": MODEL,
         "system": FACT_EXTRACTOR_SYSTEM,
         "prompt": extractor_prompt,
-        "format": "json",
         "stream": False,
     }
 
@@ -238,7 +239,6 @@ def run_prompt(user_prompt: str) -> AgentResponse:
         "model": MODEL,
         "system": MEMORY_CONTEXT,
         "prompt": user_prompt,
-        "format": "json",
         "stream": False,
     }
 
@@ -284,12 +284,10 @@ This is the FINAL response. Do not mention tools or results.
             "model": MODEL,
             "system": MEMORY_CONTEXT,
             "prompt": followup_prompt,
-            "format": "json",
             "stream": False,
         }
         agent2 = validate_response(payload2, "final")
         final_reply = agent2.reply
-        final_tts = agent2.tts_text or agent2.reply
 
         db.log_message(role="assistant", content=final_reply)
         run_fact_extractor(db, user_prompt, final_reply, tool_results_json)

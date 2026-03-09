@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable, Dict, Literal, Optional
 from pydantic import BaseModel, Field
+import os
 import requests
 
 #tool contract
@@ -174,7 +175,7 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
                     break
 
     expected_admin1 = US_STATES.get(maybe_state, "")
-    GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
+    GEOCODE_URL = os.getenv("OPEN_METEO_GEOCODE_URL", "https://geocoding-api.open-meteo.com/v1/search")
     #LOCATION is being resolved by City, State and not just City when searching the USA
     resp = requests.get(
         GEOCODE_URL,
@@ -216,7 +217,7 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
 
     print("BEST: ", best)
 
-    FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+    FORECAST_URL = os.getenv("OPEN_METEO_FORECAST_URL", "https://api.open-meteo.com/v1/forecast")
     resp = requests.get(
         FORECAST_URL,
         params={
@@ -265,8 +266,8 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
     Returns
         - results: list of results provided by SearXNG
     """
-    query = str(args.get("query").strip()) 
-    BASE_URL = "http://localhost:55000"
+    query = str(args.get("query") or "").strip()
+    BASE_URL = os.getenv("SEARXNG_BASE_URL", "http://localhost:55000")
     SEARCH_URL = f"{BASE_URL}/search"
 
     params = {
