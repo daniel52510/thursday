@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-
+# Increase pip network timeout/retries (helps with large wheels on slow connections)
+ENV PIP_DEFAULT_TIMEOUT=900
 COPY . /app/
 
 ENV THURSDAY_BRAIN_DIR=/app/brain
