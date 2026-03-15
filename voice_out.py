@@ -1,4 +1,7 @@
 from pathlib import Path
+import logging
+import os
+import shutil
 import subprocess
 import torch
 import soundfile as sf
@@ -7,7 +10,6 @@ from fastapi.responses import FileResponse
 from qwen_tts import Qwen3TTSModel
 # from pydantic import BaseModel, Field
 from pydantic import BaseModel, Field
-import os
 from uuid import uuid4
 
 # Optional offline mode for local/cached Hugging Face assets.
@@ -17,6 +19,7 @@ from uuid import uuid4
 TTS_DEVICE = os.getenv("TTS_DEVICE", "cpu")
 TTS_DTYPE = os.getenv("TTS_DTYPE", "float32")
 _MODEL = None
+logger = logging.getLogger(__name__)
 MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 DEFAULT_LANGUAGE = "English"
 DEFAULT_SPEAKER = "Sohee"
@@ -46,7 +49,7 @@ def healthcheck():
 
 @app.post("/speak", response_model=SpeakResponse)
 def speak(req: SpeakRequest):
-    wav_path, sample_rate, fallback_used = speak_to_wav(
+    wav_path, sample_rate, fallback_used, error_detail = speak_to_wav(
         text=req.text,
         language=req.language,
         speaker=req.speaker,
@@ -55,7 +58,7 @@ def speak(req: SpeakRequest):
     )
 
     if not wav_path:
-        raise HTTPException(status_code=400, detail="Failed to synthesize speech")
+        raise HTTPException(status_code=500, detail=error_detail or "Failed to synthesize speech")
 
     return SpeakResponse(
         ok=True,
@@ -66,7 +69,7 @@ def speak(req: SpeakRequest):
 
 @app.post("/speak/file")
 def speak_file(req: SpeakRequest):
-    wav_path, _, _ = speak_to_wav(
+    wav_path, _, _, error_detail = speak_to_wav(
         text=req.text,
         language=req.language,
         speaker=req.speaker,
@@ -75,7 +78,7 @@ def speak_file(req: SpeakRequest):
     )
 
     if not wav_path:
-        raise HTTPException(status_code=400, detail="Failed to synthesize speech")
+        raise HTTPException(status_code=500, detail=error_detail or "Failed to synthesize speech")
 
     return FileResponse(path=wav_path, media_type="audio/wav", filename=Path(wav_path).name)
 
@@ -110,16 +113,34 @@ def _get_model():
     return _MODEL
 
 
+def _run_fallback_tts(text: str, out_wav: Path) -> bool:
+    if shutil.which("say") and shutil.which("afconvert"):
+        tmp_aiff = OUT_DIR / f"{out_wav.stem}_tmp.aiff"
+        subprocess.run(["say", text, "-o", str(tmp_aiff)], check=True)
+        subprocess.run(
+            ["afconvert", str(tmp_aiff), str(out_wav), "-f", "WAVE", "-d", "LEI16"],
+            check=True,
+        )
+        return out_wav.exists()
+
+    fallback_bin = shutil.which("espeak-ng") or shutil.which("espeak")
+    if fallback_bin:
+        subprocess.run([fallback_bin, "-w", str(out_wav), text], check=True)
+        return out_wav.exists()
+
+    return False
+
+
 def speak_to_wav(
     text: str,
     language: str = DEFAULT_LANGUAGE,
     speaker: str = DEFAULT_SPEAKER,
     instruct: str = DEFAULT_INSTRUCT,
     file_name: str | None = None,
-) -> tuple[str | None, int | None, bool]:
+) -> tuple[str | None, int | None, bool, str | None]:
     text = (text or "").strip()
     if not text:
-        return None, None, False
+        return None, None, False, "Text cannot be empty"
 
     out_wav = _safe_output_path(file_name)
 
@@ -132,16 +153,19 @@ def speak_to_wav(
             instruct=instruct,
         )
         sf.write(str(out_wav), wavs[0], sr, subtype="PCM_16")
-        return str(out_wav), sr, False
+        return str(out_wav), sr, False, None
 
-    except Exception:
-        # Fallback: macOS TTS so THURSDAY never goes mute
-        tmp_aiff = OUT_DIR / f"{out_wav.stem}_tmp.aiff"
-        subprocess.run(["say", text, "-o", str(tmp_aiff)], check=False)
-        subprocess.run(
-            ["afconvert", str(tmp_aiff), str(out_wav), "-f", "WAVE", "-d", "LEI16"],
-            check=False,
+    except Exception as exc:
+        logger.exception("Primary TTS generation failed")
+        try:
+            if _run_fallback_tts(text, out_wav):
+                return str(out_wav), None, True, f"Primary model failed: {exc}"
+        except Exception:
+            logger.exception("Fallback TTS generation failed")
+
+        return (
+            None,
+            None,
+            True,
+            f"Primary model failed: {exc}. No working fallback TTS engine is available in this container.",
         )
-        if out_wav.exists():
-            return str(out_wav), None, True
-        return None, None, True
