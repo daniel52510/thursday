@@ -1,12 +1,29 @@
-FROM python:3.12-slim
+# TTS service image
+# Uses a PyTorch CUDA runtime base so we don't download/build torch during image build.
+# This is much more reliable on flaky networks and is ready to use the RTX 4070.
+FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
 
 WORKDIR /app
 
-COPY requirements-tts.txt .
-RUN pip install --no-cache-dir -r requirements-tts.txt
+# System dependencies for audio encoding/decoding
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+  && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+# Increase pip network timeout/retries (helps with large wheels on slow connections)
+ENV PIP_DEFAULT_TIMEOUT=900
+ENV PIP_RETRIES=10
+
+# Install only the TTS service dependencies first (better layer caching)
+COPY tts-service/requirements.txt /app/tts-service/requirements.txt
+RUN python -m pip install --upgrade pip \
+  && python -m pip install --no-cache-dir -r /app/tts-service/requirements.txt
+
+# Copy only the TTS service code
+COPY tts-service/ /app/tts-service/
 
 EXPOSE 9000
 
-CMD ["uvicorn", "voice_out:app", "--host", "0.0.0.0", "--port", "9000"]
+# Run the FastAPI app
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000"]
