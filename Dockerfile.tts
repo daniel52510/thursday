@@ -11,6 +11,7 @@ WORKDIR /app
 
 # System dependencies for audio encoding/decoding
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    espeak-ng \
     ffmpeg \
     libsndfile1 \
   && rm -rf /var/lib/apt/lists/*
