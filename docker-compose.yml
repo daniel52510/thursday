@@ -36,7 +36,6 @@ services:
     container_name: ollama
     volumes:
       - ollama:/root/.ollama
-    network_mode: "host"
     gpus: all
     ports:
       - "127.0.0.1:11434:11434"
