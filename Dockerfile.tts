@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install only the TTS service dependencies first for better layer caching.
 COPY requirements-tts.txt /app/requirements-tts.txt
 RUN python -m pip install --upgrade pip \
-  && python -m pip install --no-cache-dir -r /app/requirements-tts.txt
+  && grep -vi '^torch$' /app/requirements-tts.txt > /app/requirements-tts-docker.txt \
+  && python -m pip install --no-cache-dir -r /app/requirements-tts-docker.txt
 
 # Copy the actual TTS service code used by this repo.
 COPY voice_out.py /app/voice_out.py
