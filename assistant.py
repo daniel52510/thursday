@@ -1,5 +1,5 @@
 import ollama
-response = ollama.chat(model='qwen2.5:7b-instruct', messages= [
+response = ollama.chat(model='qwen3.5:9b', messages= [
     {
         'role': 'user',
         'content': 'Why is the sky blue?',
