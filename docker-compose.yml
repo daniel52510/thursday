@@ -4,6 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: thursday-core
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     env_file: .env
     depends_on:
       - ollama
@@ -24,27 +30,16 @@ services:
     environment:
       TTS_DEVICE: cuda:0
       TTS_DTYPE: bfloat16
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    gpus: all
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     volumes:
       - ollama:/root/.ollama
+    network_mode: "host"
+    gpus: all
     ports:
       - "127.0.0.1:11434:11434"
-    deploy:
-      resources:
-        reservations:
-          devices:
-           - driver: nvidia
-             count: 1
-             capabilities: [gpu]
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
@@ -52,6 +47,10 @@ services:
       - BASE_URL=http://localhost:55000/
     ports:
       - "55000:8080"
+    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
       
 volumes:
   ollama:
