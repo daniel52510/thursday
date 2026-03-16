@@ -258,8 +258,6 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
 })
 
 def web_search(args: Dict[str, Any]) -> ToolResult:
-    #pasting general request into locally hosted docker container. ToolResult return must be fixed.
-    print("USING WEB_SEARCH!")
     """
     Args
         - query: the query that the user provides to search on the web for. 
@@ -267,6 +265,9 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
         - results: list of results provided by SearXNG
     """
     query = str(args.get("query") or "").strip()
+    if not query:
+        return ToolResult(ok=False, tool_name="web_search", error="missing_query")
+
     BASE_URL = os.getenv("SEARXNG_BASE_URL", "http://localhost:55000")
     SEARCH_URL = f"{BASE_URL}/search"
 
@@ -277,33 +278,41 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
         "safesearch": "0",
         "pageno": 1,
     }
-    print("PARAMS: ", params)
     resp = requests.get(SEARCH_URL, params=params, timeout=20)
-
-    #print(f"Status Code: {resp.status_code}")
-    #print(f"Response JSON:  {resp.json()}")
-
-    content_type = resp.headers.get("content-type", "")
-    print(f"Content-Type: {content_type}")
+    resp.raise_for_status()
 
     try:
         data = resp.json()
     except ValueError:
-        print("Response was not JSON. First 500 chars:")
-        print(resp.text[:500])
-        raise
-    results = data.get("results", [])
-    print(f"Results Returned: {len(results)}")
+        return ToolResult(
+            ok=False,
+            tool_name="web_search",
+            error="invalid_json_response",
+            data={"response_preview": resp.text[:500]},
+        )
 
+    raw_results = data.get("results", [])[:5]
+    results = []
+    for r in raw_results:
+        results.append(
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", ""),
+                "engine": r.get("engine", ""),
+                "published_date": r.get("publishedDate") or r.get("published_date"),
+            }
+        )
 
-    for i, r in enumerate(results[:5], start=1):
-        title= r.get("title")
-        url=r.get("url")
-        snippet = r.get("content")
-        engine = r.get("engine")
-        print(f"\n[{i}] {title}\n     {url}\n     engine={engine}\n           {snippet}")
-    #ToolResult return is empty, will fix this when model routes effectively
-    return ToolResult(ok=True, tool_name="web_search",data={"results": results})
+    return ToolResult(
+        ok=True,
+        tool_name="web_search",
+        data={
+            "query": query,
+            "result_count": len(results),
+            "results": results,
+        },
+    )
 
 #Tool Result to echo text
 def echo(args: Dict[str, Any]) -> ToolResult:
