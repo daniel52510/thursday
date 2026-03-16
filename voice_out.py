@@ -25,7 +25,7 @@ MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 DEFAULT_LANGUAGE = "English"
 DEFAULT_SPEAKER = "Aiden"
 DEFAULT_INSTRUCT = (
-    "Calm, warm, confident, slightly playful."
+    "Speak in a refined British Received Pronunciation accent. Male voice, theatre-trained, calm, elegant, articulate, dry wit, measured pacing, subtle gravitas, crisp consonants, restrained emotion."
 )
 
 class SpeakRequest(BaseModel):
