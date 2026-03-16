@@ -23,9 +23,9 @@ _MODEL = None
 logger = logging.getLogger(__name__)
 MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 DEFAULT_LANGUAGE = "English"
-DEFAULT_SPEAKER = "Sohee"
+DEFAULT_SPEAKER = "Aiden"
 DEFAULT_INSTRUCT = (
-    "Native American English Speaker, slight accent. Calm, warm, confident, slightly playful. Roleplay as someone who is from Singapore."
+    "Calm, warm, confident, slightly playful."
 )
 
 class SpeakRequest(BaseModel):
