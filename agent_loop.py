@@ -103,12 +103,12 @@ Rules:
 """.strip()
 
 URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/generate")
-MODEL = "qwen3.5:9b"
+MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:9b")
 
 def should_extract_facts(text: str) -> bool:
     t = text.lower()
     triggers = [
-        "remember",
+        "remember", 
         "from now on",
         "my name",
         "call me",
