@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import subprocess
+from urllib.parse import quote
 import torch
 import soundfile as sf
 from fastapi import FastAPI, HTTPException
@@ -38,6 +39,8 @@ class SpeakRequest(BaseModel):
 class SpeakResponse(BaseModel):
     ok: bool
     file_path: str
+    file_name: str
+    audio_url: str
     sample_rate: int | None = None
     fallback_used: bool = False
 
@@ -46,6 +49,21 @@ app = FastAPI(title="THURSDAY TTS Service")
 @app.get("/health")
 def healthcheck():
     return {"ok": True, "service": "tts", "model_loaded": _MODEL is not None}
+
+
+@app.get("/audio/{file_name}")
+def get_audio_file(file_name: str):
+    safe_name = Path(file_name).name
+    audio_path = OUT_DIR / safe_name
+
+    if not audio_path.exists() or not audio_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    return FileResponse(
+        path=audio_path,
+        media_type="audio/wav",
+        filename=safe_name,
+    )
 
 @app.post("/speak", response_model=SpeakResponse)
 def speak(req: SpeakRequest):
@@ -60,9 +78,13 @@ def speak(req: SpeakRequest):
     if not wav_path:
         raise HTTPException(status_code=500, detail=error_detail or "Failed to synthesize speech")
 
+    file_name = Path(wav_path).name
+    audio_url = f"/audio/{quote(file_name)}"
     return SpeakResponse(
         ok=True,
         file_path=wav_path,
+        file_name=file_name,
+        audio_url=audio_url,
         sample_rate=sample_rate,
         fallback_used=fallback_used,
     )
