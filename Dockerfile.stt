@@ -1,0 +1,30 @@
+# STT service image
+# Uses a PyTorch CUDA runtime base so we don't download/build torch during image build.
+FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_DEFAULT_TIMEOUT=900
+ENV PIP_RETRIES=10
+
+WORKDIR /app
+
+# System dependencies for audio decoding
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install only the STT service dependencies first for better layer caching.
+COPY requirements-stt.txt /app/requirements-stt.txt
+RUN python -m pip install --upgrade pip \
+  && python -m pip install --no-cache-dir -r /app/requirements-stt.txt
+
+# Copy the actual STT service code used by this repo.
+COPY voice_in.py /app/voice_in.py
+
+RUN mkdir -p /app/out/stt
+
+EXPOSE 9200
+
+CMD ["uvicorn", "voice_in:app", "--host", "0.0.0.0", "--port", "9200"]

@@ -104,6 +104,7 @@ Rules:
 
 URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/generate")
 MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:9b")
+OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 
 def should_extract_facts(text: str) -> bool:
     t = text.lower()
@@ -131,8 +132,11 @@ def initalize_db() -> MemoryDB:
 
 def _post_ollama(payload: dict) -> str:
     """Call Ollama and return the raw JSON string in resp['response']."""
-    resp = requests.post(URL, json=payload, timeout=60)
-    resp.raise_for_status()
+    try:
+        resp = requests.post(URL, json=payload, timeout=OLLAMA_TIMEOUT)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Could not reach Ollama at {URL}: {exc}") from exc
     return resp.json()["response"]
 
 

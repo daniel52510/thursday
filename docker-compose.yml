@@ -31,6 +31,20 @@ services:
       TTS_DEVICE: cuda:0
       TTS_DTYPE: bfloat16
     gpus: all
+  thursday-stt:
+    container_name: thursday-stt
+    build:
+      context: .
+      dockerfile: Dockerfile.stt
+    volumes:
+      - ./out/stt:/app/out/stt
+    ports:
+      - "9200:9200"
+    environment:
+      STT_DEVICE: cuda
+      STT_COMPUTE_TYPE: float16
+      STT_MODEL_SIZE: small
+    gpus: all
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
