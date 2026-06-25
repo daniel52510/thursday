@@ -68,21 +68,21 @@ services:
       - 1.1.1.1
       - 8.8.8.8
   thursday-ui:
-  build:
-    context: .
-    dockerfile: Dockerfile
-  container_name: thursday-ui
-  restart: unless-stopped
-  env_file: .env
-  environment:
-    STT_BASE_URL: http://thursday-stt:9200
-    TTS_BASE_URL: http://thursday-tts:9000
-  depends_on:
-    - thursday-core
-    - thursday-tts
-    - thursday-stt
-  ports:
-    - "8501:8501"
-  command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: thursday-ui
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      STT_BASE_URL: http://thursday-stt:9200
+      TTS_BASE_URL: http://thursday-tts:9000
+    depends_on:
+      - thursday-core
+      - thursday-tts
+      - thursday-stt
+    ports:
+      - "8501:8501"
+    command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
 volumes:
   ollama:
