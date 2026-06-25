@@ -44,10 +44,9 @@ services:
     ports:
       - "9200:9200"
     environment:
-      STT_DEVICE: cuda
-      STT_COMPUTE_TYPE: float16
+      STT_DEVICE: cpu
+      STT_COMPUTE_TYPE: int8
       STT_MODEL_SIZE: small
-    gpus: all
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
