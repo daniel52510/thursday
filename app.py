@@ -1,8 +1,10 @@
+import base64
 import hashlib
 import os
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from agent_loop import run_prompt
 from agent_schemas import AgentResponse
 
@@ -12,24 +14,6 @@ st.title("⚛️ THURSDAY Voice Console")
 TTS_BASE_URL = os.getenv("TTS_BASE_URL", "http://localhost:9000").rstrip("/")
 STT_BASE_URL = os.getenv("STT_BASE_URL", "http://localhost:9200").rstrip("/")
 
-# Initialize session state variables first
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "last_audio_bytes" not in st.session_state:
-    st.session_state.last_audio_bytes = None
-if "audio_id" not in st.session_state:
-    st.session_state.audio_id = 0
-if "last_stt_hash" not in st.session_state:
-    st.session_state.last_stt_hash = None
-
-# Play startup sound once on initial load
-if "started" not in st.session_state:
-    st.session_state.started = True
-    try:
-        with open("start_sound.wav", "rb") as f:
-            st.audio(f.read(), format="audio/wav", autoplay=True)
-    except FileNotFoundError:
-        pass
 
 def fetch_tts_audio(text: str) -> bytes | None:
     if not text:
@@ -54,6 +38,7 @@ def fetch_tts_audio(text: str) -> bytes | None:
     audio_resp.raise_for_status()
     return audio_resp.content
 
+
 def transcribe_audio(audio_bytes: bytes, content_type: str = "audio/wav") -> str | None:
     """Send recorded mic audio to the STT service and return the transcribed text."""
     if not audio_bytes:
@@ -68,6 +53,7 @@ def transcribe_audio(audio_bytes: bytes, content_type: str = "audio/wav") -> str
         return None
     return str(payload.get("text") or "").strip() or None
 
+
 def handle_user_message(text: str) -> None:
     """Shared path for both typed and spoken input: log, run the agent, fetch TTS, rerun."""
     text = (text or "").strip()
@@ -75,13 +61,6 @@ def handle_user_message(text: str) -> None:
         return
 
     st.session_state.messages.append({"role": "user", "text": text})
-
-    # Play thinking ping right before the agent starts processing
-    try:
-        with open("thinking_ping.wav", "rb") as f:
-            st.audio(f.read(), format="audio/wav", autoplay=True)
-    except FileNotFoundError:
-        pass
 
     resp: AgentResponse = run_prompt(text)
     reply_text = resp.reply or ""
@@ -101,16 +80,42 @@ def handle_user_message(text: str) -> None:
 
     st.rerun()
 
-# Render chat history
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "last_audio_bytes" not in st.session_state:
+    st.session_state.last_audio_bytes = None
+if "audio_id" not in st.session_state:
+    st.session_state.audio_id = 0
+if "last_stt_hash" not in st.session_state:
+    st.session_state.last_stt_hash = None
+
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["text"])
 
-# Handle native TTS audio playback
 if st.session_state.last_audio_bytes:
-    st.audio(st.session_state.last_audio_bytes, format="audio/wav", autoplay=True)
-    # Clear the bytes so the audio doesn't replay on unrelated reruns
-    st.session_state.last_audio_bytes = None
+    audio_bytes = st.session_state.last_audio_bytes
+
+    # Hidden, autoplaying audio element with unique id and explicit play()
+    b64 = base64.b64encode(audio_bytes).decode()
+
+    audio_dom_id = f"tts-audio-{st.session_state.audio_id}"
+    components.html(
+        f"""
+        <audio id="{audio_dom_id}" autoplay preload="auto">
+          <source src="data:audio/wav;base64,{b64}" type="audio/wav">
+        </audio>
+        <script>
+          const el = document.getElementById('{audio_dom_id}');
+          if (el) {{
+            // Try to force playback in case autoplay is flaky
+            el.play().catch(() => {{ /* autoplay may be blocked */ }});
+          }}
+        </script>
+        """,
+        height=0,
+    )
 
 mic_audio = st.audio_input("🎤 Speak to THURSDAY")
 
@@ -126,10 +131,9 @@ if mic_audio is not None:
         with st.spinner("Transcribing..."):
             try:
                 transcribed = transcribe_audio(raw, mic_audio.type or "audio/wav")
-            # Step 3 Fix: Catching base Exception prevents UI crash from backend STT errors
-            except Exception as exc: 
+            except requests.RequestException as exc:
                 transcribed = None
-                st.error(f"STT Backend Error: {exc}")
+                st.warning(f"STT request failed: {exc}")
 
         if transcribed:
             handle_user_message(transcribed)
