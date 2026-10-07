@@ -60,7 +60,6 @@ services:
     container_name: searxng
     environment:
       - BASE_URL=http://localhost:55000/
-      - SEARXNG_SEARCH_FORMATS=html,json
     ports:
       - "55000:8080"
     restart: unless-stopped
