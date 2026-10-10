@@ -184,6 +184,7 @@ You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
                 "system": SYSTEM_PROMPT,
                 "prompt": repair_prompt,
                 "stream": False,
+                "format": "json"
             }
             retries += 1
 
