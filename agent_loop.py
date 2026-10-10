@@ -88,6 +88,24 @@ Assistant:
 User: Why is the sky blue?
 Assistant:
 {"reply":"Because air molecules scatter shorter (blue) wavelengths of sunlight more strongly than longer wavelengths (Rayleigh scattering).","tts_text":"Because air molecules scatter blue light more strongly than other colors. That’s called Rayleigh scattering.","tool_calls":[]}
+CRITICAL RULE FOR WEB SEARCHES:
+You do NOT know current events, real-time weather, or recent news. 
+If the user asks for updates, news, weather, or real-time facts, you are FORBIDDEN from guessing or answering from memory. You MUST trigger the search tool.
+
+When searching, your JSON output MUST look exactly like this:
+{
+  "reply": "I am looking that up for you now.",
+  "tts_text": "I'm looking that up.",
+  "tool_calls": [
+    {
+      "name": "searxng_search",
+      "arguments": {
+        "query": "<your optimized search query here>"
+      }
+    }
+  ]
+}
+DO NOT provide the final answer until the search results are returned to you.
 """.strip()
 
 FACT_EXTRACTOR_SYSTEM = """
