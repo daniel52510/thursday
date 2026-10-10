@@ -60,9 +60,11 @@ services:
     container_name: searxng
     environment:
       - BASE_URL=http://localhost:55000/
-      - SEARXNG_SEARCH_FORMATS=html,json
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
     ports:
       - "55000:8080"
+    volumes:
+      - ./searxng:/etc/searxng
     restart: unless-stopped
     dns:
       - 1.1.1.1
