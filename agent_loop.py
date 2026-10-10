@@ -149,14 +149,22 @@ def validate_response(payload: dict, mode: Literal["first", "final"]) -> AgentRe
         try:
             raw = _post_ollama(payload)
             start_idx = raw.find('{')
-            end_idx = raw.rfind('}')
-            if start_idx != -1 and end_idx != -1:
-                raw = raw[start_idx:end_idx+1]
+            if start_idx != -1:
+                brace_count = 0
+                for i, char in enumerate(raw[start_idx:]):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                    if brace_count == 0:
+                        # Slice exactly when the first object closes
+                        raw = raw[start_idx:start_idx + i + 1]
+                        break
             parsed_json = json.loads(raw)
             return AgentResponse.model_validate(parsed_json)
         except (json.JSONDecodeError, ValidationError) as e:
-            print(f"Error in Validation! {e}")
-            print(f"Raw output was: {raw}")
+            print("Error in Validation!", e)
+            retries += 1
             if mode == "final":
                 repair_prompt = f"""
 JSON returned resulted in {e}. Reprocess and follow the rules.
