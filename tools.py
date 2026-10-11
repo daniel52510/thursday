@@ -257,60 +257,151 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     }
 })
 
-def web_search(args: Dict[str, Any]) -> ToolResult:
-    """
-    Args
-        - query: the query that the user provides to search on the web for. 
-    Returns
-        - results: list of results provided by SearXNG
-    """
-    query = str(args.get("query") or "").strip()
-    if not query:
-        return ToolResult(ok=False, tool_name="web_search", error="missing_query")
+# --- web_search (SearXNG) ---------------------------------------------------
+_NEWS_HINTS = ("news", "latest", "breaking", "headline", "today", "this week", "update")
+_SEARXNG_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "THURSDAY/1.0",
+    # SearXNG's bot detection logs an error (and the limiter may block) when no
+    # client IP header is present. THURSDAY calls it directly over the Docker
+    # network, so identify ourselves as a local client.
+    "X-Forwarded-For": "127.0.0.1",
+    "X-Real-IP": "127.0.0.1",
+}
 
-    BASE_URL = os.getenv("SEARXNG_BASE_URL", "http://localhost:55000")
-    SEARCH_URL = f"{BASE_URL}/search"
 
-    params = {
-        "q": query,
-        "format": "json",
-        "language": "en",
-        "safesearch": "0",
-        "pageno": 1,
-    }
-    resp = requests.get(SEARCH_URL, params=params, timeout=20)
-    resp.raise_for_status()
-
-    try:
-        data = resp.json()
-    except ValueError:
-        return ToolResult(
-            ok=False,
-            tool_name="web_search",
-            error="invalid_json_response",
-            data={"response_preview": resp.text[:500]},
-        )
-
-    raw_results = data.get("results", [])[:5]
-    results = []
-    for r in raw_results:
+def _normalize_results(raw_results: list, limit: int) -> list[dict]:
+    results: list[dict] = []
+    seen: set[str] = set()
+    for r in raw_results or []:
+        url = str(r.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        snippet = " ".join(str(r.get("content") or "").split())
         results.append(
             {
-                "title": r.get("title", ""),
-                "url": r.get("url", ""),
-                "snippet": r.get("content", ""),
+                "title": str(r.get("title") or "").strip(),
+                "url": url,
+                "snippet": snippet[:400],
                 "engine": r.get("engine", ""),
                 "published_date": r.get("publishedDate") or r.get("published_date"),
             }
         )
+        if len(results) >= limit:
+            break
+    return results
 
+
+def web_search(args: Dict[str, Any]) -> ToolResult:
+    """
+    Args
+        - query: the query to search the web for (required).
+        - max_results: optional int, 1-10 (default 5).
+    Returns
+        - results: list of {title, url, snippet, engine, published_date}
+        - ok=False with error/unresponsive_engines when SearXNG returns nothing,
+          so the model reports the failure instead of inventing an answer.
+    """
+    query = str(args.get("query") or args.get("q") or "").strip()
+    if not query:
+        return ToolResult(ok=False, tool_name="web_search", error="missing_query")
+
+    try:
+        limit = max(1, min(int(args.get("max_results", 5)), 10))
+    except (TypeError, ValueError):
+        limit = 5
+
+    base_url = os.getenv("SEARXNG_BASE_URL", "http://localhost:55000").rstrip("/")
+    search_url = f"{base_url}/search"
+    timeout = float(os.getenv("SEARXNG_TIMEOUT", "15"))
+
+    # News-style questions try the news category first (recent results),
+    # then everything falls back to the general web category.
+    attempts: list[dict] = []
+    if any(h in query.lower() for h in _NEWS_HINTS):
+        attempts.append({"categories": "news", "time_range": "week"})
+    attempts.append({"categories": "general"})
+
+    unresponsive: dict[str, str] = {}
+    for extra in attempts:
+        params = {
+            "q": query,
+            "format": "json",
+            "language": "en",
+            "safesearch": "0",
+            "pageno": 1,
+            **extra,
+        }
+        try:
+            resp = requests.get(search_url, params=params, headers=_SEARXNG_HEADERS, timeout=timeout)
+        except requests.RequestException as exc:
+            return ToolResult(
+                ok=False,
+                tool_name="web_search",
+                error=f"searxng_unreachable: {exc}",
+                data={"query": query, "search_url": search_url},
+            )
+
+        if resp.status_code == 403:
+            return ToolResult(
+                ok=False,
+                tool_name="web_search",
+                error="searxng_json_disabled",
+                data={"query": query, "hint": "Add 'json' to search.formats in searxng/settings.yml"},
+            )
+        if resp.status_code == 429:
+            return ToolResult(
+                ok=False,
+                tool_name="web_search",
+                error="searxng_rate_limited",
+                data={"query": query, "hint": "Set server.limiter: false in searxng/settings.yml"},
+            )
+        if not resp.ok:
+            return ToolResult(
+                ok=False,
+                tool_name="web_search",
+                error=f"searxng_http_{resp.status_code}",
+                data={"query": query, "response_preview": resp.text[:300]},
+            )
+
+        try:
+            data = resp.json()
+        except ValueError:
+            return ToolResult(
+                ok=False,
+                tool_name="web_search",
+                error="invalid_json_response",
+                data={"query": query, "response_preview": resp.text[:300]},
+            )
+
+        for item in data.get("unresponsive_engines") or []:
+            if isinstance(item, (list, tuple)) and item:
+                unresponsive[str(item[0])] = str(item[1]) if len(item) > 1 else ""
+
+        results = _normalize_results(data.get("results"), limit)
+        if results:
+            return ToolResult(
+                ok=True,
+                tool_name="web_search",
+                data={
+                    "query": query,
+                    "category": extra["categories"],
+                    "result_count": len(results),
+                    "results": results,
+                },
+            )
+
+    if unresponsive:
+        print(f"[web_search] no results for {query!r}; unresponsive engines: {unresponsive}")
     return ToolResult(
-        ok=True,
+        ok=False,
         tool_name="web_search",
+        error="no_results",
         data={
             "query": query,
-            "result_count": len(results),
-            "results": results,
+            "unresponsive_engines": unresponsive,
+            "hint": "Search engines returned nothing (often blocked or rate-limited). Tell the user the search failed.",
         },
     )
 

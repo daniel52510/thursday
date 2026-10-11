@@ -62,6 +62,8 @@ services:
     environment:
       - BASE_URL=http://localhost:55000/
       - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      # secret_key lives in .env, not in the committed settings.yml
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env (openssl rand -hex 32)}
     ports:
       - "55000:8080"
     volumes:

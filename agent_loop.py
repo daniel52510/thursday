@@ -1,12 +1,12 @@
 import json
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 import requests
 from pydantic import ValidationError
 import os
 from agent_schemas import AgentResponse, FactExtraction
 from memory import MemoryDB
-from tools import execute_tool
+from tools import ToolCall, execute_tool
 
 SYSTEM_PROMPT = """
 You are THURSDAY (Tool-Handling, User-Respecting, Self-Hosted Digital Assistant (Yours)) a local-first assistant.
@@ -59,7 +59,10 @@ Allowed Tools:
     - DO NOT USE THIS TOOL FOR TIMELESS INFORMATION (math, general explanations, personal advice) unless the user specifically ask you for sources.
     - Returns
         - results: 5 of the most relevant results that you will read and interpret.
-    - When you use the web_search tool, you will return "I just used the web search tool" and insert your response after.
+    - When writing the FINAL answer after the tool runs:
+      - Answer ONLY from TOOL_RESULTS_JSON[0].data.results (title, snippet, published_date). Do not add facts that are not in the results.
+      - Summarize the 2-4 most relevant points and name the source sites (e.g. "according to The Verge").
+      - If TOOL_RESULTS_JSON[0].ok is false, say the web search did not return results right now and offer to try again. Do NOT answer from memory as if it were current.
 Examples:
 User: What's the weather in Miami, FL right now?
 Assistant:
@@ -108,6 +111,32 @@ Rules:
 URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/generate")
 MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
+# Ollama defaults to a 4096-token context and silently drops the START of the
+# prompt when it overflows -- i.e. the system prompt with the JSON rules.
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+OLLAMA_OPTIONS = {"num_ctx": OLLAMA_NUM_CTX}
+
+# JSON schema passed as Ollama's `format`, so generation is constrained to
+# the AgentResponse shape and only real tool names can be emitted.
+AGENT_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": {"type": "string"},
+        "tts_text": {"type": "string"},
+        "tool_calls": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": list(get_args(ToolCall.model_fields["name"].annotation))},
+                    "args": {"type": "object"},
+                },
+                "required": ["name", "args"],
+            },
+        },
+    },
+    "required": ["reply", "tts_text", "tool_calls"],
+}
 
 def should_extract_facts(text: str) -> bool:
     t = text.lower()
@@ -145,10 +174,12 @@ def _post_ollama(payload: dict) -> str:
 
 # Validate model output, with up to 3 repair attempts
 def validate_response(payload: dict, mode: Literal["first", "final"]) -> AgentResponse:
-    retries = 0
+    max_attempts = 3
     raw = "<bad_output>"
+    original_prompt = payload.get("prompt", "")
+    payload = {**payload, "format": AGENT_RESPONSE_SCHEMA, "think": False, "options": OLLAMA_OPTIONS}
 
-    while retries < 3:
+    for attempt in range(1, max_attempts + 1):
         try:
             raw = _post_ollama(payload)
             start_idx = raw.find('{')
@@ -164,48 +195,31 @@ def validate_response(payload: dict, mode: Literal["first", "final"]) -> AgentRe
                         raw = raw[start_idx:start_idx + i + 1]
                         break
             parsed_json = json.loads(raw)
-            return AgentResponse.model_validate(parsed_json)
-        except (json.JSONDecodeError, ValidationError) as e:
-            print("Error in Validation!", e)
-            retries += 1
+            agent = AgentResponse.model_validate(parsed_json)
             if mode == "final":
-                repair_prompt = f"""
-JSON returned resulted in {e}. Reprocess and follow the rules.
-BAD_OUTPUT_START {raw} BAD_OUTPUT_END
-Rules:
-- If you use a tool, keep \"reply\" short and confirm what you are doing.
-- If no tool is needed, set \"tool_calls\" to [].
-- Never invent tools.
-- tool_calls MUST be [].
-- Never include keys other than \"reply\", \"tts_text\", and \"tool_calls\".
-- \"tool_calls\" must always be present.
-You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
-""".strip()
-            else:
-                repair_prompt = f"""
-JSON returned resulted in {e}. Reprocess and follow the rules.
-BAD_OUTPUT_START {raw} BAD_OUTPUT_END
-Rules:
-- If you use a tool, keep \"reply\" short and confirm what you are doing.
-- If no tool is needed, set \"tool_calls\" to [].
-- Never invent tools.
-- Never include keys other than \"reply\", \"tts_text\", and \"tool_calls\".
-- \"tool_calls\" must always be present.
-You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
-""".strip()
+                agent.tool_calls = []  # final answers never trigger more tools
+            return agent
+        except (json.JSONDecodeError, ValidationError) as e:
+            print(f"Error in Validation (attempt {attempt}/{max_attempts})!", e)
+            tool_rule = "- tool_calls MUST be [].\n" if mode == "final" else ""
+            repair_prompt = f"""
+{original_prompt}
 
-            payload = {
-                "model": MODEL,
-                "system": SYSTEM_PROMPT,
-                "prompt": repair_prompt,
-                "stream": False,
-                "format": "json",
-                "think": False
-            }
-            retries += 1
+Your previous output was invalid ({e}).
+BAD_OUTPUT_START {raw} BAD_OUTPUT_END
+Rules:
+- If you use a tool, keep \"reply\" short and confirm what you are doing.
+- If no tool is needed, set \"tool_calls\" to [].
+{tool_rule}- Never invent tools.
+- Never include keys other than \"reply\", \"tts_text\", and \"tool_calls\".
+- \"tool_calls\" must always be present.
+You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
+""".strip()
+            # keep the same system prompt (incl. MEMORY_CONTEXT) and model settings
+            payload = {**payload, "prompt": repair_prompt}
 
     raise RuntimeError(
-        f"Failed to validate model output after {retries} retries. Last output: {raw}"
+        f"Failed to validate model output after {max_attempts} attempts. Last output: {raw}"
     )
 
 def run_fact_extractor(
@@ -234,7 +248,8 @@ TOOL_RESULTS_JSON:
         "prompt": extractor_prompt,
         "format": "json",
         "stream": False,
-        "think": False
+        "think": False,
+        "options": OLLAMA_OPTIONS,
     }
 
     raw = _post_ollama(payload)
@@ -297,7 +312,8 @@ TOOL_RESULTS_JSON:
 
 TASK:
 Write the final answer to the ORIGINAL_USER_QUESTION for the user.
-Use TOOL_RESULTS_JSON values.
+Use TOOL_RESULTS_JSON values. Do not invent facts that are not in TOOL_RESULTS_JSON.
+If a tool result has "ok": false, tell the user briefly that you couldn't get that information right now (for web_search: the web search came back empty) and offer to try again.
 Return ONLY AgentResponse JSON.
 tool_calls MUST be [].
 This is the FINAL response. Do not mention tools or results.
