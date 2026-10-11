@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable, Dict, Literal, Optional
 from pydantic import BaseModel, Field
 import os
+import re
 import requests
 
 #tool contract
@@ -270,7 +271,31 @@ _SEARXNG_HEADERS = {
 }
 
 
-def _normalize_results(raw_results: list, limit: int) -> list[dict]:
+# Words that say *what kind* of search it is, not *what* it's about.
+_QUERY_STOPWORDS = {
+    "the", "and", "for", "with", "from", "about", "what", "whats", "who", "when", "where",
+    "why", "how", "are", "was", "were", "is", "this", "that", "latest", "news", "today",
+    "current", "currently", "update", "updates", "breaking", "recent", "new", "week",
+    "headlines", "top", "right", "now", "tell", "me", "any",
+}
+
+
+def _query_terms(query: str) -> set[str]:
+    words = re.findall(r"[a-z0-9]+", query.lower())
+    return {w for w in words if len(w) > 2 and w not in _QUERY_STOPWORDS}
+
+
+def _is_relevant(title: str, snippet: str, url: str, terms: set[str]) -> bool:
+    """Drop results that don't mention the query's subject at all
+    (e.g. Bing returning NuGet pages, Reuters returning unrelated headlines)."""
+    if not terms:
+        return True
+    text = f"{title} {snippet} {url}".lower()
+    hits = sum(1 for t in terms if t in text)
+    return hits >= (1 if len(terms) <= 2 else 2)
+
+
+def _normalize_results(raw_results: list, limit: int, terms: set[str] | None = None) -> list[dict]:
     results: list[dict] = []
     seen: set[str] = set()
     for r in raw_results or []:
@@ -279,6 +304,8 @@ def _normalize_results(raw_results: list, limit: int) -> list[dict]:
             continue
         seen.add(url)
         snippet = " ".join(str(r.get("content") or "").split())
+        if terms and not _is_relevant(str(r.get("title") or ""), snippet, url, terms):
+            continue
         results.append(
             {
                 "title": str(r.get("title") or "").strip(),
@@ -379,7 +406,7 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
             if isinstance(item, (list, tuple)) and item:
                 unresponsive[str(item[0])] = str(item[1]) if len(item) > 1 else ""
 
-        results = _normalize_results(data.get("results"), limit)
+        results = _normalize_results(data.get("results"), limit, _query_terms(query))
         if results:
             return ToolResult(
                 ok=True,

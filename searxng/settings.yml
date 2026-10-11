@@ -38,13 +38,22 @@ engines:
     disabled: true
   - name: brave
     disabled: true
+  # startpage: constant CAPTCHAs. reuters: ignores the query (unrelated headlines).
+  - name: startpage
+    disabled: true
+  - name: startpage news
+    disabled: true
+  - name: reuters
+    disabled: true
   - name: duckduckgo
     disabled: false
   - name: bing
     disabled: false
-  - name: startpage
+  - name: yahoo
     disabled: false
   - name: wikipedia
     disabled: false
   - name: bing news
+    disabled: false
+  - name: yahoo news
     disabled: false
