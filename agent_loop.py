@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Literal, Optional, get_args
 
 import requests
@@ -56,6 +57,9 @@ Allowed Tools:
 
     - Use this tool if a user ask about information such as the "current", "latest", "today", "breaking", "updates", "news".
     - Use this tool if a user ask about current office-holders (such as presidents, politicians, CEOs, general C-Suite), software versions, prices, outages, schedules; any information that is fluent and likely to change.
+    - Your training data is OUTDATED. For ANY question about who currently holds a role (CEO, president, prime minister, coach, etc.), you MUST call web_search, even if you think you know the answer.
+    - If the user says "search", "look it up", "check online", "google it", or asks you to verify an earlier answer, you MUST call web_search.
+      If their message doesn't say what to search (e.g. "check that online"), build the query from their PREVIOUS question in MEMORY_CONTEXT.
     - DO NOT USE THIS TOOL FOR TIMELESS INFORMATION (math, general explanations, personal advice) unless the user specifically ask you for sources.
     - Returns
         - results: 5 of the most relevant results that you will read and interpret.
@@ -63,6 +67,7 @@ Allowed Tools:
       - Answer ONLY from TOOL_RESULTS_JSON[0].data.results (title, snippet, published_date). Do not add facts that are not in the results.
       - Summarize the 2-4 most relevant points and name the source sites (e.g. "according to The Verge").
       - If TOOL_RESULTS_JSON[0].ok is false, say the web search did not return results right now and offer to try again. Do NOT answer from memory as if it were current.
+      - If the results contradict something you said earlier or believe, trust the results and correct yourself.
 Examples:
 User: What's the weather in Miami, FL right now?
 Assistant:
@@ -94,6 +99,12 @@ Assistant:
 User: What is the latest in Apple News?
 Assistant:
 {"reply":"I am looking up the latest Apple news for you now.","tts_text":"I'm checking the latest Apple news.","tool_calls":[{"name":"web_search","args":{"query":"latest Apple news updates"}}]}
+User: Who is the CEO of Apple?
+Assistant:
+{"reply":"Let me look that up.","tts_text":"Let me look that up.","tool_calls":[{"name":"web_search","args":{"query":"current CEO of Apple"}}]}
+User: check that online
+Assistant:
+{"reply":"Checking online now.","tts_text":"Checking online now.","tool_calls":[{"name":"web_search","args":{"query":"<the user's previous question, e.g. current CEO of Apple>"}}]}
 """.strip()
 
 FACT_EXTRACTOR_SYSTEM = """
@@ -137,6 +148,54 @@ AGENT_RESPONSE_SCHEMA = {
     },
     "required": ["reply", "tts_text", "tool_calls"],
 }
+
+# --- Search routing backstop ----------------------------------------------
+# Small local models often answer "current" questions from stale training data
+# instead of calling web_search. If the question clearly needs fresh info and
+# the model picked NO tool, we force a web_search ourselves.
+_EXPLICIT_SEARCH = re.compile(
+    r"\b(search|look\s+(it\s+|that\s+|this\s+)?up|google\s+it|"
+    r"(check|verify|confirm)\b[^.?!]{0,30}\bonline|on\s+the\s+(web|internet))\b",
+    re.I,
+)
+_FRESHNESS = re.compile(
+    r"\b(current(ly)?|latest|newest|today'?s?|tonight|right\s+now|this\s+(week|month|year)|"
+    r"breaking|news|headlines?|recent(ly)?|price\s+of|stock\s+price|score)\b",
+    re.I,
+)
+_OFFICE_HOLDER = re.compile(
+    r"\bwho('s|\s+is|\s+are|\s+runs|\s+leads)\b.*\b(ceo|cfo|cto|president|prime\s+minister|"
+    r"governor|mayor|senator|chancellor|pope|chair(man|woman)?|head\s+coach|owner|leader)\b",
+    re.I,
+)
+# Words that say "go search" but not WHAT to search for.
+_SEARCH_FILLER = {
+    "search", "look", "up", "google", "check", "verify", "confirm", "double", "online", "web",
+    "internet", "please", "again", "it", "that", "this", "your", "my", "info", "information",
+    "answer", "the", "on", "can", "could", "you", "for", "me", "do", "a", "now", "and", "go", "ahead",
+}
+
+
+def _needs_search(text: str) -> bool:
+    return bool(_EXPLICIT_SEARCH.search(text) or _FRESHNESS.search(text) or _OFFICE_HOLDER.search(text))
+
+
+def _has_search_content(text: str) -> bool:
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    return any(w not in _SEARCH_FILLER for w in words)
+
+
+def _search_query_for(user_prompt: str, history: list[dict]) -> str:
+    """Use the prompt itself, unless it's just 'check that online' -- then
+    search for the user's previous question instead."""
+    if _has_search_content(user_prompt):
+        return user_prompt.strip()
+    for m in reversed(history):
+        content = str(m.get("content") or "").strip()
+        if m.get("role") == "user" and content and content != user_prompt.strip() and _has_search_content(content):
+            return content
+    return user_prompt.strip()
+
 
 def should_extract_facts(text: str) -> bool:
     t = text.lower()
@@ -281,6 +340,20 @@ def run_prompt(user_prompt: str) -> AgentResponse:
     }
 
     agent = validate_response(payload, "first")
+
+    # Search backstop (see _needs_search): don't let the model answer
+    # "current" questions from memory, and fix empty "check that online" queries.
+    history = db.recent_messages(10)
+    if not agent.tool_calls and _needs_search(user_prompt):
+        query = _search_query_for(user_prompt, history)
+        print(f"[router] model skipped search; forcing web_search({query!r})")
+        agent.tool_calls = [ToolCall(name="web_search", args={"query": query})]
+        agent.reply = "Let me look that up."
+        agent.tts_text = "Let me look that up."
+    for call in agent.tool_calls:
+        if call.name == "web_search" and not _has_search_content(str(call.args.get("query") or "")):
+            call.args["query"] = _search_query_for(user_prompt, history)
+            print(f"[router] rewrote empty search query -> {call.args['query']!r}")
 
     # log assistant plan/initial reply
     db.log_message(role="assistant", content=agent.reply)

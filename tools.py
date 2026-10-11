@@ -345,10 +345,12 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
 
     # News-style questions try the news category first (recent results),
     # then everything falls back to the general web category.
-    attempts: list[dict] = []
-    if any(h in query.lower() for h in _NEWS_HINTS):
-        attempts.append({"categories": "news", "time_range": "week"})
-    attempts.append({"categories": "general"})
+    # News-style questions try recent news first; everything else tries the
+    # general web first. Either way the other category is the fallback, because
+    # general-web engines are often blocked/junk for this instance.
+    news = {"categories": "news", "time_range": "month"}
+    general = {"categories": "general"}
+    attempts = [news, general] if any(h in query.lower() for h in _NEWS_HINTS) else [general, news]
 
     unresponsive: dict[str, str] = {}
     for extra in attempts:
