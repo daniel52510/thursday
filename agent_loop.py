@@ -218,7 +218,8 @@ You MUST respond with ONLY valid JSON matching SYSTEM_PROMPT.
                 "system": SYSTEM_PROMPT,
                 "prompt": repair_prompt,
                 "stream": False,
-                "format": "json"
+                "format": "json",
+                "think": False
             }
             retries += 1
 
@@ -250,7 +251,9 @@ TOOL_RESULTS_JSON:
         "model": MODEL,
         "system": FACT_EXTRACTOR_SYSTEM,
         "prompt": extractor_prompt,
+        "format": "json",
         "stream": False,
+        "think": False
     }
 
     raw = _post_ollama(payload)
