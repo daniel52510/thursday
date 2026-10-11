@@ -61,13 +61,15 @@ services:
     container_name: searxng
     environment:
       - BASE_URL=http://localhost:55000/
-      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      # settings.yml is mounted read-only OUTSIDE /etc/searxng: the image chowns
+      # /etc/searxng on every start, which locks git out of the host folder.
+      - SEARXNG_SETTINGS_PATH=/etc/thursday-searxng/settings.yml
       # secret_key lives in .env, not in the committed settings.yml
       - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env (openssl rand -hex 32)}
     ports:
       - "55000:8080"
     volumes:
-      - ./searxng:/etc/searxng
+      - ./searxng/settings.yml:/etc/thursday-searxng/settings.yml:ro
     restart: unless-stopped
     dns:
       - 1.1.1.1
