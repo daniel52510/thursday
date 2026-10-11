@@ -13,7 +13,8 @@ services:
     env_file: .env
     environment:
       STT_BASE_URL: http://thursday-stt:9200
-      TTS_BASE_URL: http://thursday-tts:9000   
+      TTS_BASE_URL: http://thursday-tts:9000  
+      SEARXNG_BASE_URL: http://searxng:8080 
     depends_on:
       - ollama
       - searxng
@@ -79,10 +80,12 @@ services:
     environment:
       STT_BASE_URL: http://thursday-stt:9200
       TTS_BASE_URL: http://thursday-tts:9000
+      SEARXNG_BASE_URL: http://searxng:8080
     depends_on:
       - thursday-core
       - thursday-tts
       - thursday-stt
+      - searxng
     ports:
       - "8501:8501"
     command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]

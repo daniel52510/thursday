@@ -91,25 +91,6 @@ Assistant:
 User: What is the latest in Apple News?
 Assistant:
 {"reply":"I am looking up the latest Apple news for you now.","tts_text":"I'm checking the latest Apple news.","tool_calls":[{"name":"web_search","args":{"query":"latest Apple news updates"}}]}
-CRITICAL RULE FOR WEB SEARCHES:
-You do NOT know current events, real-time weather, breaking news, or financial data. 
-If the user asks for updates, news, weather, or real-time facts, you are FORBIDDEN from guessing or answering from memory. You MUST trigger the web search tool.
-
-When searching, your JSON output MUST look exactly like this:
-{
-  "reply": "I am looking that up for you now.",
-  "tts_text": "I'm looking that up.",
-  "tool_calls": [
-    {
-      "name": "web_search",
-      "args": {
-        "query": "<your optimized search query here>"
-      }
-    }
-  ]
-}
-DO NOT provide the final answer until the search results are returned to you.
-
 """.strip()
 
 FACT_EXTRACTOR_SYSTEM = """
