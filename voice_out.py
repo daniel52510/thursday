@@ -21,19 +21,18 @@ from uuid import uuid4
 TTS_DEVICE = os.getenv("TTS_DEVICE", "auto")
 TTS_DTYPE = os.getenv("TTS_DTYPE", "auto")
 _MODEL = None
+_VOICE_PROMPT = None
 logger = logging.getLogger(__name__)
-MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+# The Base model clones the voice in VOICE_REF_AUDIO, which scripts/design_voice.py
+# creates from a text description with the VoiceDesign model.
+MODEL_NAME = os.getenv("TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+VOICE_REF_AUDIO = Path(os.getenv("VOICE_REF_AUDIO", "voices/thursday.wav"))
+VOICE_REF_TEXT = Path(os.getenv("VOICE_REF_TEXT", "voices/thursday.txt"))
 DEFAULT_LANGUAGE = "English"
-DEFAULT_SPEAKER = "Ono_anna"
-DEFAULT_INSTRUCT = (
-    "Speak in a refined British Received Pronunciation accent. Female voice, theatre-trained, calm, elegant, articulate, dry wit, measured pacing, subtle gravitas, crisp consonants, restrained emotion."
-)
 
 class SpeakRequest(BaseModel):
     text: str = Field(..., min_length=1)
     language: str = DEFAULT_LANGUAGE
-    speaker: str = DEFAULT_SPEAKER
-    instruct: str = DEFAULT_INSTRUCT
     file_name: str | None = Field(default=None, description="Optional output file name without path")
 
 
@@ -71,8 +70,6 @@ def speak(req: SpeakRequest):
     wav_path, sample_rate, fallback_used, error_detail = speak_to_wav(
         text=req.text,
         language=req.language,
-        speaker=req.speaker,
-        instruct=req.instruct,
         file_name=req.file_name,
     )
 
@@ -95,8 +92,6 @@ def speak_file(req: SpeakRequest):
     wav_path, _, _, error_detail = speak_to_wav(
         text=req.text,
         language=req.language,
-        speaker=req.speaker,
-        instruct=req.instruct,
         file_name=req.file_name,
     )
 
@@ -153,6 +148,21 @@ def _get_model():
     return _MODEL
 
 
+def _get_voice_prompt(model):
+    # Encoding the reference clip is slow, so do it once and reuse it for every request.
+    global _VOICE_PROMPT
+    if _VOICE_PROMPT is None:
+        if not VOICE_REF_AUDIO.exists() or not VOICE_REF_TEXT.exists():
+            raise FileNotFoundError(
+                f"No voice at {VOICE_REF_AUDIO}; run scripts/design_voice.py to create one."
+            )
+        _VOICE_PROMPT = model.create_voice_clone_prompt(
+            ref_audio=str(VOICE_REF_AUDIO),
+            ref_text=VOICE_REF_TEXT.read_text().strip(),
+        )
+    return _VOICE_PROMPT
+
+
 def _run_fallback_tts(text: str, out_wav: Path) -> bool:
     if shutil.which("say") and shutil.which("afconvert"):
         tmp_aiff = OUT_DIR / f"{out_wav.stem}_tmp.aiff"
@@ -174,8 +184,6 @@ def _run_fallback_tts(text: str, out_wav: Path) -> bool:
 def speak_to_wav(
     text: str,
     language: str = DEFAULT_LANGUAGE,
-    speaker: str = DEFAULT_SPEAKER,
-    instruct: str = DEFAULT_INSTRUCT,
     file_name: str | None = None,
 ) -> tuple[str | None, int | None, bool, str | None]:
     text = (text or "").strip()
@@ -186,11 +194,10 @@ def speak_to_wav(
 
     try:
         model = _get_model()
-        wavs, sr = model.generate_custom_voice(
+        wavs, sr = model.generate_voice_clone(
             text=text,
             language=language,
-            speaker=speaker,
-            instruct=instruct,
+            voice_clone_prompt=_get_voice_prompt(model),
         )
         sf.write(str(out_wav), wavs[0], sr, subtype="PCM_16")
         return str(out_wav), sr, False, None

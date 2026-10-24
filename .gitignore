@@ -43,3 +43,5 @@ brain/
 #voice aiff created
 out/
 out/tts
+# Voice design candidates (only the picked voices/thursday.* is kept)
+voices/candidates/

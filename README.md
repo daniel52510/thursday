@@ -49,6 +49,18 @@ docker compose up -d --build     # core, stt, ui, searxng
 Set `OLLAMA_MODEL=gemma4:26b` in `.env`. A CPU-only TTS container is still
 available with `docker compose --profile tts-docker up`.
 
+### THURSDAY's voice
+
+TTS clones the voice in `voices/thursday.wav` with Qwen3-TTS 1.7B Base. To design
+a new one from a text description (1.7B VoiceDesign), render candidates, listen,
+and pick one, then restart the TTS service:
+
+```bash
+.venv-tts/bin/python scripts/design_voice.py --description "..."   # writes voices/candidates/
+afplay voices/candidates/candidate_1.wav
+.venv-tts/bin/python scripts/design_voice.py --pick 1
+```
+
 ## venv-tts
 - qwen-tts
 - soundfile
