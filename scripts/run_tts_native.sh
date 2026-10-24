@@ -5,8 +5,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VENV=.venv-tts
-if [ ! -d "$VENV" ]; then
-  python3 -m venv "$VENV"
+# macOS's /usr/bin/python3 is 3.9, too old for qwen-tts; prefer Homebrew's 3.12.
+PYTHON="${PYTHON:-$(command -v python3.12 || command -v python3)}"
+
+# Check for uvicorn rather than the folder so a half-finished install gets redone.
+if [ ! -x "$VENV/bin/uvicorn" ]; then
+  rm -rf "$VENV"
+  "$PYTHON" -m venv "$VENV"
   "$VENV/bin/pip" install --upgrade pip
   "$VENV/bin/pip" install -r requirements-tts.txt
 fi
