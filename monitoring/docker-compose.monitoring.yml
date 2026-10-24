@@ -58,20 +58,6 @@ services:
     restart: unless-stopped
     networks:
       - monitoring
-  dcgm-exporter:
-    image: nvcr.io/nvidia/k8s/dcgm-exporter:latest
-    container_name: thursday-dcgm-exporter
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=utility,compute
-    cap_add:
-      - SYS_ADMIN
-    ports:
-      - "9400:9400"
-    restart: unless-stopped
-    networks:
-      - monitoring
 volumes:
   prometheus_data:
   grafana_data:

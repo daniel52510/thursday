@@ -12,7 +12,7 @@ The purpose of this project is to create an AI Assistant/Agent that is able to i
 The creation of a semi-agentic assistant can benefit users greatly. Additionally, edge computing will be involved as this AI will be connected to multiple Raspberry Pis around the home in order to provide users with assistance in everyday life as well as any agentic features.
 
 ## Tools and Dependencies Used
-- LLM Model: LLAMA
+- LLM Model: Gemma 4 26B-A4B (Google) via native Ollama
 - Language: Python
 - API: FastAPI
 - Storage: SQLite
@@ -26,6 +26,28 @@ The creation of a semi-agentic assistant can benefit users greatly. Additionally
 
 ## Status
 - Early Design / Scaffolding Stage
+
+## Running on Apple Silicon (M-series Mac)
+Docker Desktop on macOS can't pass the Apple GPU (Metal) into containers, so
+the GPU-heavy services run **natively** and the rest stays in Docker:
+
+| Service | Where | Accelerator |
+|---|---|---|
+| Ollama (LLM) | native macOS app | Metal / MLX |
+| TTS (`voice_out.py`) | native, `scripts/run_tts_native.sh` | MPS |
+| STT, core API, UI, SearXNG | Docker (arm64) | CPU |
+
+Containers reach the native services via `host.docker.internal`.
+
+```bash
+brew install sox ffmpeg          # audio tools qwen-tts expects
+ollama pull gemma4:26b           # ~16 GB at Q4
+./scripts/run_tts_native.sh      # TTS on :9000 (first run builds .venv-tts)
+docker compose up -d --build     # core, stt, ui, searxng
+```
+
+Set `OLLAMA_MODEL=gemma4:26b` in `.env`. A CPU-only TTS container is still
+available with `docker compose --profile tts-docker up`.
 
 ## venv-tts
 - qwen-tts

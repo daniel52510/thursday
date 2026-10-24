@@ -120,7 +120,7 @@ Rules:
 """.strip()
 
 URL = os.getenv("OLLAMA_URL", "http://ollama:11434/api/generate")
-MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+MODEL = os.getenv("OLLAMA_MODEL", "gemma4:26b")
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 # Ollama defaults to a 4096-token context and silently drops the START of the
 # prompt when it overflows -- i.e. the system prompt with the JSON rules.

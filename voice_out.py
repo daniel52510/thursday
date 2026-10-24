@@ -17,8 +17,9 @@ from uuid import uuid4
 #os.environ.setdefault("HF_HUB_OFFLINE", "1")
 #os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 #os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
-TTS_DEVICE = os.getenv("TTS_DEVICE", "cpu")
-TTS_DTYPE = os.getenv("TTS_DTYPE", "float32")
+# "auto" picks Apple GPU (mps) when available, then CUDA, then CPU.
+TTS_DEVICE = os.getenv("TTS_DEVICE", "auto")
+TTS_DTYPE = os.getenv("TTS_DTYPE", "auto")
 _MODEL = None
 logger = logging.getLogger(__name__)
 MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
@@ -117,19 +118,36 @@ def _safe_output_path(file_name: str | None) -> Path:
         return OUT_DIR / cleaned
     return OUT_DIR / f"tts_{uuid4().hex}.wav"
 
+def _resolve_device(name: str) -> str:
+    if name != "auto":
+        return name
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda:0"
+    return "cpu"
+
+
 dtype_map = {
     "float32": torch.float32,
     "float16": torch.float16,
     "bfloat16": torch.bfloat16,
 }
-torch_dtype = dtype_map.get(TTS_DTYPE, torch.float32)
+device = _resolve_device(TTS_DEVICE)
+if TTS_DTYPE == "auto":
+    # bf16 is native on Apple Silicon (M2+) and Ampere+ GPUs; fp32 on CPU.
+    torch_dtype = torch.float32 if device == "cpu" else torch.bfloat16
+else:
+    torch_dtype = dtype_map.get(TTS_DTYPE, torch.float32)
+
+
 def _get_model():
     global _MODEL
     if _MODEL is None:
-        # Mac-friendly settings (CPU). On Linux RTX later: device_map="cuda:0", dtype=torch.bfloat16
+        logger.info("Loading %s on %s (%s)", MODEL_NAME, device, torch_dtype)
         _MODEL = Qwen3TTSModel.from_pretrained(
         MODEL_NAME,
-        device_map=TTS_DEVICE,
+        device_map=device,
         dtype=torch_dtype,
         )
     return _MODEL

@@ -1,6 +1,7 @@
 # STT service image
-# Uses a PyTorch CUDA runtime base so we don't download/build torch during image build.
-FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+# faster-whisper runs on CTranslate2 (no torch needed). It has no Metal backend,
+# so on Apple Silicon this runs on the CPU with int8, which is plenty for "small".
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

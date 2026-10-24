@@ -1,6 +1,7 @@
 # TTS service image
-# Uses a PyTorch CUDA runtime base so we don't download/build torch during image build.
-FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+# CPU-only fallback image (Docker on macOS cannot reach the Apple GPU).
+# The fast path is the native MPS service: scripts/run_tts_native.sh
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -20,8 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install only the TTS service dependencies first for better layer caching.
 COPY requirements-tts.txt /app/requirements-tts.txt
 RUN python -m pip install --upgrade pip \
-  && grep -vi '^torch$' /app/requirements-tts.txt > /app/requirements-tts-docker.txt \
-  && python -m pip install --no-cache-dir -r /app/requirements-tts-docker.txt
+  && python -m pip install --no-cache-dir -r /app/requirements-tts.txt
 
 # Copy the actual TTS service code used by this repo.
 COPY voice_out.py /app/voice_out.py
