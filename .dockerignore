@@ -1,0 +1,16 @@
+# Keep the build context small and secrets out of images.
+.git
+.venv
+.venv-tts
+venv
+__pycache__
+*.py[cod]
+.env
+.env.*
+brain/
+out/
+monitoring/
+searxng/
+.DS_Store
+.vscode/
+.idea/

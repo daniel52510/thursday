@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: thursday-core:latest
     container_name: thursday-core
     restart: unless-stopped
     extra_hosts:
@@ -72,9 +73,9 @@ services:
       - 1.1.1.1
       - 8.8.8.8
   thursday-ui:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Same image as thursday-core (built once), different command.
+    image: thursday-core:latest
+    pull_policy: never
     container_name: thursday-ui
     restart: unless-stopped
     env_file: .env
