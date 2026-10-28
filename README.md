@@ -1,66 +1,70 @@
-# Thursday AI Project
-Thursday AI Assistant & Automator. Helps around your home by keeping you connected and up to date with the world!
+# THURSDAY 🤖
+**Tool-Handling, User-Respecting, Self-Hosted Digital Assistant (Yours)**
 
-## Purpose
-The purpose of this project is to create an AI Assistant/Agent that is able to interact not only with the user but also interact with the user's applications. Applications such as
+THURSDAY is a local-first AI assistant designed to feel like a real “home operator”: conversational, up-to-date (via web search tooling), and eventually voice-enabled across Raspberry Pi “satellite” nodes. The goal is simple: **make an assistant that’s genuinely useful day-to-day, while keeping control and privacy in your hands.**
 
-- Google Gmail
-- Apple Music/YouTube
-- Google Calendar/Apple Calendar
-- Google Home/Apple HomeKit
+---
 
-The creation of a semi-agentic assistant can benefit users greatly. Additionally, edge computing will be involved as this AI will be connected to multiple Raspberry Pis around the home in order to provide users with assistance in everyday life as well as any agentic features.
+## Why THURSDAY exists
+Most assistants are either:
+- smart but **not private** (cloud-first),
+- private but **not useful** (offline-only + no tools),
+- or useful but **not reliable** (tooling is brittle, no guardrails, no observability).
 
-## Tools and Dependencies Used
-- LLM Model: Gemma 4 26B-A4B (Google) via native Ollama
-- Language: Python
-- API: FastAPI
-- Storage: SQLite
+THURSDAY is built to be:
+- **Local-first** (run on your own hardware)
+- **Tool-capable** (weather, time, web search, and more)
+- **Extensible** (drop-in tools + standardized ToolResult format)
+- **Deployable** (Docker/Compose, server-ready)
+- **Security-oriented** (treat web content as untrusted; minimize exposure)
 
-## Milestones:
-- **v0.1** - LLama Implementation and Text Chat + Tool Router
-- **v0.2** - Real Smart Home Controls
-- **v0.3** - Safety & Security Layer
-- **v0.4** - Voice Loop (Wake Word Implementation)
-- **v0.5** - Raspberry Pi Node Publish Events & Spatial Awareness
+---
 
-## Status
-- Early Design / Scaffolding Stage
+## Current Capabilities (Progress so far)
+### Core Agent Loop
+- Structured tool-calling with **Pydantic-validated** agent responses
+- Tool execution + ToolResult envelope (success/error/meta) for reliability
+- Second-pass summarization supported (with a push toward **sanitizing tool output before summarizing** for speed)
 
-## Running on Apple Silicon (M-series Mac)
-Docker Desktop on macOS can't pass the Apple GPU (Metal) into containers, so
-the GPU-heavy services run **natively** and the rest stays in Docker:
+### Tools
+- **Web Search** via **SearXNG** (container-friendly, local endpoint)
+- **Weather** via **Open-Meteo** (geocode + forecast) with improved disambiguation logic
+- **Time / Timezone** support (IANA timezone handling)
+- More tools planned: tasks, reminders, “open_url”, calendar/email integrations, etc.
 
-| Service | Where | Accelerator |
-|---|---|---|
-| Ollama (LLM) | native macOS app | Metal / MLX |
-| TTS (`voice_out.py`) | native, `scripts/run_tts_native.sh` | MPS |
-| STT, core API + web UI, SearXNG | Docker (arm64) | CPU |
+### UI / API
+- **FastAPI** server for chat/tool routing
+- **Streamlit** UI (optional front-end; helpful for rapid iteration)
 
-Containers reach the native services via `host.docker.internal`.
+### Infrastructure
+- Docker-ready (THURSDAY + dependencies can be run as services)
+- Designed to move from dev machine → **Ubuntu server** (eventually leveraging RTX 4070 via GPU inference through Ollama)
 
-```bash
-brew install sox ffmpeg          # audio tools qwen-tts expects
-ollama pull gemma4:26b           # ~16 GB at Q4
-./scripts/run_tts_native.sh      # TTS on :9000 (first run builds .venv-tts)
-docker compose up -d --build     # core (UI at :8000), stt, searxng
-```
+---
 
-Set `OLLAMA_MODEL=gemma4:26b` in `.env`. A CPU-only TTS container is still
-available with `docker compose --profile tts-docker up`.
+## Architecture (High Level)
+THURSDAY is intentionally modular:
 
-### THURSDAY's voice
+- **THURSDAY (Brain)**: Python app (tool router + memory)
+- **SearXNG (Eyes)**: web_search backend
+- **Ollama (Voice/Brain Runtime)**: local LLM inference endpoint
+- **SQLite (Memory)**: local “brain” database + persistence
 
-TTS clones the voice in `voices/thursday.wav` with Qwen3-TTS 1.7B Base. To design
-a new one from a text description (1.7B VoiceDesign), render candidates, listen,
-and pick one, then restart the TTS service:
+Typical container topology
+- `thursday` → calls `searxng` for web_search
+- `thursday` → calls `ollama` for LLM inference
 
-```bash
-.venv-tts/bin/python scripts/design_voice.py --description "..."   # writes voices/candidates/
-afplay voices/candidates/candidate_1.wav
-.venv-tts/bin/python scripts/design_voice.py --pick 1
-```
+---
 
-## venv-tts
-- qwen-tts
-- soundfile
+## Tech Stack
+- **Language:** Python
+- **API:** FastAPI
+- **UI:** Streamlit (optional)
+- **LLM Runtime:** Ollama
+- **Models:** Qwen (local-first experimentation; configurable)
+- **Web Search:** SearXNG (self-hosted)
+- **Storage:** SQLite (“brain”)
+- **Deployment:** Docker + Docker Compose
+- **Planned Observability:** Prometheus + Grafana
+
+---
