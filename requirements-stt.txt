@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+faster-whisper
+# PyAV 19 dropped the metadata_errors kwarg that faster-whisper passes to av.open().
+av<19

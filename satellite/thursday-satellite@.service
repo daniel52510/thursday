@@ -1,0 +1,22 @@
+# systemd template unit for the Pi satellite; the instance name is the Pi user
+# that owns ~/thursday-sat. Install (replace <user>):
+#   sudo cp thursday-satellite@.service /etc/systemd/system/
+#   sudo systemctl enable --now thursday-satellite@<user>
+# THURSDAY_WS (and any other THURSDAY_* overrides) go in ~/.config/thursday/satellite.env.
+[Unit]
+Description=THURSDAY voice satellite (%i)
+Wants=network-online.target
+After=network-online.target sound.target
+
+[Service]
+User=%i
+WorkingDirectory=/home/%i/thursday-sat
+EnvironmentFile=/home/%i/.config/thursday/satellite.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/%i/thursday-sat/venv/bin/python satellite.py
+# satellite.py retries the server itself; this covers crashes and a missing mic at boot.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

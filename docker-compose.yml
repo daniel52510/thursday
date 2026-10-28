@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: thursday-core:latest
     container_name: thursday-core
     restart: unless-stopped
     extra_hosts:
@@ -11,45 +12,67 @@ services:
       - 1.1.1.1
       - 8.8.8.8
     env_file: .env
+    environment:
+      # Ollama and TTS run natively on macOS so they can use the Apple GPU
+      # (Docker Desktop has no Metal passthrough). See README "Apple Silicon".
+      OLLAMA_URL: http://host.docker.internal:11434/api/generate
+      STT_BASE_URL: http://thursday-stt:9200
+      TTS_BASE_URL: http://host.docker.internal:9000
+      SEARXNG_BASE_URL: http://searxng:8080
     depends_on:
-      - ollama
       - searxng
     volumes:
       - ./brain:/app/brain
     ports:
       - "8000:8000"
+      # Plain http://thursday.local (no port) on the LAN. Same app, same token auth.
+      - "80:8000"
+  # CPU-only fallback. The normal path is the native MPS service
+  # (scripts/run_tts_native.sh). Enable with: docker compose --profile tts-docker up
+  # and point TTS_BASE_URL at http://thursday-tts:9000.
   thursday-tts:
     container_name: thursday-tts
+    profiles: ["tts-docker"]
     build:
       context: .
       dockerfile: Dockerfile.tts
     volumes:
       - ./out/tts:/app/out/tts
+      - ./voices:/app/voices:ro
     ports:
       - "9000:9000"
     environment:
-      TTS_DEVICE: cuda:0
-      TTS_DTYPE: bfloat16
-    gpus: all
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
+      TTS_DEVICE: cpu
+      TTS_DTYPE: float32
+  thursday-stt:
+    container_name: thursday-stt
+    build:
+      context: .
+      dockerfile: Dockerfile.stt
+    restart: unless-stopped
     volumes:
-      - ollama:/root/.ollama
-    gpus: all
+      - ./out/stt:/app/out/stt
     ports:
-      - "127.0.0.1:11434:11434"
+      - "9200:9200"
+    environment:
+      STT_DEVICE: cpu
+      STT_COMPUTE_TYPE: int8
+      STT_MODEL_SIZE: small
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
     environment:
       - BASE_URL=http://localhost:55000/
+      # settings.yml is mounted read-only OUTSIDE /etc/searxng: the image chowns
+      # /etc/searxng on every start, which locks git out of the host folder.
+      - SEARXNG_SETTINGS_PATH=/etc/thursday-searxng/settings.yml
+      # secret_key lives in .env, not in the committed settings.yml
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env (openssl rand -hex 32)}
     ports:
       - "55000:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/thursday-searxng/settings.yml:ro
     restart: unless-stopped
     dns:
       - 1.1.1.1
       - 8.8.8.8
-      
-volumes:
-  ollama:

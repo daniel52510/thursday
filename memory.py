@@ -1,4 +1,5 @@
 import sqlite3
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 import json
@@ -47,7 +48,73 @@ class MemoryDB:
                 );
             CREATE INDEX IF NOT EXISTS idx_messages_created_at
                 ON messages(created_at);
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+                );
             """)
+            self._migrate_conversations(conn)
+
+    LEGACY_CONVERSATION = "legacy"
+
+    def _migrate_conversations(self, conn: sqlite3.Connection) -> None:
+        # Messages predate conversations: add the column once, then file every
+        # unassigned message under one "Earlier conversations" thread.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(messages)")}
+        if "conversation_id" not in cols:
+            conn.execute("ALTER TABLE messages ADD COLUMN conversation_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id)")
+        span = conn.execute(
+            "SELECT MIN(created_at) AS first, MAX(created_at) AS last FROM messages WHERE conversation_id IS NULL"
+        ).fetchone()
+        if span["first"]:
+            conn.execute(
+                "INSERT OR IGNORE INTO conversations(id, title, created_at, updated_at) VALUES (?,?,?,?)",
+                (self.LEGACY_CONVERSATION, "Earlier conversations", span["first"], span["last"]),
+            )
+            conn.execute(
+                "UPDATE messages SET conversation_id = ? WHERE conversation_id IS NULL",
+                (self.LEGACY_CONVERSATION,),
+            )
+
+    # --- conversations -------------------------------------------------------
+
+    def create_conversation(self, title: str) -> Dict[str, str]:
+        now = now_iso()
+        conv = {"id": uuid.uuid4().hex, "title": title, "created_at": now, "updated_at": now}
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO conversations(id, title, created_at, updated_at) VALUES (:id,:title,:created_at,:updated_at)",
+                conv,
+            )
+        return conv
+
+    def get_conversation(self, conversation_id: str) -> Optional[Dict[str, str]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_conversations(self, limit: int = 200) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def rename_conversation(self, conversation_id: str, title: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
+        return cur.rowcount > 0
+
+    def delete_conversation(self, conversation_id: str) -> bool:
+        # Facts are global and stay; only this conversation's messages go.
+        with self._connect() as conn:
+            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            cur = conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+        return cur.rowcount > 0
             
     def upsert_fact(self, key: str, value: Any, confidence: float = 1.0, source: Optional[str] = None) -> None:
         value_json = json.dumps(value, ensure_ascii = False)
@@ -93,29 +160,37 @@ class MemoryDB:
         content: str,
         tool_name: Optional[str] = None,
         tool_args: Optional[dict] = None,
-        tool_result: Optional[dict] = None 
+        tool_result: Optional[dict] = None,
+        conversation_id: Optional[str] = None,
     ) -> None:
+        now = now_iso()
         with self._connect() as conn:
             conn.execute("""
-                INSERT INTO messages(role, content, tool_name, tool_args_json, tool_result_json, created_at)
-                         VALUES (?,?,?,?,?,?)
+                INSERT INTO messages(role, content, tool_name, tool_args_json, tool_result_json, created_at, conversation_id)
+                         VALUES (?,?,?,?,?,?,?)
                          """, (
                              role,
                              content,
                              tool_name,
                              json.dumps(tool_args, ensure_ascii=False) if tool_args is not None else None,
                              json.dumps(tool_result, ensure_ascii=False) if tool_result is not None else None,
-                             now_iso()
+                             now,
+                             conversation_id,
                          ))
+            if conversation_id:
+                # Most recently used conversations sort to the top of the sidebar.
+                conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
             
-    def recent_messages(self, limit: int = 30) -> List[dict]:
+    def recent_messages(self, limit: int = 30, conversation_id: Optional[str] = None) -> List[dict]:
+        where, args = ("WHERE conversation_id = ?", (conversation_id, limit)) if conversation_id else ("", (limit,))
         with self._connect() as conn:
-            rows = conn.execute("""
+            rows = conn.execute(f"""
                 SELECT role, content, tool_name, tool_args_json, tool_result_json, created_at
                 FROM messages
+                {where}
                 ORDER BY id DESC
-                LIMIT ? 
-            """, (limit, )).fetchall()
+                LIMIT ?
+            """, args).fetchall()
 
         out = []
         for r in reversed(rows):

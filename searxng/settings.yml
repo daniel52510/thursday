@@ -1,0 +1,59 @@
+# SearXNG settings for THURSDAY (internal, API-only instance).
+# Only overrides are listed here; everything else comes from SearXNG's defaults.
+# server.secret_key is NOT stored here -- it comes from the SEARXNG_SECRET env
+# var (set in .env, passed through docker-compose.yml).
+use_default_settings: true
+
+general:
+  instance_name: "thursday-searxng"
+
+server:
+  # Internal-only instance reached over the Docker network. The limiter is meant
+  # for public instances and blocks/flags API callers (needs Valkey + proxy headers).
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  # THURSDAY calls /search?format=json -- without "json" here SearXNG returns 403.
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 4.0
+  max_request_timeout: 8.0
+
+# Engine overrides (merged into the defaults by name).
+# google / mojeek / brave were returning 403 / 429 for this instance, and a
+# failed engine is suspended for minutes, so they only add latency + noise.
+engines:
+  - name: google
+    disabled: true
+  - name: mojeek
+    disabled: true
+  - name: brave
+    disabled: true
+  # startpage: constant CAPTCHAs. reuters: ignores the query (unrelated headlines).
+  - name: startpage
+    disabled: true
+  - name: startpage news
+    disabled: true
+  - name: reuters
+    disabled: true
+  - name: duckduckgo
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: bing news
+    disabled: false
+  - name: yahoo news
+    disabled: false
