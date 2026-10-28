@@ -21,4 +21,5 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1
 export TTS_DEVICE="${TTS_DEVICE:-auto}"
 export TTS_DTYPE="${TTS_DTYPE:-auto}"
 
-exec "$VENV/bin/uvicorn" voice_out:app --host 0.0.0.0 --port 9000
+# Don't let Ctrl+C wait forever on an open /speak request.
+exec "$VENV/bin/uvicorn" voice_out:app --host 0.0.0.0 --port 9000 --timeout-graceful-shutdown 5

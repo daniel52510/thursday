@@ -35,7 +35,7 @@ the GPU-heavy services run **natively** and the rest stays in Docker:
 |---|---|---|
 | Ollama (LLM) | native macOS app | Metal / MLX |
 | TTS (`voice_out.py`) | native, `scripts/run_tts_native.sh` | MPS |
-| STT, core API, UI, SearXNG | Docker (arm64) | CPU |
+| STT, core API + web UI, SearXNG | Docker (arm64) | CPU |
 
 Containers reach the native services via `host.docker.internal`.
 
@@ -43,7 +43,7 @@ Containers reach the native services via `host.docker.internal`.
 brew install sox ffmpeg          # audio tools qwen-tts expects
 ollama pull gemma4:26b           # ~16 GB at Q4
 ./scripts/run_tts_native.sh      # TTS on :9000 (first run builds .venv-tts)
-docker compose up -d --build     # core, stt, ui, searxng
+docker compose up -d --build     # core (UI at :8000), stt, searxng
 ```
 
 Set `OLLAMA_MODEL=gemma4:26b` in `.env`. A CPU-only TTS container is still

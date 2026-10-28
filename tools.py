@@ -38,10 +38,8 @@ def get_time(args: Dict[str, Any]) -> ToolResult:
     now_utc = datetime.now(timezone.utc)
     try:
         if tz_name is not None:
-            print("reaching this conditional!")
             tz = ZoneInfo(tz_name)
             now_local = now_utc.astimezone(tz)
-            print("NOW_LOCAL: ", now_local)
             used_tz = tz_name
         #creating elif and else statement (NEEDED) to allow graceful erroring if location does not exist or if user ask about own location
         else:
@@ -216,7 +214,6 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
     lat = best["latitude"]
     lon = best["longitude"]
 
-    print("BEST: ", best)
 
     FORECAST_URL = os.getenv("OPEN_METEO_FORECAST_URL", "https://api.open-meteo.com/v1/forecast")
     resp = requests.get(
@@ -255,7 +252,17 @@ def get_weather(args: Dict[str, Any]) -> ToolResult:
         "temp_max": (daily.get("temperature_2m_max") or [None])[0],
         "temp_min": (daily.get("temperature_2m_min") or [None])[0],
         "precip_sum": (daily.get("precipitation_sum") or [None])[0],
-    }
+    },
+    # Every requested day (today first), so "tomorrow" (days=2) is answerable.
+    "forecast": [
+        {"date": d, "temp_max": hi, "temp_min": lo, "precip_sum": p}
+        for d, hi, lo, p in zip(
+            daily.get("time") or [],
+            daily.get("temperature_2m_max") or [],
+            daily.get("temperature_2m_min") or [],
+            daily.get("precipitation_sum") or [],
+        )
+    ],
 })
 
 # --- web_search (SearXNG) ---------------------------------------------------

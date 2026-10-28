@@ -44,4 +44,5 @@ brain/
 out/
 out/tts
 # Voice design candidates (only the picked voices/thursday.* is kept)
-voices/candidates/
+voices/candidates*/
+voices/thursday.prev.*

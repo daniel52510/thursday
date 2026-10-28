@@ -25,6 +25,8 @@ services:
       - ./brain:/app/brain
     ports:
       - "8000:8000"
+      # Plain http://thursday.local (no port) on the LAN. Same app, same token auth.
+      - "80:8000"
   # CPU-only fallback. The normal path is the native MPS service
   # (scripts/run_tts_native.sh). Enable with: docker compose --profile tts-docker up
   # and point TTS_BASE_URL at http://thursday-tts:9000.
@@ -74,24 +76,3 @@ services:
     dns:
       - 1.1.1.1
       - 8.8.8.8
-  thursday-ui:
-    # Same image as thursday-core (built once), different command.
-    image: thursday-core:latest
-    pull_policy: never
-    container_name: thursday-ui
-    restart: unless-stopped
-    env_file: .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      OLLAMA_URL: http://host.docker.internal:11434/api/generate
-      STT_BASE_URL: http://thursday-stt:9200
-      TTS_BASE_URL: http://host.docker.internal:9000
-      SEARXNG_BASE_URL: http://searxng:8080
-    depends_on:
-      - thursday-core
-      - thursday-stt
-      - searxng
-    ports:
-      - "8501:8501"
-    command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
