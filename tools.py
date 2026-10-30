@@ -9,7 +9,7 @@ import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo", "get_weather", "web_search"]
+    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -327,6 +327,54 @@ def _normalize_results(raw_results: list, limit: int, terms: set[str] | None = N
     return results
 
 
+# Snippets are two lines, often stale or off-topic. Reading the top pages (in
+# parallel, under a hard deadline) lets her answer from the article itself.
+READ_PAGES = 3
+READ_DEADLINE_S = 3.0
+EXCERPT_CHARS = 900
+_PAGE_HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"}
+
+
+def _read_page(url: str, terms: set[str]) -> dict | None:
+    import json as _json
+    import trafilatura
+    resp = requests.get(url, headers=_PAGE_HEADERS, timeout=READ_DEADLINE_S)
+    if not resp.ok or "html" not in resp.headers.get("content-type", ""):
+        return None
+    doc = trafilatura.extract(resp.text, url=url, output_format="json", with_metadata=True, favor_precision=True)
+    if not doc:
+        return None
+    doc = _json.loads(doc)
+    paragraphs = [p.strip() for p in (doc.get("text") or "").split("\n") if len(p.strip()) > 40]
+    # The paragraphs that mention the subject, in page order, up to the budget.
+    ranked = sorted(range(len(paragraphs)), key=lambda i: -sum(t in paragraphs[i].lower() for t in terms))
+    keep, used = set(), 0
+    for i in ranked:
+        if used >= EXCERPT_CHARS:
+            break
+        keep.add(i)
+        used += len(paragraphs[i])
+    excerpt = " ".join(paragraphs[i] for i in sorted(keep))[:EXCERPT_CHARS]
+    return {"excerpt": excerpt, "date": doc.get("date")} if excerpt else None
+
+
+def _read_pages(results: list[dict], terms: set[str]) -> None:
+    from concurrent.futures import ThreadPoolExecutor, wait
+    pool = ThreadPoolExecutor(max_workers=READ_PAGES)
+    futures = {pool.submit(_read_page, r["url"], terms): r for r in results[:READ_PAGES]}
+    done, _ = wait(futures, timeout=READ_DEADLINE_S)
+    pool.shutdown(wait=False, cancel_futures=True)  # slow pages are skipped, never waited on
+    for f in done:
+        try:
+            page = f.result()
+        except Exception:
+            continue
+        if page:
+            r = futures[f]
+            r["page_excerpt"] = page["excerpt"]
+            r["published_date"] = r.get("published_date") or page["date"]
+
+
 def web_search(args: Dict[str, Any]) -> ToolResult:
     """
     Args
@@ -417,6 +465,7 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
 
         results = _normalize_results(data.get("results"), limit, _query_terms(query))
         if results:
+            _read_pages(results, _query_terms(query))
             return ToolResult(
                 ok=True,
                 tool_name="web_search",
@@ -425,6 +474,7 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
                     "category": extra["categories"],
                     "result_count": len(results),
                     "results": results,
+                    "note": "Answer in your own words from the excerpts; never read an article out.",
                 },
             )
 
@@ -446,12 +496,43 @@ def echo(args: Dict[str, Any]) -> ToolResult:
     text = str(args.get("text", ""))
     return ToolResult(ok=True, tool_name="echo", data={"text": text})
 
+#Tool Result to list iCloud calendar events (imported lazily: calendar_tool imports ToolResult from here)
+def calendar_events(args: Dict[str, Any]) -> ToolResult:
+    from calendar_tool import calendar_events as _calendar_events
+    return _calendar_events(args)
+
+def calendar_create(args: Dict[str, Any]) -> ToolResult:
+    from calendar_tool import calendar_create as _calendar_create
+    return _calendar_create(args)
+
+def calendar_delete(args: Dict[str, Any]) -> ToolResult:
+    from calendar_tool import calendar_delete as _calendar_delete
+    return _calendar_delete(args)
+
+def calendar_confirm(args: Dict[str, Any]) -> ToolResult:
+    from calendar_tool import calendar_confirm as _calendar_confirm
+    return _calendar_confirm(args)
+
+def sports_scores(args: Dict[str, Any]) -> ToolResult:
+    from live_data import sports_scores as _sports_scores
+    return _sports_scores(args)
+
+def launch_schedule(args: Dict[str, Any]) -> ToolResult:
+    from live_data import launch_schedule as _launch_schedule
+    return _launch_schedule(args)
+
 #Registry (Central Allowlist for Thursday)
 TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "get_time": get_time,
     "echo": echo,
     "get_weather": get_weather,
     "web_search": web_search,
+    "calendar_events": calendar_events,
+    "calendar_create": calendar_create,
+    "calendar_delete": calendar_delete,
+    "calendar_confirm": calendar_confirm,
+    "sports_scores": sports_scores,
+    "launch_schedule": launch_schedule,
 }
 
 def execute_tool(call: ToolCall) -> ToolResult:

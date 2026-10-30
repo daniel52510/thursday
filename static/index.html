@@ -4,16 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#141416" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F3F0E8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#12110E" media="(prefers-color-scheme: dark)">
 <!-- Add to Home Screen: opens full-screen like an app -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="THURSDAY">
-<link rel="manifest" href="/assets/manifest.json">
-<link rel="icon" href="/assets/icons/icon-192.png">
-<link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
+<link rel="manifest" href="/assets/manifest.json?v=2">
+<!-- Favicon: the Night mark without bands (DESIGN.md section 4) -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='20' fill='%2312110E'/%3E%3Cpath d='M 6 48 A 42 14 0 0 1 90 48' transform='rotate(-20 48 48)' fill='none' stroke='%23F0ECE3' stroke-width='5'/%3E%3Ccircle cx='48' cy='48' r='22' fill='%23E8453A'/%3E%3Cpath d='M 6 48 A 42 14 0 0 0 90 48' transform='rotate(-20 48 48)' fill='none' stroke='%2312110E' stroke-width='12'/%3E%3Cpath d='M 6 48 A 42 14 0 0 0 90 48' transform='rotate(-20 48 48)' fill='none' stroke='%23F0ECE3' stroke-width='5'/%3E%3Ccircle cx='87.5' cy='33.6' r='7' fill='%23F0ECE3'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png?v=2">
 <title>THURSDAY</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
       integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous">
@@ -24,28 +25,44 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
         integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
 <style>
+  /* Fonts are self-hosted (assets/fonts, OFL): no font request ever leaves the house. */
+  @font-face { font-family: "Newsreader"; src: url(/assets/fonts/newsreader-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+  @font-face { font-family: "Newsreader"; src: url(/assets/fonts/newsreader-latin-400-italic.woff2) format("woff2"); font-weight: 400; font-style: italic; font-display: swap; }
+  @font-face { font-family: "Inter"; src: url(/assets/fonts/inter-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Inter"; src: url(/assets/fonts/inter-latin-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+  @font-face { font-family: "Inter"; src: url(/assets/fonts/inter-latin-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "Inter Tight"; src: url(/assets/fonts/inter-tight-latin-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: url(/assets/fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: url(/assets/fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+
+  /* ---------- tokens (DESIGN.md section 2) ---------- */
   :root {
-    --bg: #ffffff; --sidebar: #f7f7f8; --surface: #f2f2f3; --surface-2: #e8e8ea;
-    --fg: #18181b; --fg-2: #52525b; --muted: #8b8b94; --border: #e4e4e7;
-    --accent: #6d5dfc; --accent-2: #22b8cf; --accent-fg: #ffffff;
-    --user-bubble: #f0f0f2; --code-bg: #0d1117; --err: #c2410c; --ok: #16a34a;
-    --shadow: 0 8px 30px rgba(0,0,0,.08);
+    --bg: #F3F0E8; --surface: #FBF9F4; --deep: #E6E2D8; --rule: #DDD8CC; --rule-strong: #C9C3B5;
+    --text: #16150F; --text-body: #2E2C26; --text-muted: #55524A; --text-faint: #6B675E;
+    --signal: #E03C31; --signal-text: #C8321F; --link: #0B3D91; --link-hover: #072B66;
+    --inverse-bg: #16150F; --inverse-text: #F3F0E8;
+    --stripe-blue: #2D6BD6; --stripe-green: #4FA36A; --stripe-amber: #E9A62A; --stripe-orange: #F07A2B; --stripe-red: var(--signal);
+    --band: #B8301F; --band-light: #EE6A50; --spot: #8F2416; --ok: #4FA36A;
+    --code-bg: #1B1A16;  /* code stays dark in both themes: the highlight colors are tuned for it */
+    --serif: "Newsreader", Georgia, serif;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --tight: "Inter Tight", "Inter", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --ease: cubic-bezier(.3, 0, .2, 1);
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #141416; --sidebar: #0e0e10; --surface: #1d1d21; --surface-2: #26262b;
-      --fg: #ececf1; --fg-2: #b4b4bd; --muted: #7c7c86; --border: #2a2a30;
-      --accent: #8b7dff; --accent-2: #3dd6e8; --accent-fg: #0e0e10;
-      --user-bubble: #26262b; --code-bg: #0b0b0e; --err: #fb923c; --ok: #4ade80;
-      --shadow: 0 8px 30px rgba(0,0,0,.4);
+      --bg: #12110E; --surface: #1B1A16; --deep: #0A0907; --rule: #2E2C26; --rule-strong: #45423A;
+      --text: #F0ECE3; --text-body: #D6D1C5; --text-muted: #A8A396; --text-faint: #8C877C;
+      --signal: #E8453A; --signal-text: #FF5A47; --link: #8FB0FF; --link-hover: #B5CBFF;
+      --inverse-bg: #F0ECE3; --inverse-text: #12110E; --stripe-amber: #F5B43C; --band-light: #F07060;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #141416; --sidebar: #0e0e10; --surface: #1d1d21; --surface-2: #26262b;
-    --fg: #ececf1; --fg-2: #b4b4bd; --muted: #7c7c86; --border: #2a2a30;
-    --accent: #8b7dff; --accent-2: #3dd6e8; --accent-fg: #0e0e10;
-    --user-bubble: #26262b; --code-bg: #0b0b0e; --err: #fb923c; --ok: #4ade80;
-    --shadow: 0 8px 30px rgba(0,0,0,.4);
+    --bg: #12110E; --surface: #1B1A16; --deep: #0A0907; --rule: #2E2C26; --rule-strong: #45423A;
+    --text: #F0ECE3; --text-body: #D6D1C5; --text-muted: #A8A396; --text-faint: #8C877C;
+    --signal: #E8453A; --signal-text: #FF5A47; --link: #8FB0FF; --link-hover: #B5CBFF;
+    --inverse-bg: #F0ECE3; --inverse-text: #12110E; --stripe-amber: #F5B43C; --band-light: #F07060;
   }
 
   * { box-sizing: border-box; }
@@ -53,212 +70,319 @@
   /* dvh tracks the phone's visible area as the browser bars and keyboard come and go */
   body { height: 100dvh; }
   body {
-    background: var(--bg); color: var(--fg);
-    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased; display: flex; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; display: flex; overflow: hidden;
   }
   button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
   svg { width: 18px; height: 18px; flex: none; }
-  .icon-btn { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--fg-2); }
-  .icon-btn:hover { background: var(--surface); color: var(--fg); }
+  .icon-btn { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 999px; color: var(--text-muted); transition: background .15s var(--ease), color .15s var(--ease); }
+  .icon-btn:hover { background: var(--deep); color: var(--text); }
+  .mono { font: 500 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--text-faint); }
+
+  /* ---------- the mark (Jupiter) ---------- */
+  .mark { width: 30px; height: 30px; }
+  .mark.lg { width: 72px; height: 72px; }
+  .wordmark { font: 600 13px/1 var(--tight); letter-spacing: .22em; text-transform: uppercase; color: var(--text); }
+  .stripe-bar { display: grid; gap: 0; }
+  .stripe-bar i { display: block; height: 3px; }
+  .stripe-bar i:nth-child(1) { background: var(--stripe-blue); } .stripe-bar i:nth-child(2) { background: var(--stripe-green); }
+  .stripe-bar i:nth-child(3) { background: var(--stripe-amber); } .stripe-bar i:nth-child(4) { background: var(--stripe-orange); }
+  .stripe-bar i:nth-child(5) { background: var(--stripe-red); }
 
   /* ---------- sidebar ---------- */
   aside {
-    width: 264px; flex: none; background: var(--sidebar); border-right: 1px solid var(--border);
-    display: flex; flex-direction: column; padding: 12px; gap: 4px; z-index: 20;
-    transition: transform .25s ease;
+    --knockout: var(--surface);
+    width: 280px; flex: none; background: var(--surface); border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; padding: 16px 12px 0; gap: 4px; z-index: 20;
+    transition: transform .25s var(--ease);
   }
-  .brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 14px; font-weight: 650; letter-spacing: .14em; font-size: 13px; }
-  .nav-btn { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: var(--fg-2); text-align: left; width: 100%; }
-  .nav-btn:hover { background: var(--surface); color: var(--fg); }
-  .nav-btn.primary { color: var(--fg); border: 1px solid var(--border); background: var(--bg); }
-  .nav-btn.primary:hover { background: var(--surface); }
-  .conv-list { flex: 1; overflow-y: auto; margin: 6px -6px 0; padding: 0 6px 12px; }
-  .conv-group { font-size: 12px; color: var(--muted); padding: 14px 10px 4px; }
-  .conv-empty { font-size: 13px; color: var(--muted); padding: 14px 10px; }
-  .conv { display: flex; align-items: center; border-radius: 10px; position: relative; }
-  .conv:hover { background: var(--surface); }
-  .conv.active { background: var(--surface-2); }
-  .conv .open { flex: 1; min-width: 0; text-align: left; padding: 7px 10px; font-size: 14px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .conv.active .open { color: var(--fg); }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 2px 8px 18px; }
+  .nav-btn { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 999px; color: var(--text-muted); text-align: left; width: 100%; font-size: 14px; }
+  .nav-btn:hover { background: var(--deep); color: var(--text); }
+  .nav-btn.primary { color: var(--text); border: 1px solid var(--rule-strong); margin-bottom: 4px; font-weight: 500; }
+  .conv-list { flex: 1; overflow-y: auto; margin: 10px -6px 0; padding: 0 6px 12px; }
+  .conv-group { padding: 16px 12px 6px; }
+  .conv-empty { font-size: 13px; color: var(--text-muted); padding: 14px 12px; }
+  .conv { display: flex; align-items: center; border-radius: 12px; position: relative; }
+  .conv:hover { background: var(--deep); }
+  .conv.active { background: var(--deep); }
+  .conv.active::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 2px; border-radius: 2px; background: var(--signal); }
+  .conv .open { flex: 1; min-width: 0; text-align: left; padding: 7px 12px; font-size: 14px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conv.active .open { color: var(--text); }
   .conv .more { width: 28px; height: 28px; margin-right: 4px; opacity: 0; }
   .conv .more svg { width: 16px; height: 16px; }
   .conv:hover .more, .conv.active .more, .conv .more:focus-visible { opacity: 1; }
-  .conv-rename { flex: 1; min-width: 0; margin: 3px 4px; padding: 4px 6px; font: 14px inherit; font-family: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 8px; outline: 0; }
-  .conv-menu { position: absolute; right: 4px; top: 34px; z-index: 30; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 4px; min-width: 140px; }
-  .conv-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border-radius: 8px; font-size: 14px; text-align: left; }
-  .conv-menu button:hover { background: var(--surface); }
+  .conv-rename { flex: 1; min-width: 0; margin: 3px 4px; padding: 4px 8px; font: 14px var(--sans); color: var(--text); background: var(--bg); border: 1px solid var(--link); border-radius: 8px; outline: 0; }
+  .conv-menu { position: absolute; right: 4px; top: 34px; z-index: 30; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: 0 8px 24px rgba(10,9,7,.14); padding: 4px; min-width: 150px; }
+  .conv-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border-radius: 10px; font-size: 14px; text-align: left; }
+  .conv-menu button:hover { background: var(--deep); }
   .conv-menu button svg { width: 16px; height: 16px; }
-  .conv-menu .danger { color: var(--err); }
-  .status { border-top: 1px solid var(--border); padding: 12px 8px 4px; font-size: 12px; color: var(--muted); display: grid; gap: 6px; }
+  .conv-menu .danger { color: var(--signal-text); }
+  .status { margin: 0 -12px; padding: 12px 20px calc(14px + env(safe-area-inset-bottom)); display: grid; gap: 8px; border-top: 1px solid var(--rule); }
   .status-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
-  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); display: inline-block; margin-right: 8px; vertical-align: 1px; }
+  .dot.on { background: var(--ok); }
   .scrim { display: none; }
-  .loc-btn { display: flex; align-items: center; gap: 6px; color: var(--fg-2); font-size: 12.5px; padding: 4px 6px; margin: 0 -6px; border-radius: 8px; text-align: left; }
-  .loc-btn:hover { background: var(--surface); color: var(--fg); }
+  .loc-btn { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 13px; padding: 4px 6px; margin: 0 -6px; border-radius: 8px; text-align: left; }
+  .loc-btn:hover { background: var(--deep); color: var(--text); }
   .loc-btn svg { width: 14px; height: 14px; }
   .loc-btn span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  /* ---------- presence orb ---------- */
-  .orb {
-    --size: 22px; --level: 0;
-    width: var(--size); height: var(--size); border-radius: 50%; flex: none;
-    background:
-      radial-gradient(circle at 32% 28%, rgba(255,255,255,.85), transparent 38%),
-      conic-gradient(from 200deg, var(--accent), var(--accent-2), #c084fc, var(--accent));
-    box-shadow: 0 0 calc(var(--size) * .35) color-mix(in srgb, var(--accent) 45%, transparent);
-    transform: scale(calc(1 + var(--level) * .35));
-    transition: transform .08s linear;
-  }
-  .orb.breathe { animation: breathe 4s ease-in-out infinite; }
-  .orb.spin { animation: spin 1.6s linear infinite, breathe 1.6s ease-in-out infinite; }
-  @keyframes breathe { 50% { filter: brightness(1.15) saturate(1.2); } }
-  @keyframes spin { to { rotate: 360deg; } }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 2px; }
+  .seg button { font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); padding: 6px 8px; border-radius: 999px; }
+  .seg button[aria-pressed="true"] { background: var(--deep); color: var(--text); }
 
   /* ---------- main ---------- */
   main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
-  header { height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 12px; flex: none; }
-  header .title { font-weight: 600; font-size: 15px; color: var(--fg-2); }
+  header { height: 60px; display: flex; align-items: center; gap: 8px; padding: 0 16px; flex: none; border-bottom: 1px solid var(--rule); }
+  .modes { display: inline-flex; gap: 2px; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; margin: 0 auto; }
+  .modes button { padding: 5px 16px; border-radius: 999px; font-size: 13.5px; color: var(--text-muted); }
+  .modes button[aria-pressed="true"] { background: var(--inverse-bg); color: var(--inverse-text); }
+  .modes button:not([aria-pressed="true"]):hover { color: var(--text); background: var(--deep); }
   #menuBtn, #newChatTop { display: none; }
+  .head-side { width: 36px; flex: none; }
   #scroller { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
-  #thread { max-width: 768px; margin: 0 auto; padding: 8px 24px 32px; display: flex; flex-direction: column; gap: 28px; }
+  #thread { max-width: 760px; margin: 0 auto; padding: 28px 24px 32px; display: flex; flex-direction: column; gap: 32px; }
 
-  .empty { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 0 16px 12vh; text-align: center; }
+  .empty { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 16px 10vh; text-align: center; }
   body.is-empty .empty { display: flex; }
   body.is-empty #scroller { display: none; }
-  .empty h1 { font-size: 28px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
-  .empty .orb { --size: 56px; }
+  .empty h1 { font: 400 40px/1.1 var(--serif); letter-spacing: -.01em; margin: 8px 0 0; color: var(--text); }
+  .empty .lede { color: var(--text-muted); font-size: 15px; margin: 0 0 14px; }
   .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 640px; }
-  .suggestion { border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px; font-size: 13.5px; color: var(--fg-2); }
-  .suggestion:hover { background: var(--surface); color: var(--fg); }
+  .suggestion { border: 1px solid var(--rule-strong); border-radius: 999px; padding: 8px 16px; font-size: 14px; color: var(--text-body); transition: background .15s var(--ease); }
+  .suggestion:hover { background: var(--surface); color: var(--text); }
 
-  .msg { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .msg { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   .msg.user { align-items: flex-end; }
   .msg.user .body {
-    background: var(--user-bubble); padding: 10px 16px; border-radius: 20px 20px 6px 20px;
-    max-width: 80%; white-space: pre-wrap; overflow-wrap: anywhere;
+    background: var(--surface); border: 1px solid var(--rule); padding: 10px 16px; border-radius: 14px 14px 4px 14px;
+    max-width: 80%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 16px; color: var(--text);
   }
-  .msg.user .via { font-size: 12px; color: var(--muted); display: flex; gap: 4px; align-items: center; }
-  .msg.user .via svg { width: 13px; height: 13px; }
+  .msg.user .via { display: flex; gap: 6px; align-items: center; }
+  .msg.user .via svg { width: 12px; height: 12px; }
   .msg.assistant { flex-direction: row; gap: 14px; align-items: flex-start; }
-  .msg.assistant > .orb { --size: 24px; margin-top: 2px; }
-  .msg.assistant .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-  .md { overflow-wrap: anywhere; }
+  .msg.assistant > .mark { width: 24px; height: 24px; margin-top: 2px; }
+  .msg.assistant .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .md { overflow-wrap: anywhere; font-size: 16px; color: var(--text-body); }
   .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
   .md p { margin: 0 0 .8em; }
-  .md h1, .md h2, .md h3 { line-height: 1.3; margin: 1.2em 0 .5em; font-weight: 650; }
-  .md h1 { font-size: 1.4em; } .md h2 { font-size: 1.2em; } .md h3 { font-size: 1.05em; }
+  .md strong { color: var(--text); font-weight: 600; }
+  .md h1, .md h2, .md h3 { font-family: var(--serif); font-weight: 400; color: var(--text); line-height: 1.25; margin: 1.2em 0 .45em; }
+  .md h1 { font-size: 1.6em; } .md h2 { font-size: 1.4em; } .md h3 { font-size: 1.2em; }
   .md ul, .md ol { padding-left: 1.4em; margin: 0 0 .8em; } .md li { margin: .25em 0; }
-  .md a { color: var(--accent); text-underline-offset: 2px; }
-  .md blockquote { margin: 0 0 .8em; padding-left: 14px; border-left: 3px solid var(--border); color: var(--fg-2); }
-  .md code { font: 13px/1.5 "SF Mono", ui-monospace, Menlo, monospace; background: var(--surface); padding: .15em .4em; border-radius: 6px; }
-  .md pre { position: relative; background: var(--code-bg); border-radius: 12px; margin: 0 0 .9em; overflow: hidden; border: 1px solid var(--border); }
-  .md pre code { display: block; padding: 14px 16px; overflow-x: auto; background: none; color: #e6edf3; }
-  .md pre .code-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 6px 14px; font-size: 12px; color: #9ca3af; background: rgba(255,255,255,.04); }
-  .md pre .code-head button { color: #9ca3af; font-size: 12px; padding: 2px 8px; border-radius: 6px; }
-  .md pre .code-head button:hover { color: #fff; background: rgba(255,255,255,.08); }
-  .md table { border-collapse: collapse; margin: 0 0 .9em; display: block; overflow-x: auto; font-size: 14px; }
-  .md th, .md td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
-  .md th { background: var(--surface); }
-  .md hr { border: 0; border-top: 1px solid var(--border); margin: 1.2em 0; }
-  .cursor::after { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--fg); margin-left: 4px; vertical-align: middle; animation: blink 1s ease-in-out infinite; }
-  @keyframes blink { 50% { opacity: .2; } }
+  .md a { color: var(--link); text-underline-offset: 3px; } .md a:hover { color: var(--link-hover); }
+  .md blockquote { margin: 0 0 .8em; padding-left: 16px; border-left: 2px solid var(--signal); font: 400 1.15em/1.5 var(--serif); color: var(--text); }
+  .md code { font: 13px/1.5 var(--mono); background: var(--deep); padding: .15em .4em; border-radius: 6px; }
+  .md pre { position: relative; background: var(--code-bg); border-radius: 14px; margin: 0 0 .9em; overflow: hidden; border: 1px solid var(--rule); }
+  .md pre code { display: block; padding: 14px 16px; overflow-x: auto; background: none; color: #E6E1D6; font: 13px/1.7 var(--mono); }
+  .md pre .code-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 6px 16px; font: 500 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: #8C877C; border-bottom: 1px solid #2E2C26; }
+  .md pre .code-head button { color: #A8A396; font: inherit; letter-spacing: inherit; padding: 6px 10px; border-radius: 999px; }
+  .md pre .code-head button:hover { color: #F0ECE3; background: #2E2C26; }
+  .md table { border-collapse: collapse; margin: 0 0 .9em; display: block; overflow-x: auto; font-size: 15px; }
+  .md th, .md td { border-bottom: 1px solid var(--rule); padding: 8px 14px 8px 0; text-align: left; }
+  .md th { font: 500 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--text-faint); border-bottom-color: var(--text); }
+  .md hr { border: 0; border-top: 1px solid var(--rule); margin: 1.4em 0; }
+  .cursor::after { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--signal); margin-left: 6px; vertical-align: middle; animation: blink 1s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
 
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-2); background: var(--surface); border-radius: 999px; padding: 3px 10px 3px 8px; }
-  .chip svg { width: 14px; height: 14px; }
+  .chips:empty { display: none; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font: 500 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--rule); border-radius: 999px; padding: 4px 10px 4px 8px; }
+  .chip::before { content: "▸"; color: var(--signal); }
+  .chip svg { width: 12px; height: 12px; }
   .chip.running svg { animation: spin 1s linear infinite; }
-  .chip.failed { color: var(--err); }
-  .actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; align-items: center; }
+  .chip.failed { color: var(--signal-text); border-color: color-mix(in srgb, var(--signal) 40%, var(--rule)); }
+  @keyframes spin { to { rotate: 360deg; } }
+  .actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s var(--ease); align-items: center; }
   .msg:hover .actions, .actions:focus-within { opacity: 1; }
   .actions .icon-btn { width: 30px; height: 30px; }
-  .actions .meta { font-size: 12px; color: var(--muted); margin-left: 6px; }
-  .error-note { color: var(--err); font-size: 14px; }
+  .actions .icon-btn svg { width: 16px; height: 16px; }
+  .actions .meta { margin-left: 6px; }
+  .error-note { color: var(--signal-text); font-size: 14px; }
 
   /* ---------- composer ---------- */
-  .composer-wrap { padding: 0 16px calc(16px + env(safe-area-inset-bottom)); flex: none; }
+  .composer-wrap { padding: 0 16px calc(14px + env(safe-area-inset-bottom)); flex: none; }
   .composer {
-    max-width: 768px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 26px; padding: 10px 10px 10px 18px; display: flex; align-items: flex-end; gap: 6px;
-    box-shadow: var(--shadow);
+    max-width: 760px; margin: 0 auto; background: var(--surface); border: 1px solid var(--rule-strong);
+    border-radius: 14px; padding: 8px 8px 8px 16px; display: flex; align-items: flex-end; gap: 4px;
+    transition: border-color .15s var(--ease);
   }
-  .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+  .composer:focus-within { border-color: var(--text-faint); }
   #input {
-    flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: var(--fg);
-    font: inherit; line-height: 1.5; max-height: 220px; padding: 6px 0; min-height: 36px;
+    flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: var(--text);
+    font: 16px/1.5 var(--sans); max-height: 220px; padding: 6px 0; min-height: 36px;
   }
-  #input::placeholder { color: var(--muted); }
+  #input::placeholder { color: var(--text-faint); }
   .send {
-    width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
-    background: var(--fg); color: var(--bg); transition: opacity .15s, transform .1s;
+    width: 36px; height: 36px; border-radius: 999px; display: grid; place-items: center;
+    background: var(--inverse-bg); color: var(--inverse-text); transition: opacity .15s var(--ease), transform .1s;
   }
   .send:disabled { opacity: .25; cursor: default; }
   .send:not(:disabled):active { transform: scale(.94); }
-  .voice-btn { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--fg-2); }
-  .voice-btn:hover { background: var(--surface-2); color: var(--fg); }
-  .hint { text-align: center; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .voice-btn { width: 36px; height: 36px; border-radius: 999px; display: grid; place-items: center; color: var(--text-muted); }
+  .voice-btn:hover { background: var(--deep); color: var(--text); }
+  .hint { text-align: center; margin-top: 10px; }
 
-  /* ---------- voice mode ---------- */
+  /* ---------- voice mode (DESIGN.md section 8) ---------- */
   #voice {
+    --level: 0;
     position: fixed; inset: 0; z-index: 50; background: var(--bg);
     display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-    padding: 24px 16px calc(32px + env(safe-area-inset-bottom));
-    opacity: 0; pointer-events: none; transition: opacity .25s ease;
+    padding: 20px 16px calc(28px + env(safe-area-inset-bottom));
+    opacity: 0; pointer-events: none; transition: opacity .25s var(--ease);
   }
   #voice.open { opacity: 1; pointer-events: auto; }
-  #voice .top { width: 100%; display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 13px; letter-spacing: .12em; }
-  #voiceOrbBtn { display: grid; place-items: center; border-radius: 50%; }
-  #voice .orb { --size: min(220px, 52vw); }
-  #voiceState { font-size: 15px; color: var(--fg-2); margin-top: 28px; min-height: 1.6em; text-align: center; }
-  #voiceCaption { max-width: 560px; text-align: center; color: var(--muted); font-size: 15px; min-height: 3.2em; margin-top: 8px; }
-  #voice .controls { display: flex; gap: 16px; }
-  .round { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--fg); }
-  .round:hover { background: var(--surface-2); }
-  .round.off { background: var(--fg); color: var(--bg); }
-  .round.end { background: color-mix(in srgb, var(--err) 18%, var(--surface)); color: var(--err); }
-  .round svg { width: 22px; height: 22px; }
+  #voice .top { width: 100%; max-width: 920px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  #voice .top .brand { padding: 0; }
+  #voice .readouts { display: flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; text-align: right; }
+  .stage { display: flex; flex-direction: column; align-items: center; width: 100%; }
+  .vfig { width: min(440px, 86vw); height: auto; overflow: visible; }
+  #voiceState { margin-top: 14px; min-height: 1.4em; text-align: center; }
+  #voiceCaption { max-width: 620px; text-align: center; font: 400 25px/1.35 var(--serif); color: var(--text); min-height: 2.7em; margin-top: 14px; padding: 0 8px; }
+  #voiceHeard { max-width: 620px; text-align: center; margin-top: 10px; min-height: 1.4em; padding: 0 8px; text-transform: none; letter-spacing: .02em; font-size: 12.5px; color: var(--text-muted); }
+  #voiceHeard span { text-transform: uppercase; letter-spacing: .12em; color: var(--text-faint); margin-right: 6px; }
+  #voice .controls { display: flex; gap: 28px; align-items: center; }
+  .round { width: 52px; height: 52px; border-radius: 999px; display: grid; place-items: center; border: 1px solid var(--rule-strong); color: var(--text); }
+  .round:hover { background: var(--surface); }
+  .round svg { width: 20px; height: 20px; }
+  .talk { width: 76px; height: 76px; border-radius: 999px; display: grid; place-items: center; background: var(--inverse-bg); color: var(--inverse-text); transition: transform .15s var(--ease); }
+  .talk:active { transform: scale(.95); }
+  .talk svg { width: 26px; height: 26px; }
+  .talk.muted { background: transparent; color: var(--text); border: 1px solid var(--rule-strong); }
 
-  /* ---------- token dialog ---------- */
-  dialog { border: 1px solid var(--border); border-radius: 16px; background: var(--bg); color: var(--fg); padding: 24px; width: min(420px, calc(100vw - 32px)); box-shadow: var(--shadow); }
-  dialog::backdrop { background: rgba(0,0,0,.45); backdrop-filter: blur(2px); }
-  dialog h2 { margin: 0 0 6px; font-size: 18px; }
-  dialog p { margin: 0 0 16px; color: var(--fg-2); font-size: 14px; }
-  dialog input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: 14px ui-monospace, Menlo, monospace; }
-  dialog .row { display: flex; justify-content: flex-end; margin-top: 16px; }
-  dialog .row button { background: var(--fg); color: var(--bg); padding: 8px 16px; border-radius: 10px; font-weight: 550; }
+  /* figure parts */
+  .vfig .stripe path { fill: none; stroke-width: 6; transition: opacity .25s var(--ease), stroke .25s var(--ease); }
+  .vfig .s0 path { stroke: var(--stripe-blue); } .vfig .s1 path { stroke: var(--stripe-green); }
+  .vfig .s2 path { stroke: var(--stripe-amber); } .vfig .s3 path { stroke: var(--stripe-orange); }
+  .vfig .s4 path { stroke: var(--stripe-red); }
+  .vfig .rise { transform-box: fill-box; transform-origin: 50% 100%; transition: transform .35s var(--ease); }
+  .vfig .halo { fill: url(#vfig-halo); opacity: calc(var(--level) * .9); pointer-events: none; }
+  .vfig .orbit { fill: none; stroke: var(--text); stroke-width: 3; }
+  .vfig .knock { fill: none; stroke: var(--bg); stroke-width: 11; }
+  .vfig .moon { fill: var(--text); }
+  .vfig .globe { fill: var(--signal); transition: fill .25s var(--ease); }
+  .vfig .b { fill: var(--band); } .vfig .bl { fill: var(--band-light); } .vfig .spot { fill: var(--spot); }
+  .vfig .b, .vfig .bl, .vfig .spot { transition: fill .25s var(--ease); }
+  .vfig .planet { transform-box: view-box; transform-origin: 378px 110px; transform: scale(calc(1 + var(--level) * .06)); transition: transform .08s linear; }
+  .vfig .ring { fill: none; stroke: var(--text-faint); stroke-width: 1.5; opacity: 0; vector-effect: non-scaling-stroke; transform-box: fill-box; transform-origin: center; }
+  .vfig .orbiting { display: none; }
+
+  /* standby: the planet breathes, stripes rest */
+  #voice[data-state="standby"] .globe-g { animation: standby 6s ease-in-out infinite; }
+  #voice[data-state="standby"] .stripe { opacity: .35; }
+  @keyframes standby { 0%, 100% { opacity: .5; } 50% { opacity: .85; } }
+  /* listening: three rings expand from the planet */
+  #voice[data-state="listening"] .ring { animation: ring 2.4s var(--ease) infinite; }
+  #voice[data-state="listening"] .ring:nth-of-type(2) { animation-delay: .8s; }
+  #voice[data-state="listening"] .ring:nth-of-type(3) { animation-delay: 1.6s; }
+  @keyframes ring { from { transform: scale(1); opacity: .55; } to { transform: scale(2.8); opacity: 0; } }
+  /* thinking: bands drift, the moon orbits, stripes flow up */
+  #voice[data-state="thinking"] .bands { animation: drift 3s ease-in-out infinite; }
+  @keyframes drift { 0%, 100% { transform: translateY(-2px); } 50% { transform: translateY(2px); } }
+  #voice[data-state="thinking"] .orbiting { display: inline; }
+  #voice[data-state="thinking"] .moon-rest { display: none; }
+  #voice[data-state="thinking"] .stripe path { stroke-dasharray: 6 6; animation: flow .8s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -12; } }
+  /* listening + speaking: the rising stripes become a live five-band spectrum
+     (blue = lows ... red = highs) of the mic or of her voice. --b is set per
+     stripe every frame by animateOrb(), so no CSS transition here. */
+  #voice[data-state="listening"] .rise, #voice[data-state="speaking"] .rise { transform: scaleY(calc(.08 + var(--b, 0) * .92)); transition: none; }
+  #voice[data-state="listening"] .stripe { opacity: calc(.45 + var(--b, 0) * .55); }
+  /* error: gray planet, broken stripes (she also says what's down) */
+  #voice[data-state="error"] .globe { fill: #8C877C; }
+  #voice[data-state="error"] .b, #voice[data-state="error"] .bl, #voice[data-state="error"] .spot { fill: #A8A396; }
+  #voice[data-state="error"] .stripe path { stroke: var(--rule-strong); stroke-dasharray: 22 10; }
+  #voice[data-state="error"] #voiceState { color: var(--signal-text); }
+
+  /* ---------- dialogs ---------- */
+  dialog { border: 1px solid var(--rule); border-radius: 24px; background: var(--surface); color: var(--text); padding: 28px; width: min(440px, calc(100vw - 32px)); box-shadow: 0 24px 60px rgba(10,9,7,.22); }
+  dialog::backdrop { background: rgba(10,9,7,.5); }
+  dialog h2 { margin: 0 0 8px; font: 400 26px/1.2 var(--serif); }
+  dialog p { margin: 0 0 18px; color: var(--text-muted); font-size: 14.5px; }
+  dialog code { font: 12.5px var(--mono); background: var(--deep); padding: .1em .35em; border-radius: 5px; }
+  dialog input { width: 100%; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--rule-strong); background: var(--bg); color: var(--text); font: 14px var(--mono); }
+  dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  dialog .row button { background: var(--inverse-bg); color: var(--inverse-text); padding: 10px 20px; border-radius: 999px; font-weight: 500; min-height: 44px; }
+  dialog .row button.secondary { background: transparent; color: var(--text); border: 1px solid var(--rule-strong); }
+
+  /* ---------- alarms ---------- */
+  dialog.alarms { width: min(500px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; }
+  .alarms-head { display: flex; align-items: center; justify-content: space-between; margin: -6px -8px 0 0; }
+  .alarm { display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid var(--rule); }
+  #alarmItems { border-bottom: 1.5px solid var(--text); }
+  #alarmItems > :first-child { border-top: 1.5px solid var(--text); }
+  .alarm-main { flex: 1; min-width: 0; text-align: left; }
+  .alarm-time { font: 400 30px/1.15 var(--serif); font-variant-numeric: tabular-nums; }
+  .alarm.off .alarm-time, .alarm.off .alarm-sub { color: var(--text-faint); }
+  .alarm-sub { font: 500 10.5px/1.6 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .alarm .icon-btn svg { width: 16px; height: 16px; }
+  .alarm-empty { font-size: 14px; color: var(--text-muted); padding: 14px 0; border-top: 1.5px solid var(--text); }
+  .switch { position: relative; width: 42px; height: 26px; flex: none; border-radius: 999px; background: var(--deep); border: 1px solid var(--rule-strong); transition: background .15s var(--ease); }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-faint); transition: transform .15s var(--ease), background .15s var(--ease); }
+  .switch[aria-checked="true"] { background: var(--inverse-bg); border-color: var(--inverse-bg); }
+  .switch[aria-checked="true"]::after { transform: translateX(16px); background: var(--inverse-text); }
+  .field { display: block; margin: 0 0 16px; font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); }
+  .field input, .field textarea { display: block; width: 100%; margin-top: 8px; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--rule-strong); background: var(--bg); color: var(--text); font: 15px var(--sans); letter-spacing: 0; text-transform: none; resize: vertical; }
+  .field small { display: block; margin-top: 6px; font: 13px/1.5 var(--sans); letter-spacing: 0; text-transform: none; color: var(--text-muted); }
+  .days { display: flex; gap: 6px; margin-top: 8px; }
+  .days button { flex: 1; min-width: 0; height: 40px; border-radius: 999px; border: 1px solid var(--rule-strong); color: var(--text-muted); font: 500 12px var(--mono); }
+  .days button[aria-pressed="true"] { background: var(--inverse-bg); border-color: var(--inverse-bg); color: var(--inverse-text); }
 
   /* ---------- phone ---------- */
   @media (max-width: 800px) {
     aside {
-      position: fixed; inset: 0 auto 0 0; width: min(300px, 85vw); transform: translateX(-100%); box-shadow: var(--shadow);
-      padding-top: calc(12px + env(safe-area-inset-top)); padding-bottom: calc(12px + env(safe-area-inset-bottom));
+      position: fixed; inset: 0 auto 0 0; width: min(300px, 85vw); transform: translateX(-100%); box-shadow: 0 0 40px rgba(10,9,7,.25);
+      padding-top: calc(16px + env(safe-area-inset-top));
     }
     body.nav-open aside { transform: none; }
-    body.nav-open .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 15; }
+    body.nav-open .scrim { display: block; position: fixed; inset: 0; background: rgba(10,9,7,.45); z-index: 15; }
     #menuBtn, #newChatTop { display: grid; }
-    header { padding-top: env(safe-area-inset-top); height: calc(52px + env(safe-area-inset-top)); }
-    header .title { flex: 1; text-align: center; }
+    .head-side { display: none; }
+    header { padding: env(safe-area-inset-top) 10px 0; height: calc(60px + env(safe-area-inset-top)); }
     .nav-btn, .conv .open { padding-top: 11px; padding-bottom: 11px; }   /* finger-sized targets */
-    .icon-btn, .send, .voice-btn { width: 40px; height: 40px; }
-    #input { font-size: 16px; }   /* below 16px iOS zooms the page on focus */
+    .icon-btn, .send, .voice-btn { width: 44px; height: 44px; }
     .hint { display: none; }
     .composer-wrap { padding: 0 10px calc(10px + env(safe-area-inset-bottom)); }
-    .empty h1 { font-size: 24px; }
+    .empty h1 { font-size: 34px; }
     .suggestions { max-width: 100%; }
     #voice { padding-top: calc(16px + env(safe-area-inset-top)); }
+    #voice .readouts .wide { display: none; }
     .conv .more { opacity: 1; }
-    #thread { padding: 8px 16px 24px; }
+    #thread { padding: 20px 16px 24px; }
     .msg.user .body { max-width: 88%; }
-    .msg.assistant > .orb { display: none; }
+    .msg.assistant > .mark { display: none; }
     .actions { opacity: 1; }
   }
-  @media (prefers-reduced-motion: reduce) { .orb, .orb.spin, .orb.breathe { animation: none; transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .vfig .orbiting { display: none !important; }
+    .vfig .moon-rest { display: inline !important; }
+    .vfig .rise { transform: none !important; }
+  }
 </style>
 </head>
 <body class="is-empty">
 
-<svg width="0" height="0" style="position:absolute">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs><clipPath id="mark-clip"><circle cx="48" cy="48" r="22"/></clipPath></defs>
+  <!-- The mark (DESIGN.md section 4). The front arc's knockout takes --knockout (the colour it sits on). -->
+  <symbol id="mark" viewBox="0 0 96 96">
+    <path d="M 6 48 A 42 14 0 0 1 90 48" transform="rotate(-20 48 48)" fill="none" stroke="var(--text)" stroke-width="4"/>
+    <circle cx="48" cy="48" r="22" fill="var(--signal)"/>
+    <g clip-path="url(#mark-clip)" fill="var(--band)"><rect x="20" y="35" width="56" height="4"/><rect x="20" y="49" width="56" height="5"/><rect x="20" y="62" width="56" height="4"/></g>
+    <path d="M 6 48 A 42 14 0 0 0 90 48" transform="rotate(-20 48 48)" fill="none" stroke="var(--knockout, var(--bg))" stroke-width="10"/>
+    <path d="M 6 48 A 42 14 0 0 0 90 48" transform="rotate(-20 48 48)" fill="none" stroke="var(--text)" stroke-width="4"/>
+    <circle cx="87.5" cy="33.6" r="6" fill="var(--text)"/>
+  </symbol>
+  <!-- 24px and below: no bands; orbit and moon always stay -->
+  <symbol id="mark-sm" viewBox="0 0 96 96">
+    <path d="M 6 48 A 42 14 0 0 1 90 48" transform="rotate(-20 48 48)" fill="none" stroke="var(--text)" stroke-width="5"/>
+    <circle cx="48" cy="48" r="22" fill="var(--signal)"/>
+    <path d="M 6 48 A 42 14 0 0 0 90 48" transform="rotate(-20 48 48)" fill="none" stroke="var(--knockout, var(--bg))" stroke-width="12"/>
+    <path d="M 6 48 A 42 14 0 0 0 90 48" transform="rotate(-20 48 48)" fill="none" stroke="var(--text)" stroke-width="5"/>
+    <circle cx="87.5" cy="33.6" r="7" fill="var(--text)"/>
+  </symbol>
   <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
@@ -267,9 +391,9 @@
   <symbol id="i-stop" viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
   <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></symbol>
-  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
   <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
   <symbol id="i-cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.5 1.5A3.5 3.5 0 0 0 7 18z"/></symbol>
@@ -278,19 +402,25 @@
   <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   <symbol id="i-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15L6 16zM10 21h4"/></symbol>
 </svg>
 
 <aside id="sidebar">
-  <div class="brand"><div class="orb breathe"></div>THURSDAY</div>
-  <button class="nav-btn primary" id="newChat"><svg><use href="#i-plus"/></svg>New chat</button>
+  <div class="brand"><svg class="mark"><use href="#mark"/></svg><span class="wordmark">THURSDAY</span></div>
+  <button class="nav-btn primary" id="newChat"><svg><use href="#i-plus"/></svg>New conversation</button>
   <button class="nav-btn" id="voiceNav"><svg><use href="#i-wave"/></svg>Voice mode</button>
+  <button class="nav-btn" id="alarmsNav"><svg><use href="#i-bell"/></svg>Alarms</button>
   <nav class="conv-list" id="convList" aria-label="Conversations"></nav>
+  <div class="stripe-bar" aria-hidden="true" style="margin:0 -12px"><i></i><i></i><i></i><i></i><i></i></div>
   <div class="status">
-    <div class="status-row"><span><span class="dot" id="statusDot"></span><span id="statusModel">connecting…</span></span>
-      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"><svg><use href="#i-moon"/></svg></button></div>
+    <div class="status-row mono"><span><span class="dot" id="statusDot"></span><span id="statusModel">connecting…</span></span></div>
     <button class="loc-btn" id="locBtn" title="Set your location"><svg><use href="#i-pin"/></svg><span id="locText">Set location</span></button>
-    <div>Local · runs on your hardware</div>
-    <div id="statusLatency">&nbsp;</div>
+    <div class="status-row">
+      <div class="seg" id="themeSeg" role="group" aria-label="Theme">
+        <button data-theme="" aria-pressed="false">System</button><button data-theme="light" aria-pressed="false">Light</button><button data-theme="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
+    <div class="mono" id="statusLatency">&nbsp;</div>
   </div>
 </aside>
 <div class="scrim" id="scrim"></div>
@@ -298,13 +428,18 @@
 <main>
   <header>
     <button class="icon-btn" id="menuBtn" aria-label="Menu"><svg><use href="#i-menu"/></svg></button>
-    <span class="title">THURSDAY</span>
-    <button class="icon-btn" id="newChatTop" aria-label="New chat" title="New chat"><svg><use href="#i-plus"/></svg></button>
+    <span class="head-side"></span>
+    <div class="modes" role="group" aria-label="Mode">
+      <button aria-pressed="true">Chat</button><button id="voiceTop" aria-pressed="false">Voice</button>
+    </div>
+    <span class="head-side"></span>
+    <button class="icon-btn" id="newChatTop" aria-label="New conversation" title="New conversation"><svg><use href="#i-plus"/></svg></button>
   </header>
 
   <section class="empty">
-    <div class="orb breathe"></div>
+    <svg class="mark lg" aria-hidden="true"><use href="#mark"/></svg>
     <h1 id="greeting">Hello</h1>
+    <p class="lede">Ask anything, or switch to voice and just talk.</p>
     <div class="suggestions" id="suggestions"></div>
   </section>
 
@@ -313,23 +448,58 @@
   <div class="composer-wrap">
     <form class="composer" id="composer">
       <textarea id="input" rows="1" placeholder="Message THURSDAY" autocomplete="off"></textarea>
-      <button type="button" class="voice-btn" id="voiceBtn" title="Voice mode" aria-label="Voice mode"><svg><use href="#i-wave"/></svg></button>
+      <button type="button" class="voice-btn" id="voiceBtn" title="Voice mode" aria-label="Voice mode"><svg><use href="#i-mic"/></svg></button>
       <button type="submit" class="send" id="sendBtn" disabled aria-label="Send"><svg><use href="#i-up"/></svg></button>
     </form>
-    <div class="hint">THURSDAY runs locally. It can make mistakes.</div>
+    <div class="hint mono">Runs on your Mac Studio · It can make mistakes</div>
   </div>
 </main>
 
-<section id="voice" aria-hidden="true">
-  <div class="top"><span>THURSDAY</span><span id="voiceConn"></span></div>
-  <div style="display:flex;flex-direction:column;align-items:center">
-    <button id="voiceOrbBtn" aria-label="Talk"><div class="orb breathe" id="voiceOrb"></div></button>
-    <div id="voiceState">Connecting…</div>
+<section id="voice" aria-hidden="true" data-state="standby">
+  <div class="top">
+    <div class="brand"><svg class="mark"><use href="#mark"/></svg><span class="wordmark">THURSDAY</span></div>
+    <div class="readouts mono"><span id="voiceLoc"></span><span id="voiceTurn" class="wide"></span><span id="voiceConn"></span></div>
+  </div>
+  <div class="stage">
+    <!-- The trajectory figure (DESIGN.md sections 5 and 8). data-state on #voice drives it. -->
+    <svg class="vfig" id="vfig" viewBox="0 0 520 420" aria-hidden="true">
+      <defs><clipPath id="vfig-clip"><circle cx="378" cy="110" r="46"/></clipPath>
+        <!-- a gradient, not a blur filter: only its opacity changes per frame, which stays cheap -->
+        <radialGradient id="vfig-halo"><stop offset=".55" stop-color="var(--signal)" stop-opacity=".45"/><stop offset="1" stop-color="var(--signal)" stop-opacity="0"/></radialGradient></defs>
+      <g class="stripe s0"><path d="M 0 360 H 300 A 60 60 0 0 0 360 300"/><path class="rise" d="M 360 300 V 170"/></g>
+      <g class="stripe s1"><path d="M 0 369 H 300 A 69 69 0 0 0 369 300"/><path class="rise" d="M 369 300 V 170"/></g>
+      <g class="stripe s2"><path d="M 0 378 H 300 A 78 78 0 0 0 378 300"/><path class="rise" d="M 378 300 V 170"/></g>
+      <g class="stripe s3"><path d="M 0 387 H 300 A 87 87 0 0 0 387 300"/><path class="rise" d="M 387 300 V 170"/></g>
+      <g class="stripe s4"><path d="M 0 396 H 300 A 96 96 0 0 0 396 300"/><path class="rise" d="M 396 300 V 170"/></g>
+      <g><circle class="ring" cx="378" cy="110" r="30"/><circle class="ring" cx="378" cy="110" r="30"/><circle class="ring" cx="378" cy="110" r="30"/></g>
+      <g class="planet">
+        <circle class="halo" cx="378" cy="110" r="84"/>
+        <path class="orbit" d="M 290.2 110 A 87.8 29.3 0 0 1 465.8 110" transform="rotate(-20 378 110)"/>
+        <!-- thinking: the moon orbits; this copy shows behind the planet -->
+        <g class="orbiting" transform="rotate(-20 378 110)"><circle class="moon" r="8"><animateMotion dur="3s" repeatCount="indefinite" path="M 465.8 110 A 87.8 29.3 0 0 1 290.2 110 A 87.8 29.3 0 0 1 465.8 110"/></circle></g>
+        <g class="globe-g">
+          <circle class="globe" cx="378" cy="110" r="46"/>
+          <g clip-path="url(#vfig-clip)"><g class="bands">
+            <rect class="b" x="330" y="80" width="96" height="7"/><rect class="bl" x="330" y="94" width="96" height="4"/>
+            <rect class="b" x="330" y="108" width="96" height="9"/><rect class="bl" x="330" y="124" width="96" height="4"/>
+            <rect class="b" x="330" y="135" width="96" height="6"/><ellipse class="spot" cx="398" cy="121" rx="10" ry="6"/>
+          </g></g>
+        </g>
+        <path class="knock" d="M 290.2 110 A 87.8 29.3 0 0 0 465.8 110" transform="rotate(-20 378 110)"/>
+        <path class="orbit" d="M 290.2 110 A 87.8 29.3 0 0 0 465.8 110" transform="rotate(-20 378 110)"/>
+        <!-- front copy: visible only for the half of the orbit that passes in front -->
+        <g class="orbiting" transform="rotate(-20 378 110)"><circle class="moon" r="8"><animateMotion dur="3s" repeatCount="indefinite" path="M 465.8 110 A 87.8 29.3 0 0 1 290.2 110 A 87.8 29.3 0 0 1 465.8 110"/><animate attributeName="opacity" dur="3s" repeatCount="indefinite" values="1;0" keyTimes="0;0.5" calcMode="discrete"/></circle></g>
+        <circle class="moon moon-rest" cx="460.5" cy="80" r="8"/>
+      </g>
+    </svg>
+    <div id="voiceState" class="mono" role="status" aria-live="polite">Connecting…</div>
     <div id="voiceCaption"></div>
+    <div id="voiceHeard" class="mono"></div>
   </div>
   <div class="controls">
-    <button class="round" id="voiceMute" title="Mute" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button>
-    <button class="round end" id="voiceEnd" title="End voice mode" aria-label="End voice mode"><svg><use href="#i-x"/></svg></button>
+    <button class="round" id="voiceKeys" title="Type instead" aria-label="Type instead"><svg><use href="#i-keyboard"/></svg></button>
+    <button class="talk" id="voiceOrbBtn" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button>
+    <button class="round" id="voiceEnd" title="End voice mode" aria-label="End voice mode"><svg><use href="#i-x"/></svg></button>
   </div>
 </section>
 
@@ -342,10 +512,32 @@
   </form>
 </dialog>
 
+<dialog id="alarmsDialog" class="alarms">
+  <div id="alarmsList">
+    <div class="alarms-head"><h2>Alarms</h2><button class="icon-btn" id="alarmsClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+    <p>THURSDAY wakes you on the satellite with a chime, then a spoken briefing. Ask follow-up questions right after.</p>
+    <div id="alarmItems"></div>
+    <div class="row"><button type="button" id="alarmAdd">New alarm</button></div>
+  </div>
+  <form id="alarmForm" hidden>
+    <h2 id="alarmFormTitle">New alarm</h2>
+    <label class="field">Time<input id="alarmTime" type="time" required></label>
+    <div class="field">Repeat
+      <div class="days" id="alarmDays"></div>
+      <small id="alarmRepeatHint">Rings once</small>
+    </div>
+    <label class="field">Brief me on
+      <textarea id="alarmBrief" rows="3" maxlength="500" placeholder="e.g. Weather, my calendar for today, and the top 3 tech headlines"></textarea>
+      <small>Leave empty for the weather, today's calendar and the top headlines.</small>
+    </label>
+    <div class="row"><button type="button" class="secondary" id="alarmCancel">Cancel</button><button type="submit">Save</button></div>
+  </form>
+</dialog>
+
 <dialog id="locDialog">
   <form method="dialog" id="locForm">
     <h2>Your location</h2>
-    <p>THURSDAY uses this for "here", "near me", and weather or time questions without a place. It stays in this browser and is sent only to your THURSDAY server.</p>
+    <p>THURSDAY uses this for "here", "near me", and weather or time questions without a place. Leave it empty to detect it from this device automatically (rounded to about 1 km; the city name comes from OpenStreetMap). Type a city to pin it instead.</p>
     <input id="locInput" type="text" autocomplete="address-level2" spellcheck="false" placeholder="City, State (e.g. Plantation, FL)" maxlength="100">
     <div class="row"><button type="submit">Save</button></div>
   </form>
@@ -400,29 +592,157 @@ async function api(path, opts = {}) {
 /* ---------------- theme ---------------- */
 function applyTheme(t) { t ? document.documentElement.dataset.theme = t : delete document.documentElement.dataset.theme; }
 applyTheme(store.get(THEME_KEY));
-$("themeBtn").onclick = () => {
-  const dark = document.documentElement.dataset.theme
-    ? document.documentElement.dataset.theme === "dark"
-    : matchMedia("(prefers-color-scheme: dark)").matches;
-  const next = dark ? "light" : "dark";
-  applyTheme(next); store.set(THEME_KEY, next);
-};
+// System / Light / Dark; System (no stored value) follows the OS.
+const themeBtns = document.querySelectorAll("#themeSeg button");
+function showTheme() { const t = store.get(THEME_KEY) || ""; themeBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.theme === t))); }
+themeBtns.forEach((b) => { b.onclick = () => { applyTheme(b.dataset.theme); store.set(THEME_KEY, b.dataset.theme || null); showTheme(); }; });
+showTheme();
 
 /* ---------------- location context ---------------- */
 // Sent with every chat and voice turn: the browser's time zone (automatic) and
-// the location the user typed. The server validates both.
+// the location: the one the user typed, else the one detected from the device.
+// The server validates both.
+const LOC_AUTO_KEY = "thursdayLocationAuto";  // {name, at}
+const LOC_REFRESH_MS = 15 * 60 * 1000;
+function currentLocation() { return store.get(LOC_KEY) || store.get(LOC_AUTO_KEY)?.name || ""; }
 function clientContext() {
   let timezone = "";
   try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch {}
-  return { timezone, location: store.get(LOC_KEY) || "" };
+  return { timezone, location: currentLocation() };
 }
-function showLocation() { $("locText").textContent = store.get(LOC_KEY) || "Set location"; }
+function showLocation() {
+  $("locText").textContent = currentLocation() || "Set location";
+  $("voiceLoc").textContent = `${currentLocation() || "No location"} · Web`;
+}
+// Ask the device where it is (coarse, cached by the OS), at most every 15 minutes.
+// A typed location always wins; clearing it goes back to automatic.
+function detectLocation() {
+  const auto = store.get(LOC_AUTO_KEY);
+  if (store.get(LOC_KEY) || !window.isSecureContext || !navigator.geolocation) return;
+  if (auto && Date.now() - auto.at < LOC_REFRESH_MS) return;
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    try {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      const res = await api(`/api/whereami?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`);
+      if (!res.ok) return;
+      store.set(LOC_AUTO_KEY, { name: (await res.json()).location, at: Date.now() });
+      showLocation();
+    } catch {}
+  }, () => {}, { enableHighAccuracy: false, maximumAge: LOC_REFRESH_MS, timeout: 15000 });
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") detectLocation(); });
 $("locBtn").onclick = () => {
   $("locInput").value = store.get(LOC_KEY) || "";
+  $("locInput").placeholder = store.get(LOC_AUTO_KEY)?.name ? `Automatic: ${store.get(LOC_AUTO_KEY).name}` : "City, State (e.g. Plantation, FL)";
   $("locDialog").showModal();
 };
-$("locDialog").onclose = () => { store.set(LOC_KEY, $("locInput").value.trim() || null); showLocation(); };
+$("locDialog").onclose = () => { store.set(LOC_KEY, $("locInput").value.trim() || null); showLocation(); detectLocation(); };
+
+/* ---------------- alarms ---------------- */
+// Stored on the server; the satellite rings and gives the briefing.
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+let alarms = [];
+let editingAlarm = null;
+
+function repeatText(days) {
+  const key = days.join();
+  if (!days.length) return "Once";
+  if (days.length === 7) return "Every day";
+  if (key === "0,1,2,3,4") return "Weekdays";
+  if (key === "5,6") return "Weekends";
+  return days.map((d) => DAY_NAMES[d].slice(0, 3)).join(", ");
+}
+
+function fmtAlarmTime(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function renderAlarms() {
+  const box = $("alarmItems");
+  box.innerHTML = "";
+  if (!alarms.length) { box.innerHTML = `<div class="alarm-empty">No alarms yet</div>`; return; }
+  for (const a of alarms) {
+    const row = document.createElement("div");
+    row.className = "alarm" + (a.enabled ? "" : " off");
+    row.innerHTML = `<button class="alarm-main"><div class="alarm-time"></div><div class="alarm-sub"></div></button>
+      <button class="switch" role="switch" aria-label="Alarm on"></button>
+      <button class="icon-btn" aria-label="Delete alarm"><svg><use href="#i-trash"/></svg></button>`;
+    const [main, toggle, del] = row.children;
+    main.querySelector(".alarm-time").textContent = fmtAlarmTime(a.time);
+    main.querySelector(".alarm-sub").textContent = repeatText(a.days) + (a.brief ? ` · ${a.brief}` : "");
+    main.setAttribute("aria-label", `Edit the ${fmtAlarmTime(a.time)} alarm`);
+    main.onclick = () => openAlarmForm(a);
+    toggle.setAttribute("aria-checked", String(a.enabled));
+    toggle.onclick = () => saveAlarm(a.id, "PATCH", { enabled: !a.enabled });
+    del.onclick = async () => {
+      if (!confirm(`Delete the ${fmtAlarmTime(a.time)} alarm?`)) return;
+      if ((await api(`/api/alarms/${a.id}`, { method: "DELETE" })).ok) loadAlarms();
+    };
+    box.append(row);
+  }
+}
+
+async function loadAlarms() {
+  try {
+    const res = await api("/api/alarms");
+    if (res.ok) { alarms = await res.json(); renderAlarms(); }
+  } catch {}
+}
+
+async function saveAlarm(id, method, body) {
+  const res = await api(id ? `/api/alarms/${id}` : "/api/alarms", {
+    method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!res.ok) { alert("Couldn't save the alarm."); return false; }
+  await loadAlarms();
+  return true;
+}
+
+const alarmDayBtns = DAY_NAMES.map((name) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.textContent = name[0]; b.setAttribute("aria-label", name); b.setAttribute("aria-pressed", "false");
+  b.onclick = () => { b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true")); showRepeatHint(); };
+  $("alarmDays").append(b);
+  return b;
+});
+const pickedDays = () => alarmDayBtns.flatMap((b, i) => (b.getAttribute("aria-pressed") === "true" ? [i] : []));
+function showRepeatHint() {
+  const days = pickedDays();
+  $("alarmRepeatHint").textContent = days.length ? `Repeats: ${repeatText(days)}` : "Rings once";
+}
+
+function showAlarmList() { $("alarmForm").hidden = true; $("alarmsList").hidden = false; }
+
+function openAlarmForm(alarm) {
+  editingAlarm = alarm || null;
+  $("alarmFormTitle").textContent = alarm ? "Edit alarm" : "New alarm";
+  $("alarmTime").value = alarm ? alarm.time : "07:00";
+  alarmDayBtns.forEach((b, i) => b.setAttribute("aria-pressed", String(!!alarm && alarm.days.includes(i))));
+  $("alarmBrief").value = alarm ? alarm.brief : "";
+  showRepeatHint();
+  $("alarmsList").hidden = true; $("alarmForm").hidden = false;
+  $("alarmTime").focus();
+}
+
+$("alarmForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = {
+    time: $("alarmTime").value,
+    days: pickedDays(),
+    // The alarm rings at this wall-clock time where the user is.
+    timezone: clientContext().timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    brief: $("alarmBrief").value.trim(),
+    enabled: editingAlarm ? editingAlarm.enabled : true,
+  };
+  if (await saveAlarm(editingAlarm?.id, editingAlarm ? "PUT" : "POST", body)) showAlarmList();
+};
+$("alarmCancel").onclick = showAlarmList;
+$("alarmAdd").onclick = () => openAlarmForm(null);
+$("alarmsClose").onclick = () => $("alarmsDialog").close();
+$("alarmsNav").onclick = () => { closeNav(); showAlarmList(); $("alarmsDialog").showModal(); loadAlarms(); };
 showLocation();
+detectLocation();
 
 /* ---------------- markdown ---------------- */
 marked.use({ gfm: true, breaks: false });
@@ -462,7 +782,7 @@ function addUser(text, viaVoice) {
   m.className = "msg user";
   m.innerHTML = `<div class="body"></div>`;
   m.firstChild.textContent = text;
-  if (viaVoice) m.insertAdjacentHTML("beforeend", `<div class="via"><svg><use href="#i-mic"/></svg>voice</div>`);
+  if (viaVoice) m.insertAdjacentHTML("beforeend", `<div class="via mono"><svg><use href="#i-mic"/></svg>voice</div>`);
   thread.append(m);
   scrollDown(true);
 }
@@ -471,8 +791,8 @@ function addAssistant() {
   setEmpty(false);
   const m = document.createElement("div");
   m.className = "msg assistant";
-  m.innerHTML = `<div class="orb"></div><div class="col"><div class="chips"></div><div class="md"></div>
-    <div class="actions"><button class="icon-btn copy" title="Copy" aria-label="Copy"><svg><use href="#i-copy"/></svg></button><span class="meta"></span></div></div>`;
+  m.innerHTML = `<svg class="mark" aria-hidden="true"><use href="#mark-sm"/></svg><div class="col"><div class="chips"></div><div class="md"></div>
+    <div class="actions"><button class="icon-btn copy" title="Copy" aria-label="Copy"><svg><use href="#i-copy"/></svg></button><span class="meta mono"></span></div></div>`;
   thread.append(m);
   const md = m.querySelector(".md"), chips = m.querySelector(".chips");
   let text = "", queued = false;
@@ -487,12 +807,12 @@ function addAssistant() {
     },
     set(full) { text = full; renderMd(md, text); },
     tool(name) {
-      const meta = TOOL_LABELS[name] || { icon: "i-spin", label: `Using ${name}` };
+      const meta = TOOL_LABELS[name] || { icon: "i-check", label: `Using ${name}`, done: `Used ${name}` };
       const c = document.createElement("span");
       c.className = "chip running";
       c.innerHTML = `<svg><use href="#i-spin"/></svg><span></span>`;
       c.lastChild.textContent = meta.label + "…";
-      c.dataset.icon = meta.icon; c.dataset.done = meta.done;
+      c.dataset.icon = meta.icon; c.dataset.done = meta.done; c.dataset.fail = meta.fail || "";
       chips.append(c);
       scrollDown();
       return c;
@@ -502,7 +822,7 @@ function addAssistant() {
       if (!c) return;
       c.className = "chip" + (ok ? "" : " failed");
       c.innerHTML = `<svg><use href="#${c.dataset.icon}"/></svg><span></span>`;
-      c.lastChild.textContent = ok ? c.dataset.done : "Couldn't reach the tool";
+      c.lastChild.textContent = ok ? c.dataset.done : (c.dataset.fail || "Couldn't reach the tool");
     },
     finish(meta) {
       queued = false;
@@ -527,6 +847,10 @@ const TOOL_LABELS = {
   web_search: { icon: "i-globe", label: "Searching the web", done: "Searched the web" },
   get_weather: { icon: "i-cloud", label: "Checking the weather", done: "Checked the weather" },
   get_time: { icon: "i-clock", label: "Checking the time", done: "Checked the time" },
+  calendar_events: { icon: "i-clock", label: "Checking your calendar", done: "Checked your calendar" },
+  calendar_create: { icon: "i-edit", label: "Preparing the event", done: "Prepared the event" },
+  calendar_delete: { icon: "i-trash", label: "Finding the event to delete", done: "Ready to delete" },
+  calendar_confirm: { icon: "i-check", label: "Updating your calendar", done: "Calendar updated", fail: "No change made" },
   echo: { icon: "i-check", label: "Repeating", done: "Repeated" },
 };
 
@@ -630,8 +954,8 @@ function dateGroup(iso) {
   const day = 86400000, now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const t = new Date(iso).getTime();
-  return t >= today ? "Today" : t >= today - day ? "Yesterday" : t >= today - 7 * day ? "Previous 7 days"
-    : t >= today - 30 * day ? "Previous 30 days" : "Older";
+  return t >= today ? "Today" : t >= today - day ? "Yesterday" : t >= today - 7 * day ? "This week"
+    : t >= today - 30 * day ? "This month" : "Earlier";
 }
 
 function renderConversations() {
@@ -643,7 +967,7 @@ function renderConversations() {
     if (g !== group) {
       group = g;
       const h = document.createElement("div");
-      h.className = "conv-group"; h.textContent = g;
+      h.className = "conv-group mono"; h.textContent = g;
       convList.append(h);
     }
     const row = document.createElement("div");
@@ -759,7 +1083,7 @@ async function loadInfo() {
 function greet() {
   const h = new Date().getHours();
   $("greeting").textContent = h < 5 ? "Up late?" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-  const ideas = ["What's the weather tomorrow?", "Explain how VAD endpointing works", "What's in the news today?", "Write a Python function to debounce calls"];
+  const ideas = ["What's the weather tomorrow?", "Anything launching tonight?", "What's on my calendar today?", "What's in the news today?"];
   $("suggestions").innerHTML = "";
   for (const s of ideas) {
     const b = document.createElement("button");
@@ -777,32 +1101,72 @@ $("scrim").onclick = closeNav;
 /* ---------------- voice mode ---------------- */
 // Cues: ping when listening starts; thinking loop from end of speech until the
 // first reply audio starts. Both play here, in the browser, never mixed server-side.
-const ping = new Audio("/assets/sounds/thursday-ping.mp3");
-const thinking = new Audio("/assets/sounds/thursday-thinking.mp3");
+// Generated by scripts/make_sounds.py; the thinking loop is mixed quiet in the
+// file itself (same level as on the satellite), so it plays at full volume here.
+const ping = new Audio("/assets/sounds/thursday-ping.wav");
+const thinking = new Audio("/assets/sounds/thursday-thinking.wav");
 thinking.loop = true;
-thinking.volume = 0.5;  // a background cue, not a sound effect
-function stopThinking() { thinking.pause(); thinking.currentTime = 0; }
+const THINKING_FADE_MS = 150;
+let thinkingFade = 0;  // bumped on every start/stop so a stale fade can't pause a fresh loop
+
+function startThinking() {
+  thinkingFade++;
+  thinking.volume = 1;
+  thinking.currentTime = 0;
+  thinking.play().catch(() => {});
+}
+
+// The loop swells and dips, so a hard pause mid-swell can click: fade it under
+// the first words instead. (iOS ignores .volume; there it just stops after the fade time.)
+function stopThinking() {
+  if (thinking.paused) return;
+  const id = ++thinkingFade, from = thinking.volume, t0 = performance.now();
+  const step = (now) => {
+    if (id !== thinkingFade) return;
+    const k = Math.min(1, (now - t0) / THINKING_FADE_MS);
+    thinking.volume = from * (1 - k);
+    if (k < 1) requestAnimationFrame(step);
+    else { thinking.pause(); thinking.currentTime = 0; thinking.volume = 1; }
+  };
+  requestAnimationFrame(step);
+}
 
 const V = {
-  open: false, ws: null, ctx: null, micNode: null, micLevel: null, outLevel: null, src: null, state: "idle", raf: 0,
+  open: false, ws: null, ctx: null, micNode: null, micBands: null, outBands: null, state: "idle", raf: 0,
+  // Chunked replies: one WAV per sentence, scheduled back to back on the AudioContext clock.
+  srcs: [], nextAt: 0, started: false, audioEnd: false, chain: Promise.resolve(),
   cue: false,           // play the ping on the next "listening" (set only when the user starts talking)
   muted: false,
   interrupting: false,  // waiting for the server to confirm a cancelled turn
+  turns: 0,
 };
-const vOrb = $("voiceOrb"), vState = $("voiceState"), vCaption = $("voiceCaption");
-const STATE_TEXT = { idle: "", listening: "Listening…", thinking: "Thinking…", speaking: "Tap to interrupt" };
+const vFig = $("voice"), vState = $("voiceState"), vCaption = $("voiceCaption"), vHeard = $("voiceHeard");
+const STATE_TEXT = { idle: "Standby", listening: "Listening", thinking: "Thinking", speaking: "Speaking · tap to interrupt" };
+// The figure's six states (DESIGN.md section 8); alert is reserved for alarms.
+const FIG_STATE = { idle: "standby", listening: "listening", thinking: "thinking", speaking: "speaking" };
+function figError(text, detail) { vFig.dataset.state = "error"; vState.textContent = text; vCaption.textContent = detail || ""; }
+function showTurn() { $("voiceTurn").textContent = V.turns ? `Turn ${V.turns}` : ""; }
+
+// The centre button: interrupt while she thinks or speaks, otherwise mute / unmute.
+function syncTalk() {
+  const btn = $("voiceOrbBtn"), busy = V.state === "speaking" || V.state === "thinking";
+  btn.classList.toggle("muted", V.muted && !busy);
+  btn.innerHTML = `<svg><use href="#${busy ? "i-stop" : V.muted ? "i-mic-off" : "i-mic"}"/></svg>`;
+  btn.setAttribute("aria-label", busy ? "Interrupt" : V.muted ? "Unmute microphone" : "Mute microphone");
+}
 
 function setVoiceState(next) {
   const prev = V.state;
   if (next === prev) return;  // cues fire on transitions only
   V.state = next;
   vState.textContent = V.muted && next === "idle" ? "Microphone off" : STATE_TEXT[next] ?? next;
-  vOrb.classList.toggle("spin", next === "thinking");
-  vOrb.classList.toggle("breathe", next === "idle");
+  vFig.dataset.state = FIG_STATE[next] || "standby";
+  syncTalk();
   // The ping marks the start of a conversation (opening voice mode, tapping to
   // talk, unmuting). Follow-up turns go back to listening silently, like a call.
   if (next === "listening" && V.cue) { V.cue = false; ping.currentTime = 0; ping.play().catch(() => {}); }
-  if (next === "thinking") thinking.play().catch(() => {});
+  // No looping cue while she thinks: the server speaks a short filler in her own
+  // voice when she reaches for a tool or a reply is slow to start.
   if (next === "idle") {
     stopThinking();
     // Stay in the conversation: after a reply, a silence timeout or an error,
@@ -811,25 +1175,45 @@ function setVoiceState(next) {
   }
 }
 
-function levelMeter(ctx, node) {
+// Five log-spaced bands across the voice range, one per stripe: blue = lows ... red = highs.
+const BANDS_HZ = [80, 250, 600, 1500, 3500, 8000];
+const BAND_GAIN = [1, 1.05, 1.2, 1.5, 1.9];  // speech energy falls off with pitch; lift the highs so red moves too
+const NOISE_FLOOR = 0.22;                     // fraction of the dB range treated as silence (room hiss)
+
+function bandMeter(ctx, node) {
   const a = ctx.createAnalyser();
-  a.fftSize = 512;
+  a.fftSize = 1024; a.smoothingTimeConstant = 0.5; a.minDecibels = -90; a.maxDecibels = -20;
   node.connect(a);
-  const data = new Uint8Array(a.fftSize);
+  const data = new Uint8Array(a.frequencyBinCount), hz = ctx.sampleRate / a.fftSize, out = new Float32Array(5);
+  const edges = BANDS_HZ.map((f) => Math.max(1, Math.round(f / hz)));
   return () => {
-    a.getByteTimeDomainData(data);
-    let sum = 0;
-    for (const v of data) { const x = (v - 128) / 128; sum += x * x; }
-    return Math.min(1, Math.sqrt(sum / data.length) * 4);
+    a.getByteFrequencyData(data);
+    for (let b = 0; b < 5; b++) {
+      const lo = edges[b], hi = Math.max(lo + 1, edges[b + 1]);
+      let sum = 0;
+      for (let i = lo; i < hi; i++) sum += data[i];
+      const v = (sum / (hi - lo) / 255 - NOISE_FLOOR) / (1 - NOISE_FLOOR);
+      out[b] = Math.min(1, Math.max(0, v * BAND_GAIN[b]));
+    }
+    return out;
   };
 }
 
+const vStripes = [...document.querySelectorAll("#vfig .stripe")];
+const calm = matchMedia("(prefers-reduced-motion: reduce)");
 function animateOrb() {
-  let smooth = 0;
+  const sm = new Float32Array(5);
   const tick = () => {
-    const lvl = V.state === "listening" && V.micLevel ? V.micLevel() : V.state === "speaking" && V.outLevel ? V.outLevel() : 0;
-    smooth += (lvl - smooth) * 0.3;
-    vOrb.style.setProperty("--level", smooth.toFixed(3));
+    const read = V.state === "listening" ? V.micBands : V.state === "speaking" ? V.outBands : null;
+    const bands = read && !calm.matches ? read() : null;
+    let sum = 0;
+    for (let i = 0; i < 5; i++) {
+      const t = bands ? bands[i] : 0;
+      sm[i] += (t - sm[i]) * (t > sm[i] ? 0.5 : 0.12);  // fast attack, slow release: bars jump with syllables and settle smoothly
+      sum += sm[i];
+      vStripes[i].style.setProperty("--b", sm[i].toFixed(3));
+    }
+    vFig.style.setProperty("--level", (sum / 5).toFixed(3));
     V.raf = requestAnimationFrame(tick);
   };
   V.raf = requestAnimationFrame(tick);
@@ -872,17 +1256,16 @@ async function startAudio() {
   mic.connect(V.micNode);
   const mute = V.ctx.createGain(); mute.gain.value = 0;
   V.micNode.connect(mute).connect(V.ctx.destination);  // keeps the worklet pulled in every browser
-  V.micLevel = levelMeter(V.ctx, mic);
+  V.micBands = bandMeter(V.ctx, mic);
   V.out = V.ctx.createGain();
   V.out.connect(V.ctx.destination);
-  V.outLevel = levelMeter(V.ctx, V.out);
+  V.outBands = bandMeter(V.ctx, V.out);
 }
 
 function startListening() {
   if (V.ws?.readyState !== WebSocket.OPEN || V.state !== "idle" || V.muted || V.interrupting) return;
-  vCaption.textContent = "";
   setVoiceState("listening");  // start streaming now; the server confirms with the same state
-  V.ws.send(JSON.stringify({ type: "start", conversation_id: conversationId, context: clientContext() }));
+  V.ws.send(JSON.stringify({ type: "start", chunked: true, conversation_id: conversationId, context: clientContext() }));
 }
 
 let voiceView = null;  // the assistant message the current voice turn writes into
@@ -894,24 +1277,55 @@ function onVoiceEvent(ev) {
   }
   if (ev.type === "conversation") touchConversation(ev.id, ev.title);
   else if (ev.type === "state") setVoiceState(ev.state);
-  else if (ev.type === "transcript") { vCaption.textContent = ev.text; addUser(ev.text, true); voiceView = addAssistant(); }
-  else if (ev.type === "tool") { voiceView?.tool(ev.name); vState.textContent = (TOOL_LABELS[ev.name]?.label || "Working") + "…"; }
+  else if (ev.type === "audio_end") { V.audioEnd = true; V.chain.then(maybePlaybackEnded); }
+  else if (ev.type === "transcript") {
+    vCaption.textContent = "";
+    vHeard.innerHTML = "<span>You said</span> ";
+    vHeard.append(ev.text);
+    V.turns++; showTurn();
+    addUser(ev.text, true); voiceView = addAssistant();
+  }
+  else if (ev.type === "tool") { voiceView?.tool(ev.name); vState.textContent = TOOL_LABELS[ev.name]?.label || "Working"; }
   else if (ev.type === "reply") { vCaption.textContent = ev.text; if (voiceView) { voiceView.el.querySelectorAll(".chip.running").forEach(() => voiceView.toolDone("", true)); voiceView.set(ev.text); voiceView.finish(); } }
   else if (ev.type === "error") { vCaption.textContent = `${ev.stage}: ${ev.message}`; voiceView?.error(`${ev.stage} failed: ${ev.message}`); voiceView = null; }
 }
 
-async function playReply(data) {
+// decodeAudioData is async and can finish out of order, so chunks go through
+// one promise chain: each is scheduled only after the previous one.
+function playReply(data) {
+  V.chain = V.chain.then(() => scheduleChunk(data)).catch(() => {});
+}
+
+async function scheduleChunk(data) {
   if (V.interrupting || V.state !== "speaking") return;  // audio from a cancelled turn
   const buffer = await V.ctx.decodeAudioData(data);
   if (V.interrupting || !V.open) return;
   const src = V.ctx.createBufferSource();
   src.buffer = buffer;
   src.connect(V.out);
-  src.onended = () => { if (V.src === src) V.src = null; V.ws?.readyState === WebSocket.OPEN && V.ws.send(JSON.stringify({ type: "playback_ended" })); };
-  stopThinking();  // stop the cue on the same tick the reply starts: no overlap
-  src.start();
-  V.src = src;
-  V.ws.send(JSON.stringify({ type: "playback_started" }));
+  // Start exactly when the previous sentence ends: no gap, no overlap.
+  const at = Math.max(V.ctx.currentTime, V.nextAt);
+  V.nextAt = at + buffer.duration;
+  src.onended = () => { V.srcs = V.srcs.filter((s) => s !== src); maybePlaybackEnded(); };
+  src.start(at);
+  V.srcs.push(src);
+  if (!V.started) {
+    V.started = true;
+    stopThinking();  // stop the cue on the same tick the reply starts: no overlap
+    V.ws.send(JSON.stringify({ type: "playback_started" }));
+  }
+}
+
+// The reply is over once the server said audio_end and the last sentence finished.
+function maybePlaybackEnded() {
+  if (!V.audioEnd || V.srcs.length) return;
+  V.audioEnd = false; V.started = false; V.nextAt = 0;
+  V.ws?.readyState === WebSocket.OPEN && V.ws.send(JSON.stringify({ type: "playback_ended" }));
+}
+
+function stopReplyAudio() {
+  for (const s of V.srcs) { s.onended = null; try { s.stop(); } catch {} }
+  V.srcs = []; V.nextAt = 0; V.started = false; V.audioEnd = false;
 }
 
 async function connectVoice() {
@@ -927,9 +1341,9 @@ async function connectVoice() {
     if (V.ws !== ws) return;
     V.ws = null; stopThinking();
     if (!V.open) return;
-    if (e.code === 1008) { dropToken(); vState.textContent = "Invalid token"; connectVoice(); return; }
-    $("voiceConn").textContent = "reconnecting…";
-    V.state = "offline"; vState.textContent = "Disconnected";
+    if (e.code === 1008) { dropToken(); figError("Invalid token"); connectVoice(); return; }
+    $("voiceConn").textContent = "Reconnecting";
+    V.state = "offline"; figError("Disconnected", "I can't reach the server right now. Trying again.");
     setTimeout(() => V.open && connectVoice(), 2000);
   };
 }
@@ -939,19 +1353,18 @@ async function openVoice() {
   if (controller) controller.abort();
   V.open = true; V.cue = true; V.interrupting = false;
   $("voice").classList.add("open"); $("voice").setAttribute("aria-hidden", "false");
-  vState.textContent = "Connecting…"; vCaption.textContent = "";
+  vFig.dataset.state = "standby"; vState.textContent = "Connecting"; vCaption.textContent = ""; vHeard.textContent = "";
+  V.turns = 0; showTurn(); syncTalk();
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     // Phones only allow the microphone on https:// (or localhost).
-    vState.textContent = "Voice needs a secure connection";
-    vCaption.textContent = "Open THURSDAY over https:// to use the microphone on this device. Text chat works as is.";
+    figError("Voice needs a secure connection", "Open THURSDAY over https:// to use the microphone on this device. Text chat works as is.");
     return;
   }
   try {
     await startAudio();         // mic and audio output need this click as the user gesture
     await V.ctx.resume();
   } catch (err) {
-    vState.textContent = "Microphone unavailable";
-    vCaption.textContent = err.message;
+    figError("Microphone unavailable", err.message);
     return;
   }
   // Unlock the cue elements inside the gesture so later play() calls are allowed.
@@ -972,7 +1385,7 @@ function closeVoice() {
   V.open = false;
   $("voice").classList.remove("open"); $("voice").setAttribute("aria-hidden", "true");
   stopThinking();
-  if (V.src) { try { V.src.stop(); } catch {} V.src = null; }
+  stopReplyAudio();
   const ws = V.ws; V.ws = null; ws?.close();   // the server cancels any turn in flight
   V.state = "idle";
   cancelAnimationFrame(V.raf); V.raf = 0;
@@ -983,23 +1396,22 @@ function closeVoice() {
 
 $("voiceBtn").onclick = openVoice;
 $("voiceNav").onclick = openVoice;
+$("voiceTop").onclick = openVoice;
+$("voiceKeys").onclick = () => { closeVoice(); input.focus(); };
 $("voiceEnd").onclick = closeVoice;
 function interrupt() {
   if (V.ws?.readyState !== WebSocket.OPEN) return;
   V.interrupting = true;
-  if (V.src) { V.src.onended = null; try { V.src.stop(); } catch {} V.src = null; }
+  stopReplyAudio();
   stopThinking();
   voiceView?.finish("interrupted"); voiceView = null;
-  vState.textContent = "Listening…";
+  vState.textContent = "Listening";
   V.ws.send(JSON.stringify({ type: "interrupt" }));
 }
 
 function setMuted(muted) {
   V.muted = muted;
-  const btn = $("voiceMute");
-  btn.classList.toggle("off", muted);
-  btn.innerHTML = `<svg><use href="#${muted ? "i-mic-off" : "i-mic"}"/></svg>`;
-  btn.setAttribute("aria-label", muted ? "Unmute microphone" : "Mute microphone");
+  syncTalk();
   if (muted) {
     if (V.state === "listening") V.ws?.send(JSON.stringify({ type: "stop" }));
     if (V.state === "idle" || V.state === "listening") vState.textContent = "Microphone off";
@@ -1009,10 +1421,10 @@ function setMuted(muted) {
   }
 }
 
-$("voiceMute").onclick = () => setMuted(!V.muted);
 $("voiceOrbBtn").onclick = () => {
   if (V.state === "speaking" || V.state === "thinking") interrupt();
   else if (V.muted) setMuted(false);
+  else if (V.state === "listening") setMuted(true);
   else if (V.state === "idle") { V.cue = true; startListening(); }
 };
 document.addEventListener("keydown", (e) => {

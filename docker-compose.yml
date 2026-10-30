@@ -17,7 +17,9 @@ services:
       # (Docker Desktop has no Metal passthrough). See README "Apple Silicon".
       OLLAMA_URL: http://host.docker.internal:11434/api/generate
       STT_BASE_URL: http://thursday-stt:9200
-      TTS_BASE_URL: http://host.docker.internal:9000
+      # 9000 = Qwen (scripts/run_tts_native.sh); 9001 = the CSM voice served from
+      # the separate thursday-voice project. Pick with THURSDAY_TTS_PORT in .env.
+      TTS_BASE_URL: http://host.docker.internal:${THURSDAY_TTS_PORT:-9000}
       SEARXNG_BASE_URL: http://searxng:8080
     depends_on:
       - searxng

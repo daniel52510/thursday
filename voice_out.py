@@ -143,18 +143,8 @@ def speak_file(req: SpeakRequest):
 
 OUT_DIR = Path("out/tts")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-# Every reply is written to a file the client fetches once; keep only the newest.
-KEEP_OUTPUTS = int(os.getenv("TTS_KEEP_OUTPUTS", "50"))
-
-
-def _prune_outputs() -> None:
-    files = sorted(OUT_DIR.glob("*.wav"), key=lambda f: f.stat().st_mtime, reverse=True)
-    for old in files[KEEP_OUTPUTS:]:
-        old.unlink(missing_ok=True)
-
 
 def _safe_output_path(file_name: str | None) -> Path:
-    _prune_outputs()
     if file_name:
         cleaned = Path(file_name).name
         if not cleaned.endswith(".wav"):

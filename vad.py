@@ -95,6 +95,7 @@ class Endpointer:
         self._end_frames = _frames(cfg.end_silence_ms)
         self._max_frames = _frames(cfg.max_utterance_ms)
         self._preroll: deque[bytes] = deque(maxlen=_frames(cfg.preroll_ms) + self._start_frames)
+        self.last_voiced = 0  # voiced count of the last finished utterance (reset() clears voiced)
         self.reset()
 
     def reset(self) -> None:
@@ -103,7 +104,20 @@ class Endpointer:
         self._frames_in: list[bytes] = []
         self._speech_run = 0
         self._silence_run = 0
+        self.voiced = 0  # speech frames in the current utterance; unchanged across a pause
         self.in_speech = False
+
+    @property
+    def silence_frames(self) -> int:
+        return self._silence_run
+
+    def snapshot(self) -> bytes:
+        """The utterance so far, trimmed exactly as feed() trims a finished one,
+        so audio snapshotted during a pause equals the final utterance if no
+        speech follows."""
+        # Drop most of the trailing silence: STT time scales with audio length.
+        keep = len(self._frames_in) - max(0, self._silence_run - _frames(150))
+        return b"".join(self._frames_in[:keep])
 
     def feed(self, frame: bytes) -> bytes | None:
         prob = self.vad(frame)
@@ -116,11 +130,14 @@ class Endpointer:
             return None
 
         self._frames_in.append(frame)
-        self._silence_run = self._silence_run + 1 if prob < self.cfg.end_prob else 0
+        if prob < self.cfg.end_prob:
+            self._silence_run += 1
+        else:
+            self._silence_run = 0
+            self.voiced += 1
         if self._silence_run >= self._end_frames or len(self._frames_in) >= self._max_frames:
-            # Drop most of the trailing silence: STT time scales with audio length.
-            keep = len(self._frames_in) - max(0, self._silence_run - _frames(150))
-            utterance = b"".join(self._frames_in[:keep])
+            utterance = self.snapshot()
+            self.last_voiced = self.voiced
             self.reset()
             return utterance
         return None

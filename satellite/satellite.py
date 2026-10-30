@@ -7,17 +7,20 @@ the Mac's /ws/voice endpoint, and plays the spoken reply on the HAT speaker.
 
 Audio in: arecord, 16 kHz mono int16, 1280-sample (80 ms) chunks, the step
 size openWakeWord wants; /ws/voice re-slices whatever it gets.
-Audio out: aplay, one process at a time (the HAT is a single ALSA device).
+Audio out: aplay, one process at a time (the HAT is a single ALSA device); a
+reply streams through one long-lived aplay so its chunks join without gaps.
 
     THURSDAY_WS=ws://<mac-ip>:8000/ws/voice venv/bin/python satellite.py
 """
 import asyncio
+import io
 import json
 import logging
 import os
 import sys
 import time
 import types
+import wave
 from pathlib import Path
 from urllib.parse import quote
 
@@ -47,8 +50,15 @@ WAKE_THRESHOLD = float(os.getenv("THURSDAY_WAKE_THRESHOLD", "0.5"))
 # After a reply, listen again without the wake word. The server's no-speech
 # timeout (VOICE_NO_SPEECH_TIMEOUT_MS) ends the conversation if nobody talks.
 FOLLOW_UP = os.getenv("THURSDAY_FOLLOW_UP", "1") == "1"
+# Sent with every "start" like the web page does, so "today" and calendar
+# answers use the satellite's local day. Defaults to the Pi's system timezone.
+CONTEXT = {
+    "timezone": os.getenv("THURSDAY_TIMEZONE") or (Path("/etc/timezone").read_text().strip() if Path("/etc/timezone").exists() else ""),
+    "location": os.getenv("THURSDAY_LOCATION", ""),
+}
 PING_WAV = HERE / "sounds" / "thursday-ping.wav"
 THINKING_WAV = HERE / "sounds" / "thursday-thinking.wav"
+ALARM_WAV = HERE / "sounds" / "thursday-alarm.wav"
 RECONNECT_S = 3.0
 
 log = logging.getLogger("satellite")
@@ -56,6 +66,12 @@ log = logging.getLogger("satellite")
 
 def _ms(since: float) -> int:
     return int((time.monotonic() - since) * 1000)
+
+
+def _wav_pcm(wav: bytes) -> tuple[int, bytes]:
+    """(sample rate, raw frames) of a mono 16-bit WAV, as the server sends them."""
+    with wave.open(io.BytesIO(wav)) as w:
+        return w.getframerate(), w.readframes(w.getnframes())
 
 
 class Player:
@@ -85,6 +101,10 @@ class Player:
         await self.stop()
         self._proc = await self._spawn(path)
 
+    async def play_file_and_wait(self, path: Path) -> None:
+        await self.play_file(path)
+        await self._proc.wait()
+
     async def loop_file(self, path: Path) -> None:
         await self.stop()
 
@@ -95,14 +115,30 @@ class Player:
 
         self._loop_task = asyncio.create_task(_loop())
 
-    async def play_wav_bytes(self, wav: bytes, on_start) -> None:
-        """Play a WAV from memory and wait until it has finished."""
+    async def start_stream(self, rate: int) -> None:
+        """One aplay fed raw PCM for a whole reply: chunks join with no gap.
+        (A new aplay per chunk costs 50-100 ms of silence each time.)"""
         await self.stop()
-        self._proc = proc = await self._spawn(None)
-        await on_start()
+        self._proc = await asyncio.create_subprocess_exec(
+            "aplay", "-q", "-D", DEVICE, "-t", "raw", "-f", "S16_LE", "-c", "1", "-r", str(rate), "-",
+            stdin=asyncio.subprocess.PIPE,
+        )
+
+    async def write(self, pcm: bytes) -> None:
+        if not self._proc or self._proc.returncode is not None:
+            return
         try:
-            proc.stdin.write(wav)
-            await proc.stdin.drain()
+            self._proc.stdin.write(pcm)
+            await self._proc.stdin.drain()  # backpressure: waits while ~1 s is still queued
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    async def finish_stream(self) -> None:
+        """No more audio: let aplay play what it has, then exit."""
+        proc = self._proc
+        if not proc or proc.returncode is not None:
+            return
+        try:
             proc.stdin.close()
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -121,6 +157,9 @@ class Satellite:
         self.state = "wake"
         self._woke_at = 0.0
         self._thinking_at = 0.0
+        self._chunks: asyncio.Queue = asyncio.Queue()  # reply WAVs, then None at audio_end
+        self._playback: asyncio.Task | None = None
+        self._chime: asyncio.Task | None = None  # alarm chime; the reply waits for it
 
     async def run(self) -> None:
         mic = await asyncio.create_subprocess_exec(
@@ -132,10 +171,12 @@ class Satellite:
                 try:
                     async with connect(f"{SERVER_URL}?token={quote(self.token)}", max_size=None) as ws:
                         log.info("connected to %s; waiting for wake word", SERVER_URL)
+                        # Lets the server start speaking here (alarms), not just answer.
+                        await ws.send(json.dumps({"type": "hello", "role": "satellite", "context": CONTEXT}))
                         await asyncio.gather(self._mic_loop(mic, ws), self._recv_loop(ws))
                 except (OSError, ConnectionClosed) as exc:
                     log.warning("connection lost (%s); retrying in %.0fs", exc, RECONNECT_S)
-                await self.player.stop()
+                await self.stop_playback()
                 self._enter_wake()
                 await asyncio.sleep(RECONNECT_S)
         finally:
@@ -171,17 +212,25 @@ class Satellite:
         self._woke_at = time.monotonic()
         self.state = "listening"
         await self.player.play_file(PING_WAV)
-        await ws.send(json.dumps({"type": "start"}))
+        # chunked: one WAV per sentence, so the first sentence plays while the rest is synthesized.
+        await ws.send(json.dumps({"type": "start", "chunked": True, "context": CONTEXT}))
 
     async def _recv_loop(self, ws) -> None:
         async for msg in ws:
             if isinstance(msg, bytes):
-                await self._speak(ws, msg)
+                self._on_audio(ws, msg)
                 continue
             ev = json.loads(msg)
             kind = ev.get("type")
             if kind == "state":
                 await self._on_state(ws, ev["state"])
+            elif kind == "alarm":
+                # The server is about to speak unprompted: chime first, speech waits for it.
+                log.info("alarm")
+                self.state = "alarm"
+                self._chime = asyncio.create_task(self.player.play_file_and_wait(ALARM_WAV))
+            elif kind == "audio_end":
+                self._chunks.put_nowait(None)
             elif kind == "transcript":
                 log.info("heard: %s", ev.get("text", ""))
             elif kind == "reply":
@@ -201,19 +250,48 @@ class Satellite:
             await self._start_listening(ws)
         elif state == "idle" and self.state != "wake":
             # No speech, an error, or the end of a reply: back to the wake word.
-            await self.player.stop()
+            await self.stop_playback()
             self._enter_wake()
             log.info("idle; waiting for wake word")
 
-    async def _speak(self, ws, wav: bytes) -> None:
-        self.state = "speaking"
-        log.info("reply audio %d KB after %d ms thinking", len(wav) // 1024, _ms(self._thinking_at))
+    def _on_audio(self, ws, wav: bytes) -> None:
+        # Never await playback here: the receive loop must keep reading the
+        # next sentences while this one plays.
+        if self._playback is None or self._playback.done():
+            self.state = "speaking"
+            log.info("first reply audio %d KB after %d ms thinking", len(wav) // 1024, _ms(self._thinking_at))
+            self._chunks = asyncio.Queue()
+            self._playback = asyncio.create_task(self._play_reply(ws, self._chunks))
+        self._chunks.put_nowait(wav)
 
-        async def started() -> None:
-            await ws.send(json.dumps({"type": "playback_started"}))
-
-        await self.player.play_wav_bytes(wav, started)
+    async def _play_reply(self, ws, chunks: asyncio.Queue) -> None:
+        """Play the reply's WAVs back to back through one continuous player until
+        audio_end, then report playback_ended."""
+        played, rate = 0, None
+        while (wav := await chunks.get()) is not None:
+            if played == 0 and self._chime:
+                await self._chime  # let the alarm chime finish before THURSDAY speaks
+                self._chime = None
+            chunk_rate, pcm = _wav_pcm(wav)
+            if chunk_rate != rate:  # first chunk (or a format change): (re)start the player
+                if rate is not None:
+                    await self.player.finish_stream()
+                await self.player.start_stream(chunk_rate)
+                rate = chunk_rate
+            await self.player.write(pcm)
+            if played == 0:
+                await ws.send(json.dumps({"type": "playback_started"}))
+            played += 1
+        await self.player.finish_stream()
+        log.info("reply played (%d chunks)", played)
         await ws.send(json.dumps({"type": "playback_ended"}))
+
+    async def stop_playback(self) -> None:
+        for task in (self._playback, self._chime):
+            if task and not task.done():
+                task.cancel()
+        self._playback = self._chime = None
+        await self.player.stop()
 
 
 def main() -> None:

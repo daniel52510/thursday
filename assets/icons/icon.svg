@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- App icon: the Night mark (DESIGN.md section 4), full-bleed so iOS and
+       maskable crops apply their own corners. Kept inside the 80% safe zone.
+       PNGs are rendered from this by scripts/make_icons.sh. -->
+  <defs><clipPath id="c"><circle cx="48" cy="48" r="22"/></clipPath></defs>
+  <rect width="512" height="512" fill="#12110E"/>
+  <g transform="translate(83.2 83.2) scale(3.6)">
+    <path d="M 6 48 A 42 14 0 0 1 90 48" transform="rotate(-20 48 48)" fill="none" stroke="#F0ECE3" stroke-width="4"/>
+    <circle cx="48" cy="48" r="22" fill="#E8453A"/>
+    <g clip-path="url(#c)" fill="#B8301F"><rect x="20" y="35" width="56" height="4"/><rect x="20" y="49" width="56" height="5"/><rect x="20" y="62" width="56" height="4"/></g>
+    <path d="M 6 48 A 42 14 0 0 0 90 48" transform="rotate(-20 48 48)" fill="none" stroke="#12110E" stroke-width="10"/>
+    <path d="M 6 48 A 42 14 0 0 0 90 48" transform="rotate(-20 48 48)" fill="none" stroke="#F0ECE3" stroke-width="4"/>
+    <circle cx="87.5" cy="33.6" r="6" fill="#F0ECE3"/>
+  </g>
+</svg>
