@@ -15,18 +15,28 @@ Going live (rebuild) and publishing (git push) stay his, by hand. The repo is mo
 Out loud: improve_start queues a job for the runner service (runner-out/queue), read back first
 and started on his plain yes like a mission (missions.confirms_pending); improve_status says how
 jobs went. run_notifier pushes each finished job to his phone, the tap opening its review card.
+
+Self-review (run_self_review): once a day at SELF_REVIEW_HOUR (his time, quiet hours), or when he
+asks (self_review), THURSDAY reads the last REVIEW_DAYS of their conversations for where it fell
+short: his corrections ("this isn't John Wick music") and claims no tool backed ("Music, off."
+with nothing run). The mission model turns that evidence, and a map of the code, into at most 3
+small fixes, posted as a "Self-review" conversation in the chat with a phone push. They discuss it
+there; a fix he settles on goes to improve_start like any other, read back first.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from typing import Any, Dict
 
 from accounts import OWNER
@@ -228,3 +238,190 @@ TOOL_SCHEMAS = [
         "name": "improve_status", "description": "How his self-improvement jobs went: queued, working, waiting for review.",
         "parameters": {"type": "object", "properties": {}}}},
 ]
+
+
+# --- self-review ------------------------------------------------------------------------------
+
+REVIEW_HOUR = int(os.getenv("SELF_REVIEW_HOUR", "3"))
+REVIEW_DAYS = 2
+REVIEW_TZ = os.getenv("SELF_REVIEW_TZ", "America/New_York")
+REVIEW_STATE = Path(os.getenv("THURSDAY_BRAIN_DIR", "/app/brain")) / "self_review.json"
+EVIDENCE_CHARS = 7000
+_review_now = asyncio.Event()
+# He's correcting THURSDAY: what came before it is worth a look.
+_CORRECTION = re.compile(r"\b(?:nope|that'?s\s+(?:not|wrong)|this\s+isn'?t|isn'?t\s+(?:working|right|it)|still\s+(?:not|isn'?t)|"
+                         r"not\s+working|didn'?t\s+(?:work|do|play|change|stop|turn)|you\s+didn'?t|doesn'?t\s+work|"
+                         r"why\s+did\s+you|not\s+what\s+i\s+(?:asked|said|meant)|wrong\s+(?:song|one|answer|music|thing))\b", re.I)
+# A reply that says something happened. With no tool result before it this turn, nothing did.
+_CLAIM = re.compile(r",\s*(?:playing|added|saved|set|done|booked|deleted|off|on|paused|stopped)\s*[.!]|\bi\s+(?:added|set|saved|"
+                    r"booked|turned|played|paused|stopped)\b|\bit'?s\s+(?:on|off|playing|set|saved)\s*[.!]", re.I)
+_SKIP_TITLES = ("Mission ·", "Watch ·", "Self-review ·")
+
+
+def _evidence(since: str) -> list[str]:
+    """Snippets from his recent conversations where THURSDAY fell short."""
+    from agent_loop import initalize_db  # on first use
+    db = initalize_db()
+    with db._connect() as conn:
+        rows = conn.execute(
+            "SELECT m.role, m.content, m.conversation_id, c.title FROM messages m JOIN conversations c "
+            "ON c.id = m.conversation_id WHERE c.user_id = ? AND m.created_at >= ? ORDER BY m.id", (OWNER, since)).fetchall()
+    by_conv: dict[str, list] = {}
+    for r in rows:
+        if not str(r["title"]).startswith(_SKIP_TITLES):
+            by_conv.setdefault(r["conversation_id"], []).append((r["role"], " ".join(str(r["content"]).split())[:300]))
+    out = []
+    for msgs in by_conv.values():
+        tooled = False  # a tool result since his last message
+        for i, (role, text) in enumerate(msgs):
+            if role == "user":
+                tooled = False
+                if i and _CORRECTION.search(text):
+                    before = [f"{'Daniel' if r == 'user' else 'THURSDAY'}: {t}" for r, t in msgs[max(0, i - 3):i]
+                              if not t.startswith("TOOL_RESULT:")]
+                    after = next((t for r, t in msgs[i + 1:] if r == "assistant" and not t.startswith("TOOL_RESULT:")), "")
+                    out.append("CORRECTION\n" + "\n".join(before + [f"Daniel: {text}", f"THURSDAY: {after}"]))
+            elif text.startswith("TOOL_RESULT:"):
+                tooled = True
+            elif _CLAIM.search(text) and not tooled:
+                said = next((t for r, t in reversed(msgs[:i]) if r == "user"), "")
+                out.append(f"CLAIM WITHOUT A TOOL\nDaniel: {said}\nTHURSDAY: {text}")
+    seen, kept, size = set(), [], 0
+    for e in reversed(out):  # newest first: what's still going wrong gets the room
+        if e not in seen and size + len(e) <= EVIDENCE_CHARS:
+            seen.add(e); kept.append(e); size += len(e)
+    return kept
+
+
+def _code_map() -> str:
+    """Each Python file and the first line of what it says it does: enough to name where a fix goes."""
+    lines = []
+    for path in sorted(Path("/app").glob("*.py")) + sorted(Path("/app/satellite").glob("*.py")):
+        try:
+            doc = (ast.get_docstring(ast.parse(path.read_text())) or "").strip().splitlines()
+        except (SyntaxError, OSError):
+            continue
+        lines.append(f"- {path.relative_to('/app')}: {doc[0][:140] if doc else ''}")
+    return "\n".join(lines)
+
+
+_REVIEW_SYSTEM = """You are THURSDAY's engineer, reviewing the last {days} days of THURSDAY's conversations with Daniel to find where THURSDAY fell short, and proposing fixes to its own code.
+
+The evidence below is only the moments that looked wrong: his corrections, and replies that claimed an action with no tool run that turn (so nothing happened). Read it, find the real patterns, and propose at most 3 fixes. Each fix must be:
+- grounded in the evidence (quote it), about a pattern not a one-off,
+- small and concrete: one change to code or the prompt, in one or two files from the map below,
+- something a careful engineer could do in an hour, with how to check it worked.
+Skip anything already working, anything vague ("be smarter"), and anything about the voice model choice or hardware.
+
+Reply with JSON only, no prose: {{"ideas": [{{"title": "...", "problem": "...", "evidence": "...", "fix": "...", "files": ["..."], "check": "..."}}]}}. If nothing is worth fixing, {{"ideas": []}}.
+
+The code (file: what it does):
+{code}"""
+
+
+def _parse_ideas(text: str) -> list[dict]:
+    text = text.strip()
+    if "```" in text:
+        text = text.split("```")[1].removeprefix("json").strip()
+    start, end = text.find("{"), text.rfind("}")
+    try:
+        ideas = json.loads(text[start:end + 1]).get("ideas") or []
+    except (ValueError, AttributeError):
+        return []
+    return [i for i in ideas if isinstance(i, dict) and i.get("title") and i.get("fix")][:3]
+
+
+def _write_up(ideas: list[dict], evidence_count: int) -> str:
+    parts = [f"I read our last {REVIEW_DAYS} days and found {evidence_count} moment(s) where I fell short. "
+             f"{len(ideas)} thing(s) I'd change in myself:"]
+    for n, i in enumerate(ideas, 1):
+        files = ", ".join(f"`{f}`" for f in i.get("files") or [])
+        parts.append(f"**{n}. {i['title']}**\n- Problem: {i.get('problem', '')}\n- Evidence: {i.get('evidence', '')}\n"
+                     f"- Fix: {i['fix']}" + (f"\n- Files: {files}" if files else "") +
+                     (f"\n- How we'd know: {i['check']}" if i.get("check") else ""))
+    parts.append("Tell me what you think of these. When we agree on one, I make it in my sandbox and you review the "
+                 "change before anything is live.")
+    return "\n\n".join(parts)
+
+
+async def self_review() -> str:
+    """One review: evidence, the model's ideas, a Self-review conversation and a push. Returns what happened."""
+    import approvals
+    import missions
+    from agent_loop import initalize_db
+    since = (datetime.now(timezone.utc) - timedelta(days=REVIEW_DAYS)).isoformat()
+    evidence = await asyncio.to_thread(_evidence, since)
+    digest = hashlib.sha256("\n".join(evidence).encode()).hexdigest()
+    state = json.loads(REVIEW_STATE.read_text()) if REVIEW_STATE.exists() else {}
+    state["last_run"] = datetime.now(timezone.utc).isoformat()
+    if not evidence or digest == state.get("digest"):
+        REVIEW_STATE.write_text(json.dumps(state))
+        logger.info("self-review: %s", "nothing to review" if not evidence else "no new evidence")
+        return "nothing new"
+    messages = [{"role": "system", "content": _REVIEW_SYSTEM.format(days=REVIEW_DAYS, code=_code_map())},
+                {"role": "user", "content": "Evidence:\n\n" + "\n\n".join(evidence)}]
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(900, connect=5)) as http:
+            msg, secs = await missions._call_model(http, messages, [])
+    finally:
+        missions._flag("mission-busy", False)
+    ideas = _parse_ideas(msg.get("content") or "")
+    state["digest"] = digest
+    REVIEW_STATE.write_text(json.dumps(state))
+    logger.info("self-review: %d evidence, %d idea(s), %.0f s", len(evidence), len(ideas), secs)
+    if not ideas:
+        return "no ideas"
+    db = initalize_db()
+    conv = db.create_conversation(f"Self-review · {datetime.now(ZoneInfo(REVIEW_TZ)):%b %-d}", OWNER)
+    db.log_message(role="assistant", content=_write_up(ideas, len(evidence)), conversation_id=conv["id"])
+    await asyncio.to_thread(approvals.push, "THURSDAY has ideas to improve itself",
+                            "; ".join(i["title"] for i in ideas)[:400], click=approvals.link(conv["id"]), tags=("bulb",))
+    return f"{len(ideas)} idea(s)"
+
+
+async def run_self_review() -> None:
+    """Daily at REVIEW_HOUR his time (or now, when he asks), at most once a day."""
+    while True:
+        try:
+            await asyncio.wait_for(_review_now.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            pass
+        try:
+            asked = _review_now.is_set()
+            _review_now.clear()
+            now = datetime.now(ZoneInfo(REVIEW_TZ))
+            state = json.loads(REVIEW_STATE.read_text()) if REVIEW_STATE.exists() else {}
+            ran_today = state.get("last_run", "")[:10] == now.astimezone(timezone.utc).isoformat()[:10]
+            if asked or (now.hour == REVIEW_HOUR and not ran_today):
+                await self_review()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("self-review")
+
+
+def self_review_now(args: Dict[str, Any]) -> ToolResult:
+    if (TURN.get() or {}).get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="self_review_now", error="self_improvement_is_daniels_only")
+    if _review_loop is None:
+        return ToolResult(ok=False, tool_name="self_review_now", error="review_not_running")
+    _review_loop.call_soon_threadsafe(_review_now.set)
+    return ToolResult(ok=True, tool_name="self_review_now", data={
+        "note": "It runs when the house is quiet; the ideas show up as a Self-review conversation in the chat and on "
+                "his phone. Say so in one short statement."})
+
+
+_review_loop: asyncio.AbstractEventLoop | None = None
+
+
+async def start_self_review() -> None:
+    global _review_loop
+    _review_loop = asyncio.get_running_loop()
+    await run_self_review()
+
+
+TOOL_SCHEMAS.append({"type": "function", "function": {
+    "name": "self_review_now",
+    "description": "Review your recent conversations with him for where you fell short, and propose fixes to yourself "
+    "(also runs every night by itself). The ideas arrive as a Self-review conversation in the chat.",
+    "parameters": {"type": "object", "properties": {}}}})

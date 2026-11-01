@@ -117,6 +117,7 @@ Facts and tools:
 - "Send that to my phone" (a mission write-up, an address, a list): send_to_phone.
 - Music (YouTube Music, on his satellite speaker by default): music_play for a song, artist, album, or a playlist for a mood or activity; music_control to pause, resume, skip, go back or change the volume; music_now for what's playing; music_recommend for songs like it; music_output to move it between the satellite and the Mac. Music plays only when music_play ran this turn. Confirm in a few words ("Daft Punk, playing."). If the music app is off, say so in one line.
 - He asks you to improve or fix yourself (how you answer something, a habit he dislikes): improve_start, read back first like a mission. It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
+- A "Self-review" conversation holds your own ideas for improving yourself (you review the last days every night; self_review_now when he asks). There, talk them through with him: what goes wrong, the fix, what it might break, answer his questions honestly. When he settles on one, improve_start with the change as you agreed it, read back first.
 - Things your missions proposed wait for his OK (approval_list). When he answers, approval_decide: approve only on his plain yes to that thing, never on your own; no or not now declines. Say what happened in a few words.
 - His lists (grocery, packing, to-do) and notes: list_add, list_show, list_remove, note_save, note_find. Confirm in a few words ("Eggs and oat milk, added."); read a list back in one sentence. A list or note changes only when a tool changes it, every time: "got the eggs" is list_remove, "add bread" is list_add, even if you talked about that list a moment ago. Never say you added, removed or saved something unless the tool did it this turn.
 - The lights (his LIFX bulbs): light_set for on, off, brightness and color ("dim it", "movie mode", "make it red"); light_status to say what they're doing. The light changes only when light_set is called this turn. Confirm what the tool reports, in a few words ("Lights, thirty percent. Warm."). No reply about the lights is needed beyond that.
@@ -493,6 +494,63 @@ def _wake_intent(user_id: str, text: str) -> tuple[str, dict] | None:
     return None
 
 
+# Music he asks for is done here, in code, not left to the model: it said "Music, off." and "John Wick
+# music, playing." with no tool call at all, so nothing changed (2026-11-01). Clear requests only;
+# anything else still goes to the model with the music tools.
+_LEAD = r"^\W*(?:(?:hey\s+)?thursday\W+)?(?:(?:can|could|would|will)\s+you\s+|please\s+|go\s+ahead\s+and\s+|just\s+)*"
+_MUSIC_WORD = r"(?:music|song|songs|track|playlist|tunes|radio|it)"
+_MUSIC_PAUSE = re.compile(rf"\b(?:stop|pause|turn\s+off|shut\s+off|kill|cut|end|mute)\s+(?:the\s+|this\s+|that\s+)?"
+                          rf"(?:music|song|track|playlist|tunes|radio)\b|\bmusic\s+off\b|{_LEAD}pause(?:\s+it)?\W*$", re.I)
+_MUSIC_RESUME = re.compile(rf"\b(?:resume|unpause)\b|\bkeep\s+playing\b|\bturn\s+(?:the\s+)?music\s+(?:back\s+)?on\b"
+                           rf"|\b(?:play|start|put)\s+(?:the\s+)?(?:music|song)\s+(?:again|back\s+on)\b", re.I)
+_MUSIC_NEXT = re.compile(rf"{_LEAD}skip\b|\bskip\s+(?:this|it|the\s+song|song|track|ahead)\b|\bnext\s+(?:song|track|one)\b", re.I)
+_MUSIC_BACK = re.compile(r"\b(?:previous|last)\s+(?:song|track)\b|\bgo\s+back\s+(?:a|one)\s+(?:song|track)\b", re.I)
+_MUSIC_VOLUME = re.compile(rf"\b(?:turn|crank)\s+(?:it|the\s+music|music|this|the\s+volume)\s+(up|down)\b|\b(louder|quieter|softer)\b"
+                           rf"|\bvolume\s+(up|down)\b|\bvolume\s+to\s+(\d{{1,3}})\b", re.I)
+_MUSIC_NOW = re.compile(r"\bwho\s+(?:sings|is\s+singing|'?s\s+singing|sang|is\s+this)\b|\bwhat\s+(?:song|track)\s+is\s+"
+                        r"(?:this|playing|that|on)\b|\bwhat'?s\s+(?:this\s+song|playing)\b|\b(?:name\s+of\s+(?:this|the)|this)\s+song'?s?\s+name\b"
+                        r"|\bsong\s+name\b", re.I)
+_MUSIC_PLAY = re.compile(rf"{_LEAD}(?:play|put\s+on|throw\s+on)\s+(?!a\s+game|games?\b|with\b|along\b|it\s+cool\b)(.+)", re.I)
+_PLAYLIST_WORDS = re.compile(r"\b(?:music|songs|playlist|beats|mix|vibes|radio|hits|tunes|soundtrack|ost|jams)\b|\bfor\s+\w+", re.I)
+
+
+def _music_intent(text: str) -> tuple[str, dict] | None:
+    """A clear music request as (tool, args), run in code; None leaves it to the model."""
+    if _MUSIC_PAUSE.search(text):
+        return "music_control", {"action": "pause"}
+    if _MUSIC_NOW.search(text):
+        return "music_now", {}
+    if _MUSIC_NEXT.search(text):
+        return "music_control", {"action": "next"}
+    if _MUSIC_BACK.search(text):
+        return "music_control", {"action": "previous"}
+    if _MUSIC_RESUME.search(text):
+        return "music_control", {"action": "resume"}
+    if m := _MUSIC_VOLUME.search(text):
+        if m[4]:
+            return "music_control", {"action": "set_volume", "level": int(m[4])}
+        up = (m[1] or m[3] or "").lower() == "up" or (m[2] or "").lower() == "louder"
+        return "music_control", {"action": "volume_up" if up else "volume_down"}
+    if m := _MUSIC_PLAY.search(text):
+        # The first sentence only ("Play John Wick music. This isn't it."), but not at initials ("S. G. Lewis").
+        query = re.split(r"(?<=[A-Za-z]{2}[.!?])\s+(?=[A-Z][a-z])", m[1].strip(), maxsplit=1)[0].strip(" .!?,")
+        some = bool(re.match(r"(?:me\s+)?some\s+", query, re.I))
+        query = re.sub(r"^(?:me\s+)?(?:some\s+|a\s+little\s+|the\s+song\s+)", "", query, flags=re.I)
+        if len(query) < 2 or query.lower() in ("it", "that", "this", "music", "something", "anything"):
+            return None  # "play it" / "play something": the model picks, or asks
+        if re.match(r"(?:the\s+)?album\s+", query, re.I):
+            return "music_play", {"query": re.sub(r"^(?:the\s+)?album\s+", "", query, flags=re.I), "kind": "album"}
+        if re.search(r"\bby\s+\w", query, re.I):
+            kind = "song"
+        elif _PLAYLIST_WORDS.search(query) or re.match(r"(?:something|anything)\b", query, re.I):
+            kind = "playlist"  # a mood, a genre, an activity
+        else:
+            # "some Daft Punk": the artist (a name; transcripts capitalize names); "some jazz": a genre
+            kind = ("artist" if query[:1].isupper() else "playlist") if some else "song"
+        return "music_play", {"query": query, "kind": kind}
+    return None
+
+
 _DELIBERATE = re.compile(r"\b(think\s+(it|this|that)\s+(over|through)|take\s+your\s+time|think\s+(hard|carefully)|"
                          r"really\s+think|give\s+it\s+(some\s+)?(real\s+)?thought)\b", re.I)
 _REQUEST = re.compile(
@@ -847,6 +905,16 @@ async def _stream_prompt(
         result = await run_and_record(held, {"confirmed": True})
         yield {"type": "tool_result", "name": held, "ok": result.ok, "started": _started(held, result)}
         executed.add(f"{held}:{json.dumps({'confirmed': True})}")
+    elif music_call := (_music_intent(user_prompt) if mode in ("voice", "chat") else None):
+        name, args = music_call
+        yield {"type": "tool", "name": name, "args": args}
+        result = await run_and_record(name, args)
+        yield {"type": "tool_result", "name": name, "ok": result.ok}
+        executed.add(f"{name}:{json.dumps(args, sort_keys=True)}")
+        messages.append({"role": "system", "content": (
+            f"{name} already ran for what he just said. Reply from its result in a few words, and don't call a "
+            "music tool again this turn." if result.ok else
+            f"{name} failed ({result.error}). Say so plainly in one line; never say it's playing or stopped.")})
     # "Add X to my calendar" must go through calendar_create; the model has
     # answered "I've prepared it" without calling anything.
     elif _CALENDAR_ADD.search(user_prompt):
