@@ -129,6 +129,7 @@ def music_play(args: Dict[str, Any]) -> ToolResult:
                 return ToolResult(ok=False, tool_name="music_play", error="not_found: say you couldn't find it")
             target, what = found
         _cmd("changeVideo", target)
+        _cmd("play")  # changeVideo keeps a paused player paused (it played ~1 s and stopped)
         _duck["restore"] = None
         logger.info("music: playing %s", what)
         return ToolResult(ok=True, tool_name="music_play", data={"playing": what})
