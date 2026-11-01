@@ -9,7 +9,7 @@ import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule"]
+    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "light_set", "light_status"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -375,6 +375,62 @@ def _read_pages(results: list[dict], terms: set[str]) -> None:
             r["published_date"] = r.get("published_date") or page["date"]
 
 
+BRAVE_URL = "https://api.search.brave.com/res/v1"
+_TAGS = re.compile(r"<[^>]+>")
+# Brave gives $5 of credit a month (~1,000 searches) and bills past it with no cap of its
+# own, so this is the cap: past it, search falls back to SearXNG until the next month.
+BRAVE_MONTHLY_CAP = int(os.getenv("BRAVE_MONTHLY_CAP", "900"))
+BRAVE_USAGE_FILE = "./brain/brave_usage.json"
+_brave_lock = __import__("threading").Lock()
+
+
+def _brave_allowance() -> bool:
+    """Count one Brave search against this month's cap; False once it's spent."""
+    import json as _json
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    with _brave_lock:
+        try:
+            with open(BRAVE_USAGE_FILE) as f:
+                usage = _json.load(f)
+        except (OSError, ValueError):
+            usage = {}
+        if usage.get("month") != month:
+            usage = {"month": month, "count": 0}
+        if usage["count"] >= BRAVE_MONTHLY_CAP:
+            return False
+        usage["count"] += 1
+        with open(BRAVE_USAGE_FILE, "w") as f:
+            _json.dump(usage, f)
+    return True
+
+
+def _brave_search(query: str, limit: int, news: bool) -> list[dict] | None:
+    """Brave's Search API, when BRAVE_SEARCH_API_KEY is set: a real index instead of scraping
+    engines that block a home IP (all of them did, 2026-10-31). None on any failure, so
+    web_search falls back to SearXNG."""
+    key = os.getenv("BRAVE_SEARCH_API_KEY", "")
+    if not key:
+        return None
+    if not _brave_allowance():
+        print(f"[web_search] brave monthly cap ({BRAVE_MONTHLY_CAP}) reached; using SearXNG")
+        return None
+    params = {"q": query, "count": min(limit * 2, 20), "search_lang": "en", "safesearch": "off"}
+    if news:
+        params["freshness"] = "pm"
+    try:
+        resp = requests.get(f"{BRAVE_URL}/{'news' if news else 'web'}/search", params=params, timeout=8,
+                            headers={"Accept": "application/json", "X-Subscription-Token": key})
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        print(f"[web_search] brave failed for {query!r}: {type(exc).__name__}")
+        return None
+    raw = data.get("results") if news else (data.get("web") or {}).get("results")
+    return [{"title": _TAGS.sub("", r.get("title") or ""), "url": r.get("url"), "engine": "brave",
+             "content": _TAGS.sub("", r.get("description") or ""), "publishedDate": r.get("page_age") or r.get("age")}
+            for r in raw or []]
+
+
 def web_search(args: Dict[str, Any]) -> ToolResult:
     """
     Args
@@ -406,6 +462,14 @@ def web_search(args: Dict[str, Any]) -> ToolResult:
     news = {"categories": "news", "time_range": "month"}
     general = {"categories": "general"}
     attempts = [news, general] if any(h in query.lower() for h in _NEWS_HINTS) else [general, news]
+
+    brave = _brave_search(query, limit, attempts[0] is news)
+    results = _normalize_results(brave, limit, _query_terms(query)) if brave else []
+    if results:
+        _read_pages(results, _query_terms(query))
+        return ToolResult(ok=True, tool_name="web_search", data={
+            "query": query, "category": attempts[0]["categories"], "result_count": len(results), "results": results,
+            "note": "Answer in your own words from the excerpts; never read an article out."})
 
     unresponsive: dict[str, str] = {}
     for extra in attempts:
@@ -521,6 +585,45 @@ def launch_schedule(args: Dict[str, Any]) -> ToolResult:
     from live_data import launch_schedule as _launch_schedule
     return _launch_schedule(args)
 
+def thursday_setting(args: Dict[str, Any]) -> ToolResult:
+    import mind  # imported on first use: mind imports this module
+    return mind.thursday_setting(args)
+
+def _alarm(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
+    # Imported on first use: alarm_tools imports calendar_tool, which imports this module.
+    def run(args: Dict[str, Any]) -> ToolResult:
+        import alarm_tools
+        return getattr(alarm_tools, name)(args)
+    return run
+
+def _mission(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
+    # Imported on first use: missions imports this module.
+    def run(args: Dict[str, Any]) -> ToolResult:
+        import missions
+        return getattr(missions, name)(args)
+    return run
+
+def _approval(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
+    # Imported on first use: approvals imports this module.
+    def run(args: Dict[str, Any]) -> ToolResult:
+        import approvals
+        return getattr(approvals, name)(args)
+    return run
+
+def _lights(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
+    # Imported on first use: lights imports this module.
+    def run(args: Dict[str, Any]) -> ToolResult:
+        import lights
+        return getattr(lights, name)(args)
+    return run
+
+def _notes(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
+    # Imported on first use: notes imports this module.
+    def run(args: Dict[str, Any]) -> ToolResult:
+        import notes
+        return getattr(notes, name)(args)
+    return run
+
 #Registry (Central Allowlist for Thursday)
 TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "get_time": get_time,
@@ -533,6 +636,27 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "calendar_confirm": calendar_confirm,
     "sports_scores": sports_scores,
     "launch_schedule": launch_schedule,
+    "alarm_set": _alarm("alarm_set"),
+    "alarm_list": _alarm("alarm_list"),
+    "alarm_cancel": _alarm("alarm_cancel"),
+    "alarm_snooze": _alarm("alarm_snooze"),
+    "alarm_dismiss": _alarm("alarm_dismiss"),
+    "thursday_setting": thursday_setting,
+    "mission_start": _mission("mission_start"),
+    "mission_status": _mission("mission_status"),
+    "mission_abort": _mission("mission_abort"),
+    "watch_start": _mission("watch_start"),
+    "watch_list": _mission("watch_list"),
+    "watch_stop": _mission("watch_stop"),
+    "approval_list": _approval("approval_list"),
+    "approval_decide": _approval("approval_decide"),
+    "send_to_phone": _approval("send_to_phone"),
+    "routine_start": _mission("routine_start"),
+    "routine_list": _mission("routine_list"),
+    "routine_stop": _mission("routine_stop"),
+    **{name: _notes(name) for name in ("list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete")},
+    "light_set": _lights("light_set"),
+    "light_status": _lights("light_status"),
 }
 
 def execute_tool(call: ToolCall) -> ToolResult:

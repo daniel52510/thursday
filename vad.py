@@ -85,6 +85,43 @@ def _frames(ms: int) -> int:
     return max(1, round(ms / FRAME_MS))
 
 
+class BargeIn:
+    """Watches the mic while THURSDAY thinks or speaks. Stricter than the
+    endpointer's start: her own voice leaking past echo cancellation, a cough
+    or a quick "mm" must not cut her off; a real interjection must."""
+
+    def __init__(self, cfg: VADConfig):
+        self.vad = SileroVAD()
+        self.prob = _env_float("BARGE_PROB", 0.8)
+        self._need = _frames(int(_env_float("BARGE_MS", 288)))
+        # Everything since just before the speech began, handed to the endpointer on a trigger.
+        self._recent: deque[bytes] = deque(maxlen=_frames(cfg.preroll_ms) + self._need)
+        self.reset()
+
+    def reset(self) -> None:
+        self.vad.reset()
+        self._recent.clear()
+        self._run = 0
+        self._miss = 0
+
+    def feed(self, frame: bytes) -> list[bytes] | None:
+        """The buffered speech once the user has clearly started talking."""
+        self._recent.append(frame)
+        if self.vad(frame) >= self.prob:
+            self._run += 1
+            self._miss = 0
+        elif self._run:
+            # One weak frame inside a word doesn't restart the count; two do.
+            self._miss += 1
+            if self._miss > 1:
+                self._run = self._miss = 0
+        if self._run >= self._need:
+            frames = list(self._recent)
+            self.reset()
+            return frames
+        return None
+
+
 class Endpointer:
     """Feed 32 ms frames; get back the utterance's PCM once speech has ended."""
 
@@ -104,6 +141,7 @@ class Endpointer:
         self._frames_in: list[bytes] = []
         self._speech_run = 0
         self._silence_run = 0
+        self.end_frames = self._end_frames  # this pause's endpoint; voice_ws's smart endpoint moves it
         self.voiced = 0  # speech frames in the current utterance; unchanged across a pause
         self.in_speech = False
 
@@ -135,7 +173,8 @@ class Endpointer:
         else:
             self._silence_run = 0
             self.voiced += 1
-        if self._silence_run >= self._end_frames or len(self._frames_in) >= self._max_frames:
+            self.end_frames = self._end_frames  # speech again: the last pause's decision is void
+        if self._silence_run >= self.end_frames or len(self._frames_in) >= self._max_frames:
             utterance = self.snapshot()
             self.last_voiced = self.voiced
             self.reset()

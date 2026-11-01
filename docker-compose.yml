@@ -16,18 +16,27 @@ services:
       # Ollama and TTS run natively on macOS so they can use the Apple GPU
       # (Docker Desktop has no Metal passthrough). See README "Apple Silicon".
       OLLAMA_URL: http://host.docker.internal:11434/api/generate
-      STT_BASE_URL: http://thursday-stt:9200
+      # Native STT on the Mac GPU (stt_native.py via scripts/run_stt_native.sh, ~45 ms per
+      # utterance); the CPU container (~750 ms) is the automatic fallback when it's down.
+      STT_BASE_URL: ${THURSDAY_STT_URL:-http://host.docker.internal:9300}
+      STT_FALLBACK_URL: http://thursday-stt:9200
       # 9000 = Qwen (scripts/run_tts_native.sh); 9001 = the CSM voice served from
       # the separate thursday-voice project. Pick with THURSDAY_TTS_PORT in .env.
       TTS_BASE_URL: http://host.docker.internal:${THURSDAY_TTS_PORT:-9000}
       SEARXNG_BASE_URL: http://searxng:8080
+      # Approval pushes to his phone (approvals.py); NTFY_TOPIC (random) lives in .env.
+      NTFY_URL: http://ntfy:80
+      THURSDAY_PUBLIC_URL: ${THURSDAY_PUBLIC_URL:-http://thursday.local}
     depends_on:
       - searxng
     volumes:
       - ./brain:/app/brain
+      # The vault key (vault.py): outside the repo and the image, read-only. Create it first
+      # (32 random bytes, base64) or Docker makes a directory here and the vault stays off.
+      - ${HOME}/.config/thursday/master.key:/run/secrets/thursday_master_key:ro
     ports:
       - "8000:8000"
-      # Plain http://thursday.local (no port) on the LAN. Same app, same token auth.
+      # Plain http://thursday.local (no port) on the LAN. Same app, same login.
       - "80:8000"
   # CPU-only fallback. The normal path is the native MPS service
   # (scripts/run_tts_native.sh). Enable with: docker compose --profile tts-docker up
@@ -60,6 +69,21 @@ services:
       STT_DEVICE: cpu
       STT_COMPUTE_TYPE: int8
       STT_MODEL_SIZE: small
+  # Phone notifications (the ntfy app subscribes to NTFY_TOPIC here). LAN only, no auth: the
+  # random topic is the only lock. The upstream only wakes iPhones: it gets a message id, no text.
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    container_name: ntfy
+    command: serve
+    environment:
+      NTFY_BASE_URL: ${THURSDAY_NTFY_URL:-http://thursday.local:2586}
+      NTFY_UPSTREAM_BASE_URL: https://ntfy.sh
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+    ports:
+      - "2586:80"
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    restart: unless-stopped
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
@@ -78,3 +102,6 @@ services:
     dns:
       - 1.1.1.1
       - 8.8.8.8
+
+volumes:
+  ntfy-cache:

@@ -66,6 +66,7 @@
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* a component's own display (grid, flex) must never un-hide it */
   html, body { height: 100%; margin: 0; }
   /* dvh tracks the phone's visible area as the browser bars and keyboard come and go */
   body { height: 100dvh; }
@@ -82,7 +83,10 @@
 
   /* ---------- the mark (Jupiter) ---------- */
   .mark { width: 30px; height: 30px; }
-  .mark.lg { width: 72px; height: 72px; }
+  .mark.lg { width: 72px; height: 72px; overflow: visible; }
+  /* DESIGN.md 5: the planet breathes. Only the planet: the orbit and moon keep their size. */
+  .planet-breath { transform-box: fill-box; transform-origin: center; animation: breathe 6s var(--ease) infinite; }
+  @keyframes breathe { 50% { transform: scale(1.03); } }
   .wordmark { font: 600 13px/1 var(--tight); letter-spacing: .22em; text-transform: uppercase; color: var(--text); }
   .stripe-bar { display: grid; gap: 0; }
   .stripe-bar i { display: block; height: 3px; }
@@ -121,6 +125,14 @@
   .conv-menu .danger { color: var(--signal-text); }
   .status { margin: 0 -12px; padding: 12px 20px calc(14px + env(safe-area-inset-bottom)); display: grid; gap: 8px; border-top: 1px solid var(--rule); }
   .status-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  /* Systems readout (DESIGN.md data-sheet rows): mono label column, plain value. */
+  .sys { display: grid; gap: 7px; margin: 0; }
+  .sys > div { display: grid; grid-template-columns: 76px 1fr; gap: 8px; align-items: baseline; }
+  .sys dt { font: 500 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); }
+  .sys dd { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-body); min-width: 0; overflow-wrap: anywhere; }
+  .sys .dot { margin-right: 6px; }
+  .dot.busy { background: var(--stripe-amber); }
+  .dot.bad { background: var(--signal); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); display: inline-block; margin-right: 8px; vertical-align: 1px; }
   .dot.on { background: var(--ok); }
   .scrim { display: none; }
@@ -239,7 +251,13 @@
   .stage { display: flex; flex-direction: column; align-items: center; width: 100%; }
   .vfig { width: min(440px, 86vw); height: auto; overflow: visible; }
   #voiceState { margin-top: 14px; min-height: 1.4em; text-align: center; }
-  #voiceCaption { max-width: 620px; text-align: center; font: 400 25px/1.35 var(--serif); color: var(--text); min-height: 2.7em; margin-top: 14px; padding: 0 8px; }
+  /* Live captions: a three-line window that follows her voice word by word. */
+  #voiceCaption { width: min(640px, 100%); text-align: center; font: 500 24px/1.45 var(--sans); letter-spacing: -.01em; color: var(--text); height: 4.35em; margin-top: 14px; padding: 0 8px; position: relative; overflow: hidden; scroll-behavior: smooth; -webkit-mask-image: linear-gradient(transparent, #000 1.1em); mask-image: linear-gradient(transparent, #000 1.1em); }
+  #voiceCaption:not(.scrolled) { -webkit-mask-image: none; mask-image: none; }
+  #voiceCaption .w { color: var(--text-faint); opacity: .45; border-radius: 6px; padding: 0 .08em; margin: 0 -.08em; transition: color .18s var(--ease), opacity .18s var(--ease), background-color .25s var(--ease); }
+  #voiceCaption .w.on { color: var(--text); opacity: 1; }
+  #voiceCaption .w.now { background: color-mix(in srgb, var(--text) 10%, transparent); }
+  @media (max-width: 520px) { #voiceCaption { font-size: 20px; } }
   #voiceHeard { max-width: 620px; text-align: center; margin-top: 10px; min-height: 1.4em; padding: 0 8px; text-transform: none; letter-spacing: .02em; font-size: 12.5px; color: var(--text-muted); }
   #voiceHeard span { text-transform: uppercase; letter-spacing: .12em; color: var(--text-faint); margin-right: 6px; }
   #voice .controls { display: flex; gap: 28px; align-items: center; }
@@ -306,6 +324,28 @@
   dialog .row button { background: var(--inverse-bg); color: var(--inverse-text); padding: 10px 20px; border-radius: 999px; font-weight: 500; min-height: 44px; }
   dialog .row button.secondary { background: transparent; color: var(--text); border: 1px solid var(--rule-strong); }
 
+  /* ---------- login + settings ---------- */
+  dialog select, dialog textarea { width: 100%; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--rule-strong); background: var(--bg); color: var(--text); font: 14px var(--sans); }
+  dialog textarea { resize: vertical; min-height: 140px; line-height: 1.5; }
+  dialog.settings { width: min(580px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 4px; }
+  .tabs button { padding: 7px 14px; border-radius: 999px; border: 1px solid var(--rule-strong); font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+  .tabs button[aria-selected="true"] { background: var(--inverse-bg); color: var(--inverse-text); border-color: var(--inverse-bg); }
+  .set-h { margin: 22px 0 8px; font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); }
+  .set-p { margin: 0 0 10px; font-size: 14px; color: var(--text-muted); }
+  .set-list > div { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--rule); font-size: 14px; }
+  .set-list > div:last-child { border-bottom: 1px solid var(--rule); }
+  .set-list .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .set-list small { display: block; margin-top: 2px; color: var(--text-muted); font: 12px var(--mono); }
+  .set-list .icon-btn svg { width: 16px; height: 16px; }
+  .set-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .set-row > input, .set-row > select { flex: 1 1 150px; width: auto; }
+  .set-btn { padding: 9px 18px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-weight: 500; min-height: 40px; }
+  .set-btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--rule-strong); }
+  .set-note { min-height: 1.4em; margin: 8px 0 0; font: 12.5px/1.5 var(--mono); color: var(--text-muted); }
+  .set-note.err { color: var(--signal-text); }
+  .set-token { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--deep); font: 12.5px var(--mono); overflow-wrap: anywhere; user-select: all; }
+
   /* ---------- alarms ---------- */
   dialog.alarms { width: min(500px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; }
   .alarms-head { display: flex; align-items: center; justify-content: space-between; margin: -6px -8px 0 0; }
@@ -332,10 +372,10 @@
   /* ---------- phone ---------- */
   @media (max-width: 800px) {
     aside {
-      position: fixed; inset: 0 auto 0 0; width: min(300px, 85vw); transform: translateX(-100%); box-shadow: 0 0 40px rgba(10,9,7,.25);
+      position: fixed; inset: 0 auto 0 0; width: min(300px, 85vw); transform: translateX(-100%);
       padding-top: calc(16px + env(safe-area-inset-top));
     }
-    body.nav-open aside { transform: none; }
+    body.nav-open aside { transform: none; box-shadow: 0 0 40px rgba(10,9,7,.25); }  /* only when out: parked, it bled onto the edge */
     body.nav-open .scrim { display: block; position: fixed; inset: 0; background: rgba(10,9,7,.45); z-index: 15; }
     #menuBtn, #newChatTop { display: grid; }
     .head-side { display: none; }
@@ -354,6 +394,85 @@
     .msg.assistant > .mark { display: none; }
     .actions { opacity: 1; }
   }
+  /* ---------- agentic mode (DESIGN.md section 8): one calm column ---------- */
+  #agentic { display: none; flex: 1; overflow-y: auto; }
+  body.is-agentic #agentic { display: block; }
+  body.is-agentic .empty, body.is-agentic #scroller, body.is-agentic .composer-wrap { display: none !important; }
+  .ag-col { max-width: 640px; margin: 0 auto; padding: 16px 24px 72px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
+  .ag-top { align-self: stretch; display: flex; justify-content: space-between; align-items: center; min-height: 44px; }
+  .ag-top .ag-stop { margin-left: auto; }
+  .ag-back { padding-left: 0; }
+  .ag-view { align-self: stretch; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .ag-view[hidden] { display: none; }
+  .ag-running { align-self: stretch; text-align: left; border: 1px solid var(--rule-strong); border-radius: 24px; padding: 18px 22px; display: grid; gap: 6px; }
+  .ag-running .eyebrow { display: flex; align-items: center; gap: 8px; font: 500 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); position: relative; }
+  .live-dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--ok); animation: ag-ping 1.4s var(--ease) infinite; }
+  .ag-running .g { margin: 0; font: 400 21px/1.35 var(--serif); color: var(--text); overflow-wrap: anywhere; }
+  .ag-running .sub { margin: 0; font: 11px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); overflow-wrap: anywhere; }
+  .ag-running .btns { display: flex; gap: 8px; margin-top: 6px; }
+  .ag-running .open { min-height: 40px; padding: 0 20px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-weight: 500; }
+  .ag-empty { align-self: stretch; text-align: left; margin: 0; color: var(--text-muted); font-size: 14.5px; }
+  .ag-stop { min-height: 36px; padding: 6px 18px; border-radius: 999px; border: 1px solid var(--rule-strong); font-size: 13.5px; color: var(--text); transition: background .15s var(--ease); }
+  .ag-stop:hover:not(:disabled) { background: var(--surface); }
+  .ag-stop:disabled { color: var(--text-faint); border-color: var(--rule); cursor: default; }
+  .ag-stop:hover:not(:disabled) { border-color: var(--signal); color: var(--signal-text); }
+  .orrery { width: 100%; max-width: 480px; height: auto; overflow: visible; }
+  .orrery ellipse { fill: none; stroke-width: 1.2; }
+  .ag-title { font: 400 32px/1.15 var(--serif); letter-spacing: -.01em; margin: 0; color: var(--text); max-width: 30ch; overflow-wrap: anywhere; }
+  .ag-status { font: 500 11px/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); margin: 0; }
+  .ag-decision { align-self: stretch; text-align: left; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 24px; padding: 20px 24px; display: grid; gap: 8px; }
+  .ag-decision .eyebrow { display: flex; justify-content: space-between; gap: 12px; font: 500 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--signal-text); }
+  .ag-decision .q { font-size: 18px; font-weight: 500; line-height: 1.4; color: var(--text); margin: 0; overflow-wrap: anywhere; }
+  .ag-decision .why { font-size: 14.5px; color: var(--text-muted); margin: 0; }
+  .ag-decision .lock { font: 11px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); margin: 0; }
+  .ag-decision .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .ag-decision .btns button { min-height: 44px; padding: 0 22px; border-radius: 999px; font-weight: 500; }
+  .ag-decision .yes { background: var(--inverse-bg); color: var(--inverse-text); }
+  .ag-decision .no { border: 1px solid var(--rule-strong); color: var(--text); }
+  .ag-decision button:disabled { opacity: .5; cursor: default; }
+  .ag-steps { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; list-style: none; padding: 0; margin: 4px 0 0; }
+  .ag-step { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--rule); border-radius: 999px; padding: 6px 12px; font-size: 13px; color: var(--text-body); max-width: 100%; }
+  .ag-step .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28ch; }
+  .ag-step.done { color: var(--text-muted); }
+  .ag-step.failed { border-style: dashed; color: var(--text-faint); }
+  .ag-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; position: relative; background: var(--c); }
+  .ag-step.current .ag-dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--c); animation: ag-ping 1.4s var(--ease) infinite; }
+  @keyframes ag-ping { from { transform: scale(1); opacity: .7; } to { transform: scale(2.6); opacity: 0; } }
+  .ag-report { align-self: stretch; text-align: left; background: var(--surface); border: 1px solid var(--rule); border-radius: 22px; padding: 20px 24px; margin-top: 8px; }
+  .ag-cap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font: 500 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 12px; }
+  .ag-summary { font: 400 21px/1.4 var(--serif); color: var(--text); margin: 0 0 14px; }
+  .ag-report .md { font-size: 15px; line-height: 1.6; color: var(--text-body); overflow-wrap: anywhere; }
+  .ag-linkbtn { color: var(--link); font-size: 14px; padding: 10px 4px; min-height: 44px; }
+  .ag-linkbtn:hover { color: var(--link-hover); text-decoration: underline; }
+  .ag-details { align-self: stretch; text-align: left; }
+  .ag-details > summary { cursor: pointer; text-align: center; color: var(--link); font-size: 14px; list-style: none; padding: 10px; min-height: 44px; }
+  .ag-details > summary::-webkit-details-marker { display: none; }
+  .ag-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 4px 0 20px; table-layout: fixed; }
+  .ag-table th { font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); text-align: left; padding: 8px 8px 8px 0; border-bottom: 1.5px solid var(--text); }
+  .ag-table td { padding: 9px 8px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; overflow-wrap: anywhere; color: var(--text-body); }
+  .ag-table td.mono { font: 11.5px/1.6 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+  .ag-h { align-self: stretch; text-align: left; font: 500 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); margin: 28px 0 0; }
+  .ag-new { align-self: stretch; display: flex; gap: 8px; }
+  .ag-new input { flex: 1; min-width: 0; min-height: 48px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--text); font: 15px var(--sans); }
+  .ag-new button { min-height: 48px; padding: 0 22px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-weight: 500; }
+  .ag-new button:disabled { opacity: .5; cursor: default; }
+  .ag-note { align-self: stretch; text-align: left; min-height: 1.4em; margin: -6px 0 0; font: 12.5px/1.5 var(--mono); color: var(--text-muted); }
+  .ag-list { align-self: stretch; list-style: none; padding: 0; margin: 0; text-align: left; border-top: 1.5px solid var(--text); }
+  .ag-list .row { width: 100%; display: flex; gap: 12px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--rule); text-align: left; min-height: 44px; }
+  .ag-list .st { font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); width: 10ch; flex: none; }
+  .ag-list .when { margin-left: auto; padding-left: 12px; flex: none; font: 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+  .ag-list .g { color: var(--text-body); font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ag-list .row[aria-current="true"] .g { color: var(--text); font-weight: 500; }
+  .ag-list .row:hover .g { color: var(--text); }
+  .ag-watch { display: flex; gap: 16px; align-items: center; text-align: left; padding: 12px 0; border-bottom: 1px solid var(--rule); min-height: 44px; }
+  .ag-watch .w { flex: 1; min-width: 0; }
+  .ag-watch .g { display: block; white-space: normal; }
+  .ag-watch small { display: block; margin-top: 3px; font: 11px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); overflow-wrap: anywhere; }
+  .ag-watch .found { display: block; margin-top: 4px; font-size: 13.5px; color: var(--text-muted); }
+  .ag-watch .ag-stop { flex: none; }
+  .ag-watch.off .g { color: var(--text-faint); }
+  @media (max-width: 640px) { .ag-title { font-size: 26px; } .ag-col { padding: 12px 16px 56px; } .ag-report { padding: 16px; } }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
     .vfig .orbiting { display: none !important; }
@@ -402,6 +521,7 @@
   <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   <symbol id="i-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15L6 16zM10 21h4"/></symbol>
 </svg>
 
@@ -410,10 +530,17 @@
   <button class="nav-btn primary" id="newChat"><svg><use href="#i-plus"/></svg>New conversation</button>
   <button class="nav-btn" id="voiceNav"><svg><use href="#i-wave"/></svg>Voice mode</button>
   <button class="nav-btn" id="alarmsNav"><svg><use href="#i-bell"/></svg>Alarms</button>
+  <button class="nav-btn" id="announceNav"><svg><use href="#i-speaker"/></svg>Announce</button>
+  <button class="nav-btn" id="settingsNav"><svg><use href="#i-dots"/></svg>Settings</button>
   <nav class="conv-list" id="convList" aria-label="Conversations"></nav>
   <div class="stripe-bar" aria-hidden="true" style="margin:0 -12px"><i></i><i></i><i></i><i></i><i></i></div>
   <div class="status">
-    <div class="status-row mono"><span><span class="dot" id="statusDot"></span><span id="statusModel">connecting…</span></span></div>
+    <dl class="sys" aria-label="Systems">
+      <div><dt>Voice</dt><dd><span class="dot" id="statusDot"></span><span id="statusModel">Connecting…</span></dd></div>
+      <div id="sysMissions" hidden><dt>Missions</dt><dd><span class="dot" id="missionDot"></span><span id="missionModel"></span></dd></div>
+      <div><dt>Satellite</dt><dd><span class="dot" id="satDot"></span><span id="satText">Not connected</span></dd></div>
+      <div><dt>Signed in</dt><dd><span id="whoText">&nbsp;</span></dd></div>
+    </dl>
     <button class="loc-btn" id="locBtn" title="Set your location"><svg><use href="#i-pin"/></svg><span id="locText">Set location</span></button>
     <div class="status-row">
       <div class="seg" id="themeSeg" role="group" aria-label="Theme">
@@ -430,20 +557,91 @@
     <button class="icon-btn" id="menuBtn" aria-label="Menu"><svg><use href="#i-menu"/></svg></button>
     <span class="head-side"></span>
     <div class="modes" role="group" aria-label="Mode">
-      <button aria-pressed="true">Chat</button><button id="voiceTop" aria-pressed="false">Voice</button>
+      <button id="chatTop" aria-pressed="true">Chat</button><button id="voiceTop" aria-pressed="false">Voice</button><button id="agenticTop" aria-pressed="false" hidden>Agentic</button>
     </div>
     <span class="head-side"></span>
     <button class="icon-btn" id="newChatTop" aria-label="New conversation" title="New conversation"><svg><use href="#i-plus"/></svg></button>
   </header>
 
   <section class="empty">
-    <svg class="mark lg" aria-hidden="true"><use href="#mark"/></svg>
+    <svg class="mark lg" id="heroMark" viewBox="0 0 96 96" aria-hidden="true"></svg>
     <h1 id="greeting">Hello</h1>
     <p class="lede">Ask anything, or switch to voice and just talk.</p>
     <div class="suggestions" id="suggestions"></div>
   </section>
 
   <div id="scroller"><div id="thread"></div></div>
+
+  <section id="agentic" aria-label="Agentic mode">
+    <div class="ag-col">
+      <div class="ag-top">
+        <button class="ag-linkbtn ag-back" id="agBack" hidden>← Mission control</button>
+        <button class="ag-stop" id="agStop" hidden>Stop mission</button>
+      </div>
+      <svg class="orrery" id="agOrrery" role="img"></svg>
+      <h1 class="ag-title" id="agTitle">Mission control</h1>
+      <p class="ag-status" id="agStatus" role="status" aria-live="polite"></p>
+      <div class="ag-decision" id="agDecision" role="group" aria-label="Waiting for your OK" hidden>
+        <div class="eyebrow"><span>Waiting for your OK</span><span id="agDecCount"></span></div>
+        <p class="q" id="agDecQ"></p>
+        <p class="why" id="agDecWhy"></p>
+        <p class="lock">Only this event, only your calendar. Nothing is saved until you approve.</p>
+        <div class="btns"><button class="yes" id="agApprove">Approve</button><button class="no" id="agDecline">Not now</button></div>
+      </div>
+
+      <div class="ag-view" id="agHome">
+        <div class="ag-running" id="agRunning" hidden>
+          <div class="eyebrow"><span class="live-dot" aria-hidden="true"></span><span id="agRunEyebrow">Running now</span></div>
+          <p class="g" id="agRunGoal"></p>
+          <p class="sub" id="agRunStatus"></p>
+          <div class="btns"><button class="open" id="agRunOpen">Open</button><button class="ag-stop" id="agRunStop">Stop</button></div>
+        </div>
+        <h2 class="ag-h">New mission</h2>
+        <form class="ag-new" id="agForm">
+          <input id="agGoal" maxlength="1000" placeholder="Find the best robot vacuum under $400 for a dog" aria-label="Mission goal" autocomplete="off">
+          <button type="submit" id="agLaunch">Launch</button>
+        </form>
+        <p class="ag-note" id="agNote">He works on it in the background and pauses while you talk to him.</p>
+        <h2 class="ag-h" id="agWatchH" hidden>Watching</h2>
+        <ul class="ag-list" id="agWatches"></ul>
+        <h2 class="ag-h" id="agRoutineH" hidden>Routines</h2>
+        <ul class="ag-list" id="agRoutines"></ul>
+        <h2 class="ag-h" id="agListH" hidden>Missions</h2>
+        <ul class="ag-list" id="agList"></ul>
+        <p class="ag-empty" id="agEmpty" hidden>No missions yet. Ask him to look into something, out loud or here, and it shows up below.</p>
+      </div>
+
+      <div class="ag-view" id="agDetail" hidden>
+        <ul class="ag-steps" id="agSteps" aria-label="Steps"></ul>
+        <div class="ag-report" id="agReport" hidden>
+          <div class="ag-cap"><span>Fig. 1 · Mission report</span><span id="agCapRight"></span></div>
+          <p class="ag-summary" id="agSummary"></p>
+          <div class="md" id="agResult"></div>
+          <button class="ag-linkbtn" id="agOpenChat" hidden>Continue in chat</button>
+        </div>
+      <details class="ag-details" id="agDetails">
+        <summary>Details and activity</summary>
+        <table class="ag-table">
+          <thead><tr><th style="width:44%">Permission</th><th>Access</th></tr></thead>
+          <tbody>
+            <tr><td>Web search and reading public pages</td><td class="mono">Read-only · allowed</td></tr>
+            <tr><td>Time, weather, scores, launches, calculator</td><td class="mono">Read-only · allowed</td></tr>
+            <tr><td>Your calendar</td><td class="mono">Read-only · allowed</td></tr>
+            <tr><td>Your lists and notes</td><td class="mono">Add and read · allowed</td></tr>
+            <tr><td>Your home network, the Mac, the satellite</td><td class="mono">Blocked by design</td></tr>
+            <tr><td>Adding events to your calendar</td><td class="mono">Asks first · each one</td></tr>
+            <tr><td>Sending messages, phone calls</td><td class="mono">Not granted · planned, asks first</td></tr>
+            <tr><td>Purchases, logins, deleting data, his own settings</td><td class="mono">Never</td></tr>
+          </tbody>
+        </table>
+        <table class="ag-table" id="agActivity">
+          <thead><tr><th style="width:22%">Time</th><th>Step</th><th style="width:22%">Result</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </details>
+      </div>
+    </div>
+  </section>
 
   <div class="composer-wrap">
     <form class="composer" id="composer">
@@ -503,13 +701,21 @@
   </div>
 </section>
 
-<dialog id="tokenDialog">
-  <form method="dialog" id="tokenForm">
-    <h2>Connect to THURSDAY</h2>
-    <p>Paste the <code>VOICE_TOKEN</code> from your <code>.env</code>. It stays in this browser.</p>
-    <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="token" required>
-    <div class="row"><button type="submit">Connect</button></div>
+<dialog id="loginDialog">
+  <form id="loginForm">
+    <h2>Sign in to THURSDAY</h2>
+    <p>Use the account Daniel made for you.</p>
+    <label class="field">Username<input id="loginUser" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+    <label class="field">Password<input id="loginPass" type="password" autocomplete="current-password" required></label>
+    <p class="set-note err" id="loginNote"></p>
+    <div class="row"><button type="submit" id="loginSend">Sign in</button></div>
   </form>
+</dialog>
+
+<dialog id="settingsDialog" class="settings">
+  <div class="alarms-head"><h2>Settings</h2><button class="icon-btn" id="settingsClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <div class="tabs" id="setTabs" role="tablist"></div>
+  <div id="setBody"></div>
 </dialog>
 
 <dialog id="alarmsDialog" class="alarms">
@@ -534,6 +740,16 @@
   </form>
 </dialog>
 
+<dialog id="announceDialog">
+  <form id="announceForm">
+    <h2>Announce</h2>
+    <p>THURSDAY says this on the satellite speaker, in her voice, after a soft ping.</p>
+    <input id="announceInput" type="text" maxlength="300" placeholder="Dinner's ready" required autocomplete="off">
+    <p id="announceNote" class="mono" style="margin:10px 0 0;min-height:1.4em"></p>
+    <div class="row"><button type="button" class="secondary" id="announceCancel">Cancel</button><button type="submit" id="announceSend">Announce</button></div>
+  </form>
+</dialog>
+
 <dialog id="locDialog">
   <form method="dialog" id="locForm">
     <h2>Your location</h2>
@@ -546,7 +762,6 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const TOKEN_KEY = "thursdayVoiceToken";   // shared with /voice
 const CONV_KEY = "thursdayConversation";
 const THEME_KEY = "thursdayTheme";
 const LOC_KEY = "thursdayLocation";
@@ -560,33 +775,44 @@ const store = {
 };
 store.set("thursdayThreadSince", null);  // pre-conversations "New chat" marker
 
-/* ---------------- token ---------------- */
-let token = null;
-function takeTokenFromUrl() {
-  const url = new URL(location.href);
-  const t = url.searchParams.get("token");
-  if (t) { store.set(TOKEN_KEY, t); url.searchParams.delete("token"); history.replaceState(null, "", url); }
-}
-function askToken() {
-  return new Promise((resolve) => {
-    const dlg = $("tokenDialog");
-    dlg.onclose = () => { const t = $("tokenInput").value.trim(); if (t) store.set(TOKEN_KEY, t); resolve(t || null); };
-    dlg.showModal();
+/* ---------------- login ---------------- */
+// The session lives in an HttpOnly cookie the browser sends by itself; this page never sees it.
+store.set("thursdayVoiceToken", null);  // the shared token from before accounts
+let ME = null;
+let loggingIn = null;
+function askLogin() {
+  // Signing in reloads the page, so everything starts over as the new user.
+  return loggingIn ||= new Promise(() => {
+    const dlg = $("loginDialog");
+    if (!dlg.open) dlg.showModal();
+    $("loginUser").focus();
   });
 }
-async function getToken() {
-  token = token || store.get(TOKEN_KEY) || await askToken();
-  return token;
-}
-function dropToken() { token = null; store.set(TOKEN_KEY, null); }
+$("loginDialog").addEventListener("cancel", (e) => e.preventDefault());  // no way around it
+$("loginForm").onsubmit = async (e) => {
+  e.preventDefault();
+  $("loginSend").disabled = true; $("loginNote").textContent = "";
+  try {
+    const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("loginUser").value, password: $("loginPass").value }) });
+    if (res.ok) { location.reload(); return; }
+    $("loginNote").textContent = (await res.json().catch(() => ({}))).detail || "Couldn't sign in";
+  } catch { $("loginNote").textContent = "Can't reach THURSDAY right now"; }
+  $("loginSend").disabled = false;
+};
 
 async function api(path, opts = {}) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch(path, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${await getToken()}` } });
-    if (res.status !== 401) return res;
-    dropToken();  // wrong token: ask once more
-  }
-  throw new Error("invalid token");
+  const res = await fetch(path, opts);
+  if (res.status === 401) { ME = null; await askLogin(); }
+  return res;
+}
+
+async function loadMe() {
+  ME = await (await api("/api/me")).json();
+  $("whoText").textContent = `${ME.display_name} · ${ME.role}`;
+  $("alarmsNav").hidden = ME.role !== "admin";         // alarms ring on the admin's satellite
+  $("announceNav").hidden = !ME.family_memory;          // admin and family
+  $("agenticTop").hidden = ME.id !== "owner";           // missions run on the owner's GPU, with his calendar
 }
 
 /* ---------------- theme ---------------- */
@@ -1038,6 +1264,7 @@ async function deleteConversation(c) {
 }
 
 function newChat() {
+  closeAgentic();
   if (controller) controller.abort();
   setConversation(null);
   thread.innerHTML = "";
@@ -1049,6 +1276,7 @@ $("newChat").onclick = newChat;
 $("newChatTop").onclick = newChat;
 
 async function openConversation(id) {
+  closeAgentic();
   if (controller) controller.abort();
   setConversation(id);
   thread.innerHTML = "";
@@ -1075,10 +1303,54 @@ async function loadConversations() {
 async function loadInfo() {
   try {
     const info = await (await api("/api/info")).json();
-    $("statusModel").textContent = info.model;
-    $("statusDot").classList.add("on");
-  } catch { $("statusModel").textContent = "offline"; }
+    const voice = info.models?.voice || { name: info.model, state: "ready" };
+    // ready = loaded and answering; asleep = loads on the first turn (a few seconds); offline = Ollama is down
+    showModel("statusDot", "statusModel", voice, { ready: "Ready", asleep: "Asleep", offline: "Ollama offline", missing: "Not installed" },
+              { ready: "on", asleep: "busy", offline: "bad", missing: "bad" });
+    const ms = info.models?.missions;
+    $("sysMissions").hidden = !ms;
+    if (ms) showModel("missionDot", "missionModel", ms, { working: "Working", loaded: "Loaded", standby: "Standby",
+                                                          offline: "Ollama offline", missing: "Not installed" },
+                      { working: "busy", loaded: "on", standby: "", offline: "bad", missing: "bad" });
+    showSatellite(info.satellites?.[0]);
+  } catch {
+    showModel("statusDot", "statusModel", { name: "", state: "offline" }, { offline: "THURSDAY unreachable" }, { offline: "bad" });
+    showSatellite(null);
+  }
 }
+
+function showModel(dotId, textId, model, words, dots) {
+  $(dotId).className = `dot ${dots[model.state] || ""}`;
+  $(textId).textContent = [model.name, words[model.state] || model.state].filter(Boolean).join(" · ");
+}
+
+// The satellite reports every 30 s; it's listed only while connected.
+function showSatellite(sat) {
+  $("satDot").classList.toggle("on", !!sat && !sat.muted);
+  if (!sat) { $("satText").textContent = "Not connected"; return; }
+  const parts = [sat.room && sat.room !== "Satellite" ? sat.room : "", sat.muted ? "Mic muted" : "Online"].filter(Boolean);
+  if (sat.wifi_dbm != null) parts.push(`${sat.wifi_dbm} dBm`);
+  if (sat.night) parts.push("Night");
+  $("satText").textContent = parts.join(" · ");
+}
+setInterval(() => { if (document.visibilityState === "visible") loadInfo(); }, 30000);
+
+/* ---------------- announce ---------------- */
+$("announceNav").onclick = () => { closeNav(); $("announceNote").textContent = ""; $("announceDialog").showModal(); $("announceInput").focus(); };
+$("announceCancel").onclick = () => $("announceDialog").close();
+$("announceForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("announceInput").value.trim();
+  if (!text) return;
+  $("announceSend").disabled = true;
+  $("announceNote").textContent = "Preparing her voice";
+  try {
+    const res = await api("/api/announce", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    if (res.ok) { $("announceInput").value = ""; $("announceDialog").close(); }
+    else $("announceNote").textContent = (await res.json().catch(() => ({}))).detail || `Failed (${res.status})`;
+  } catch (err) { $("announceNote").textContent = err.message; }
+  $("announceSend").disabled = false;
+};
 
 function greet() {
   const h = new Date().getHours();
@@ -1144,7 +1416,7 @@ const vFig = $("voice"), vState = $("voiceState"), vCaption = $("voiceCaption"),
 const STATE_TEXT = { idle: "Standby", listening: "Listening", thinking: "Thinking", speaking: "Speaking · tap to interrupt" };
 // The figure's six states (DESIGN.md section 8); alert is reserved for alarms.
 const FIG_STATE = { idle: "standby", listening: "listening", thinking: "thinking", speaking: "speaking" };
-function figError(text, detail) { vFig.dataset.state = "error"; vState.textContent = text; vCaption.textContent = detail || ""; }
+function figError(text, detail) { vFig.dataset.state = "error"; vState.textContent = text; resetCaption(detail || ""); }
 function showTurn() { $("voiceTurn").textContent = V.turns ? `Turn ${V.turns}` : ""; }
 
 // The centre button: interrupt while she thinks or speaks, otherwise mute / unmute.
@@ -1251,8 +1523,10 @@ async function startAudio() {
   await V.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" })));
   const mic = V.ctx.createMediaStreamSource(stream);
   V.micNode = new AudioWorkletNode(V.ctx, "pcm16");
-  // Only stream while listening: nothing leaves the browser otherwise.
-  V.micNode.port.onmessage = (e) => { if (V.state === "listening" && !V.muted && V.ws?.readyState === WebSocket.OPEN) V.ws.send(e.data); };
+  // Stream during a turn too, so talking over her stops her (barge-in). Nothing
+  // leaves the browser while muted, in standby, or once voice mode is closed.
+  const LIVE = new Set(["listening", "thinking", "speaking"]);
+  V.micNode.port.onmessage = (e) => { if (LIVE.has(V.state) && !V.muted && V.ws?.readyState === WebSocket.OPEN) V.ws.send(e.data); };
   mic.connect(V.micNode);
   const mute = V.ctx.createGain(); mute.gain.value = 0;
   V.micNode.connect(mute).connect(V.ctx.destination);  // keeps the worklet pulled in every browser
@@ -1276,18 +1550,100 @@ function onVoiceEvent(ev) {
     return;
   }
   if (ev.type === "conversation") touchConversation(ev.id, ev.title);
-  else if (ev.type === "state") setVoiceState(ev.state);
+  else if (ev.type === "state") {
+    // No captions this turn (no audio, or TTS failed): show the reply as plain text.
+    if (ev.state === "idle" && V.replyText && !Cap.segs.length) resetCaption(V.replyText);
+    setVoiceState(ev.state);
+  }
   else if (ev.type === "audio_end") { V.audioEnd = true; V.chain.then(maybePlaybackEnded); }
+  else if (ev.type === "barge_in") {
+    // The user talked over her: silence her on this tick and show that we're listening.
+    stopReplyAudio(); stopThinking(); freezeCaption(false);
+    voiceView?.finish("interrupted"); voiceView = null;
+    setVoiceState("listening");
+  }
+  else if (ev.type === "caption") queueCaption(ev.text, ev.cps);
   else if (ev.type === "transcript") {
-    vCaption.textContent = "";
+    resetCaption(); V.replyText = "";
     vHeard.innerHTML = "<span>You said</span> ";
     vHeard.append(ev.text);
     V.turns++; showTurn();
     addUser(ev.text, true); voiceView = addAssistant();
   }
   else if (ev.type === "tool") { voiceView?.tool(ev.name); vState.textContent = TOOL_LABELS[ev.name]?.label || "Working"; }
-  else if (ev.type === "reply") { vCaption.textContent = ev.text; if (voiceView) { voiceView.el.querySelectorAll(".chip.running").forEach(() => voiceView.toolDone("", true)); voiceView.set(ev.text); voiceView.finish(); } }
-  else if (ev.type === "error") { vCaption.textContent = `${ev.stage}: ${ev.message}`; voiceView?.error(`${ev.stage} failed: ${ev.message}`); voiceView = null; }
+  else if (ev.type === "reply") { V.replyText = ev.text; if (voiceView) { voiceView.el.querySelectorAll(".chip.running").forEach(() => voiceView.toolDone("", true)); voiceView.set(ev.text); voiceView.finish(); } }
+  else if (ev.type === "error") { resetCaption(`${ev.stage}: ${ev.message}`); voiceView?.error(`${ev.stage} failed: ${ev.message}`); voiceView = null; }
+}
+
+// Live captions. Each "caption" event carries the text of the WAVs that follow it.
+// It rides the same promise chain as the audio, so scheduleChunk can stamp it with
+// the AudioContext time its first WAV starts. A rAF loop then lights the words:
+// spread over the piece's real length once all its audio is in, paced by the
+// server's measured chars/s while it's still streaming. Orpheus has no word
+// timestamps, so this is an estimate by character offset.
+const Cap = { segs: [], pending: null, cur: null, raf: 0 };
+
+function resetCaption(text = "") {
+  cancelAnimationFrame(Cap.raf); Cap.raf = 0;
+  Cap.segs = []; Cap.pending = null; Cap.cur = null;
+  vCaption.classList.remove("scrolled"); vCaption.textContent = text; vCaption.scrollTop = 0;
+}
+
+function queueCaption(text, cps) {
+  const seg = { words: [], offsets: [], chars: text.length, cps: cps || 15, start: null, end: null, lit: 0 };
+  let at = 0;
+  if (Cap.segs.length) vCaption.append(" ");
+  for (const word of text.trim().split(/\s+/)) {
+    const span = document.createElement("span");
+    span.className = "w"; span.textContent = word;
+    vCaption.append(span, " ");
+    seg.words.push(span); seg.offsets.push(at);
+    at += word.length + 1;
+  }
+  Cap.segs.push(seg);
+  V.chain = V.chain.then(() => { Cap.pending = seg; });
+}
+
+// Called from scheduleChunk with the start time and length of each WAV.
+function captionAudio(at, duration) {
+  if (Cap.pending) { Cap.pending.start = at; Cap.cur = Cap.pending; Cap.pending = null; }
+  if (!Cap.cur) return;
+  Cap.cur.end = at + duration;
+  if (!Cap.raf) Cap.raf = requestAnimationFrame(tickCaption);
+}
+
+function tickCaption() {
+  Cap.raf = 0;
+  const t = V.ctx.currentTime;
+  let now = null, waiting = false;
+  for (const seg of Cap.segs) {
+    if (seg.start === null) { waiting = true; continue; }
+    const final = seg !== Cap.cur || V.audioEnd, span = seg.end - seg.start;
+    const frac = final ? (t - seg.start) / span : (Math.min(t, seg.end) - seg.start) * seg.cps / seg.chars;
+    const chars = Math.min(1, Math.max(0, frac)) * seg.chars;
+    let lit = seg.offsets.findIndex((o) => o > chars);
+    if (lit < 0) lit = seg.words.length;
+    for (let i = seg.lit; i < lit; i++) seg.words[i].classList.add("on");
+    seg.lit = Math.max(seg.lit, lit);
+    if (seg.lit && t < seg.end) now = seg.words[seg.lit - 1];
+    if (seg.lit < seg.words.length) waiting = true;
+  }
+  vCaption.querySelectorAll(".w.now").forEach((w) => w !== now && w.classList.remove("now"));
+  if (now) {
+    now.classList.add("now");
+    // Keep the spoken line on the bottom row of the window.
+    const target = now.offsetTop + now.offsetHeight - vCaption.clientHeight;
+    if (target > vCaption.scrollTop) vCaption.scrollTop = target;
+    vCaption.classList.toggle("scrolled", target > 0);
+  }
+  if (waiting && V.open) Cap.raf = requestAnimationFrame(tickCaption);
+}
+
+// Barge-in leaves the words she got to; a finished reply shows every word lit.
+function freezeCaption(all) {
+  cancelAnimationFrame(Cap.raf); Cap.raf = 0; Cap.pending = null; Cap.cur = null;
+  vCaption.querySelectorAll(".w.now").forEach((w) => w.classList.remove("now"));
+  if (all) vCaption.querySelectorAll(".w").forEach((w) => w.classList.add("on"));
 }
 
 // decodeAudioData is async and can finish out of order, so chunks go through
@@ -1299,7 +1655,7 @@ function playReply(data) {
 async function scheduleChunk(data) {
   if (V.interrupting || V.state !== "speaking") return;  // audio from a cancelled turn
   const buffer = await V.ctx.decodeAudioData(data);
-  if (V.interrupting || !V.open) return;
+  if (V.interrupting || !V.open || V.state !== "speaking") return;  // cut off while decoding
   const src = V.ctx.createBufferSource();
   src.buffer = buffer;
   src.connect(V.out);
@@ -1309,6 +1665,7 @@ async function scheduleChunk(data) {
   src.onended = () => { V.srcs = V.srcs.filter((s) => s !== src); maybePlaybackEnded(); };
   src.start(at);
   V.srcs.push(src);
+  captionAudio(at, buffer.duration);
   if (!V.started) {
     V.started = true;
     stopThinking();  // stop the cue on the same tick the reply starts: no overlap
@@ -1319,6 +1676,7 @@ async function scheduleChunk(data) {
 // The reply is over once the server said audio_end and the last sentence finished.
 function maybePlaybackEnded() {
   if (!V.audioEnd || V.srcs.length) return;
+  freezeCaption(true);
   V.audioEnd = false; V.started = false; V.nextAt = 0;
   V.ws?.readyState === WebSocket.OPEN && V.ws.send(JSON.stringify({ type: "playback_ended" }));
 }
@@ -1329,10 +1687,9 @@ function stopReplyAudio() {
 }
 
 async function connectVoice() {
-  const t = await getToken();
-  if (!t || !V.open) return;
+  if (!V.open) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/ws/voice?token=${encodeURIComponent(t)}`);
+  const ws = new WebSocket(`${proto}://${location.host}/ws/voice`);  // the login cookie rides along
   V.ws = ws;
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { $("voiceConn").textContent = ""; V.state = ""; setVoiceState("idle"); startListening(); };
@@ -1341,7 +1698,7 @@ async function connectVoice() {
     if (V.ws !== ws) return;
     V.ws = null; stopThinking();
     if (!V.open) return;
-    if (e.code === 1008) { dropToken(); figError("Invalid token"); connectVoice(); return; }
+    if (e.code === 1008) { figError("Signed out"); askLogin(); return; }
     $("voiceConn").textContent = "Reconnecting";
     V.state = "offline"; figError("Disconnected", "I can't reach the server right now. Trying again.");
     setTimeout(() => V.open && connectVoice(), 2000);
@@ -1353,7 +1710,7 @@ async function openVoice() {
   if (controller) controller.abort();
   V.open = true; V.cue = true; V.interrupting = false;
   $("voice").classList.add("open"); $("voice").setAttribute("aria-hidden", "false");
-  vFig.dataset.state = "standby"; vState.textContent = "Connecting"; vCaption.textContent = ""; vHeard.textContent = "";
+  vFig.dataset.state = "standby"; vState.textContent = "Connecting"; resetCaption(); vHeard.textContent = "";
   V.turns = 0; showTurn(); syncTalk();
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     // Phones only allow the microphone on https:// (or localhost).
@@ -1433,16 +1790,548 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === " " && !e.repeat) { e.preventDefault(); $("voiceOrbBtn").click(); }  // space: talk / interrupt
 });
 
+/* ---------------- settings ---------------- */
+// Built from DOM nodes with textContent: names, facts and prompts are user text.
+const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+const jsonReq = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+async function call(path, opts) {
+  const res = await api(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(Array.isArray(data.detail) ? data.detail.map((d) => d.msg).join("; ") : data.detail || res.statusText);
+  return data;
+}
+const note = () => el("p", { className: "set-note" });
+function say(n, text, err = false) { n.textContent = text; n.classList.toggle("err", err); }
+const btn = (text, onclick, secondary = false) => el("button", { type: "button", className: secondary ? "set-btn secondary" : "set-btn", textContent: text, onclick });
+const iconBtn = (icon, label, onclick) => { const b = el("button", { type: "button", className: "icon-btn", title: label, onclick }); b.setAttribute("aria-label", label); b.innerHTML = `<svg><use href="#${icon}"/></svg>`; return b; };
+const textIn = (props) => el("input", { autocomplete: "off", spellcheck: false, ...props });
+const row = (main, sub, ...actions) => el("div", {}, el("div", { className: "grow" }, main, sub ? el("small", { textContent: sub }) : ""), ...actions);
+const fmtTokens = (n) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
+const ROLE_NAMES = { admin: "Admin", family: "Family", friend: "Friend", guest: "Guest" };
+
+const PANES = {
+  async account(body) {
+    const personas = await call("/api/personas");
+    const name = textIn({ value: ME.display_name, maxLength: 60 });
+    const persona = el("select", {}, el("option", { value: "", textContent: "THURSDAY (as she is)" }),
+      ...personas.map((p) => el("option", { value: p.id, textContent: p.name })));
+    persona.value = ME.persona_id || "";
+    const youNote = note();
+    persona.onchange = async () => { try { ME = await call("/api/me", jsonReq("PATCH", { persona_id: persona.value })); say(youNote, `She'll be ${ME.persona} from your next conversation.`); } catch (e) { say(youNote, e.message, true); } };
+    body.append(el("h3", { className: "set-h", textContent: "You" }),
+      el("div", { className: "set-row" }, name, btn("Save name", async () => {
+        try { ME = await call("/api/me", jsonReq("PATCH", { display_name: name.value })); await loadMe(); say(youNote, "Saved."); } catch (e) { say(youNote, e.message, true); }
+      })),
+      el("div", { className: "set-row" }, persona), youNote);
+
+    const limit = ME.daily_token_limit;
+    body.append(el("h3", { className: "set-h", textContent: "Today" }),
+      el("p", { className: "set-p", textContent: `${fmtTokens(ME.tokens_today)} tokens used${limit != null ? ` of ${fmtTokens(limit)}` : ""}. Resets at midnight UTC.` }));
+
+    body.append(el("h3", { className: "set-h", textContent: "Apple Calendar" }));
+    const calNote = note();
+    if (!ME.vault) {
+      body.append(el("p", { className: "set-p", textContent: "Saving credentials is off: the server has no vault key." }));
+    } else if (ME.credentials.apple_calendar) {
+      body.append(el("p", { className: "set-p", textContent: "Connected. THURSDAY can read and (after you confirm) change your calendar." }),
+        el("div", { className: "set-row" }, btn("Disconnect", async () => { await call("/api/me/credentials/apple_calendar", { method: "DELETE" }); await loadMe(); openSettings("account"); }, true)));
+    } else {
+      const user = textIn({ type: "email", placeholder: "Apple ID email", autocomplete: "username" });
+      const pass = textIn({ type: "password", placeholder: "xxxx-xxxx-xxxx-xxxx", autocomplete: "new-password" });
+      body.append(el("p", { className: "set-p", textContent: "Use an app-specific password, never your Apple ID password: appleid.apple.com → Sign-In and Security → App-Specific Passwords. It's stored encrypted and never shown again." }),
+        el("div", { className: "set-row" }, user, pass, btn("Connect", async () => {
+          say(calNote, "Checking with iCloud…");
+          try { const r = await call("/api/me/credentials/apple_calendar", jsonReq("PUT", { username: user.value, app_password: pass.value })); await loadMe(); openSettings("account"); }
+          catch (e) { say(calNote, e.message, true); }
+        })));
+    }
+    body.append(calNote);
+
+    body.append(el("h3", { className: "set-h", textContent: "What she remembers about you" }));
+    const facts = await call("/api/me/facts");
+    const list = el("div", { className: "set-list" });
+    for (const [k, v] of Object.entries(facts)) {
+      list.append(row(document.createTextNode(typeof v === "string" ? v : JSON.stringify(v)), k.replaceAll("_", " "),
+        iconBtn("i-trash", "Forget this", async () => { await call(`/api/me/facts/${encodeURIComponent(k)}`, { method: "DELETE" }); openSettings("account"); })));
+    }
+    body.append(Object.keys(facts).length ? list : el("p", { className: "set-p", textContent: "Nothing yet." }));
+
+    const cur = textIn({ type: "password", placeholder: "Current password", autocomplete: "current-password" });
+    const next = textIn({ type: "password", placeholder: "New password (8+)", autocomplete: "new-password" });
+    const passNote = note();
+    body.append(el("h3", { className: "set-h", textContent: "Password" }),
+      el("div", { className: "set-row" }, cur, next, btn("Change", async () => {
+        try { await call("/api/me/password", jsonReq("POST", { current: cur.value, new: next.value })); location.reload(); }
+        catch (e) { say(passNote, e.message, true); }
+      })), passNote,
+      el("div", { className: "row" }, btn("Sign out", async () => { await fetch("/api/logout", { method: "POST" }); store.set(CONV_KEY, null); location.reload(); }, true)));
+  },
+
+  async family(body) {
+    body.append(el("p", { className: "set-p", textContent: "Shared with everyone in the family (not friends or guests). THURSDAY also adds to it when family members tell her about the household." }));
+    const facts = await call("/api/family/facts");
+    const list = el("div", { className: "set-list" });
+    for (const [k, v] of Object.entries(facts)) {
+      list.append(row(document.createTextNode(typeof v === "string" ? v : JSON.stringify(v)), k.replaceAll("_", " "),
+        iconBtn("i-trash", "Remove", async () => { await call(`/api/family/facts/${encodeURIComponent(k)}`, { method: "DELETE" }); openSettings("family"); })));
+    }
+    const key = textIn({ placeholder: "What (e.g. dog's name)", maxLength: 80 });
+    const value = textIn({ placeholder: "Value (e.g. Luna)", maxLength: 500 });
+    const n = note();
+    body.append(Object.keys(facts).length ? list : el("p", { className: "set-p", textContent: "Nothing shared yet." }),
+      el("div", { className: "set-row" }, key, value, btn("Add", async () => {
+        try { await call("/api/family/facts", jsonReq("PUT", { key: key.value, value: value.value })); openSettings("family"); } catch (e) { say(n, e.message, true); }
+      })), n);
+  },
+
+  async people(body) {
+    const users = await call("/api/users");
+    const list = el("div", { className: "set-list" });
+    for (const u of users) {
+      const usage = `${fmtTokens(u.tokens_today)}${u.daily_token_limit != null ? ` / ${fmtTokens(u.daily_token_limit)}` : ""} tokens today`;
+      const sub = `@${u.username} · ${ROLE_NAMES[u.role]} · ${usage}${u.disabled ? " · disabled" : ""}${u.can_log_in ? "" : " · no password yet"}`;
+      const actions = [];
+      if (u.role !== "admin") {
+        const role = el("select", { style: "width:auto" }, ...["family", "friend", "guest"].map((r) => el("option", { value: r, textContent: ROLE_NAMES[r] })));
+        role.value = u.role;
+        role.onchange = async () => { await call(`/api/users/${u.id}`, jsonReq("PATCH", { role: role.value })); openSettings("people"); };
+        actions.push(role,
+          iconBtn("i-clock", "Daily token limit", async () => {
+            const v = prompt(`Daily token limit for ${u.display_name} (empty = no limit):`, u.daily_token_limit ?? "");
+            if (v === null) return;
+            await call(`/api/users/${u.id}`, jsonReq("PATCH", v.trim() ? { daily_token_limit: parseInt(v, 10) || 0 } : { clear_limit: true }));
+            openSettings("people");
+          }),
+          iconBtn("i-edit", "Set a new password", async () => {
+            const v = prompt(`New password for ${u.display_name} (8+ characters):`);
+            if (!v) return;
+            try { await call(`/api/users/${u.id}`, jsonReq("PATCH", { password: v })); alert("Password set. They're signed out everywhere."); } catch (e) { alert(e.message); }
+          }),
+          btn(u.disabled ? "Enable" : "Disable", async () => { await call(`/api/users/${u.id}`, jsonReq("PATCH", { disabled: !u.disabled })); openSettings("people"); }, true));
+      }
+      list.append(row(document.createTextNode(u.display_name), sub, ...actions));
+    }
+    const uname = textIn({ placeholder: "username", autocapitalize: "none", maxLength: 32 });
+    const dname = textIn({ placeholder: "Name", maxLength: 60 });
+    const role = el("select", {}, ...["family", "friend", "guest"].map((r) => el("option", { value: r, textContent: ROLE_NAMES[r] })));
+    const pass = textIn({ type: "password", placeholder: "Password (8+)", autocomplete: "new-password" });
+    const n = note();
+    body.append(list, el("h3", { className: "set-h", textContent: "Add someone" }),
+      el("p", { className: "set-p", textContent: "Guests get a daily token limit (change it after). Family members share the family memory." }),
+      el("div", { className: "set-row" }, uname, dname),
+      el("div", { className: "set-row" }, role, pass, btn("Add", async () => {
+        try { await call("/api/users", jsonReq("POST", { username: uname.value, display_name: dname.value, role: role.value, password: pass.value })); openSettings("people"); }
+        catch (e) { say(n, e.message, true); }
+      })), n);
+  },
+
+  async personas(body) {
+    const personas = await call("/api/personas");
+    const name = textIn({ placeholder: "Name", maxLength: 40 });
+    const prompt = el("textarea", { placeholder: "Who she is and how she talks. Replaces her personality; her tool and fact rules always stay.", maxLength: 8000 });
+    let editing = null;
+    const list = el("div", { className: "set-list" });
+    for (const p of personas) {
+      list.append(row(document.createTextNode(p.name), `${p.prompt.length} characters`,
+        iconBtn("i-edit", "Edit", () => { editing = p.id; name.value = p.name; prompt.value = p.prompt; name.focus(); }),
+        iconBtn("i-trash", "Delete", async () => { if (confirm(`Delete ${p.name}? Anyone using it goes back to THURSDAY.`)) { await call(`/api/personas/${p.id}`, { method: "DELETE" }); openSettings("personas"); } })));
+    }
+    const n = note();
+    body.append(el("p", { className: "set-p", textContent: "Everyone picks theirs under Account. THURSDAY as she is stays the default." }),
+      personas.length ? list : el("p", { className: "set-p", textContent: "No personas yet." }),
+      el("h3", { className: "set-h", textContent: "New or edited persona" }), el("div", { className: "set-row" }, name), el("div", { className: "set-row" }, prompt),
+      el("div", { className: "row" }, btn("Save", async () => {
+        try { await call(editing ? `/api/personas/${editing}` : "/api/personas", jsonReq(editing ? "PUT" : "POST", { name: name.value, prompt: prompt.value })); openSettings("personas"); }
+        catch (e) { say(n, e.message, true); }
+      })), n);
+  },
+
+  async devices(body) {
+    const [devices, users] = await Promise.all([call("/api/devices"), call("/api/users")]);
+    const names = Object.fromEntries(users.map((u) => [u.id, u.display_name]));
+    const list = el("div", { className: "set-list" });
+    for (const d of devices) {
+      list.append(row(document.createTextNode(d.name), `acts as ${names[d.user_id] || "?"} · last seen ${d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : "never"}`,
+        btn("Revoke", async () => { if (confirm(`Revoke ${d.name}? It stops working right away.`)) { await call(`/api/devices/${d.id}`, { method: "DELETE" }); openSettings("devices"); } }, true)));
+    }
+    const dname = textIn({ placeholder: "Device name (e.g. Kitchen Pi)", maxLength: 60 });
+    const who = el("select", {}, ...users.filter((u) => !u.disabled).map((u) => el("option", { value: u.id, textContent: u.display_name })));
+    const out = el("div");
+    body.append(el("p", { className: "set-p", textContent: "Satellites and scripts sign in with a device token instead of a password. Each one acts as one person and can be revoked on its own." }),
+      devices.length ? list : el("p", { className: "set-p", textContent: "No devices." }),
+      el("h3", { className: "set-h", textContent: "Add a device" }),
+      el("div", { className: "set-row" }, dname, who, btn("Create token", async () => {
+        try {
+          const d = await call("/api/devices", jsonReq("POST", { name: dname.value, user_id: who.value }));
+          out.replaceChildren(el("p", { className: "set-note", textContent: "Copy it now: it won't be shown again. On a Pi it goes in ~/.config/thursday/token." }),
+            el("div", { className: "set-token", textContent: d.token }));
+        } catch (e) { out.replaceChildren(el("p", { className: "set-note err", textContent: e.message })); }
+      })), out);
+  },
+};
+
+function openSettings(tab = "account") {
+  const tabs = [["account", "Account"]];
+  if (ME.family_memory) tabs.push(["family", "Family"]);
+  if (ME.role === "admin") tabs.push(["people", "People"], ["personas", "Personas"], ["devices", "Devices"]);
+  $("setTabs").replaceChildren(...tabs.map(([id, label]) => {
+    const b = el("button", { type: "button", textContent: label, onclick: () => openSettings(id) });
+    b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(id === tab));
+    return b;
+  }));
+  const body = el("div");
+  $("setBody").replaceChildren(body);
+  PANES[tab](body).catch((e) => body.append(el("p", { className: "set-note err", textContent: e.message })));
+  if (!$("settingsDialog").open) $("settingsDialog").showModal();
+}
+$("settingsNav").onclick = () => { closeNav(); openSettings(); };
+$("settingsClose").onclick = () => $("settingsDialog").close();
+
 /* ---------------- boot ---------------- */
-takeTokenFromUrl();
 greet();
 autosize();
 (async () => {
+  await loadMe();
   await loadInfo();
   await loadConversations();
   if (conversationId) await openConversation(conversationId);
-  if (!TOUCH) input.focus();
+  // Phone pushes (approvals.push) open /#agentic (the approval cards) or /#c=<id> (a mission's write-up).
+  const hash = location.hash;
+  if (hash === "#agentic" || hash.startsWith("#c=")) history.replaceState(null, "", location.pathname);
+  if (hash === "#agentic") openAgentic();
+  else if (hash.startsWith("#c=")) await openConversation(decodeURIComponent(hash.slice(3)));
+  else if (!TOUCH) input.focus();
 })();
+
+/* ---------------- agentic mode ---------------- */
+// Missions (missions.py): he works alone in the background and reports back. One calm
+// column: orrery (a ring per tool he's used), title, status line, step pills, the report.
+var AG = { open: false, missions: [], watches: [], approvals: [], sel: null, timer: 0, orreryKey: "" };
+const AG_COLORS = ["var(--stripe-blue)", "var(--stripe-green)", "var(--stripe-amber)", "var(--stripe-orange)", "var(--stripe-red)"];
+const AG_TOOLS = { web_search: "Search", read_page: "Read", calculate: "Calculate", get_time: "Clock", get_weather: "Weather",
+                   calendar_events: "Calendar", sports_scores: "Scores", launch_schedule: "Launches",
+                   list_add: "Add to list", list_show: "Check list", note_save: "Save note", note_find: "Find notes",
+                   propose_event: "Propose" };
+const AG_STATUS = { queued: "Queued", running: "Running", done: "Complete", failed: "Failed", aborted: "Aborted" };
+const AG_MAX_STEPS = 25;
+const SVGNS = "http://www.w3.org/2000/svg";
+
+// The mark drawn inline (DESIGN.md 4), so its parts can move: the planet breathes, and with
+// `orbit` (seconds a lap) the moon circles and slips behind the planet (section 8, Thinking).
+let liveMarks = 0;
+function liveMark(parent, { x = 0, y = 0, size = 96, orbit = 0, knockout = "var(--knockout, var(--bg))" } = {}) {
+  const id = `live-mark-${++liveMarks}`;
+  const arc = (sweep, stroke, width) =>
+    `<path d="M 6 48 A 42 14 0 0 ${sweep} 90 48" transform="rotate(-20 48 48)" fill="none" stroke="${stroke}" stroke-width="${width}"/>`;
+  // Right, down through the front, left, back over the top: the first half of a lap is in front.
+  const lap = "M 90 48 A 42 14 0 0 1 6 48 A 42 14 0 0 1 90 48";
+  const moon = (front) => `<g transform="rotate(-20 48 48)"><circle r="6" fill="var(--text)">
+      <animateMotion dur="${orbit}s" repeatCount="indefinite" path="${lap}"/>
+      ${front ? `<animate attributeName="opacity" values="1;0" keyTimes="0;0.5" calcMode="discrete" dur="${orbit}s" repeatCount="indefinite"/>` : ""}
+    </circle></g>`;
+  const g = document.createElementNS(SVGNS, "g");
+  g.setAttribute("transform", `translate(${x} ${y}) scale(${size / 96})`);
+  g.innerHTML = `<defs><clipPath id="${id}"><circle cx="48" cy="48" r="22"/></clipPath></defs>
+    ${arc(1, "var(--text)", 4)}
+    ${orbit ? moon(false) : ""}
+    <g class="planet-breath"><circle cx="48" cy="48" r="22" fill="var(--signal)"/>
+      <g clip-path="url(#${id})" fill="var(--band)"><rect x="20" y="35" width="56" height="4"/><rect x="20" y="49" width="56" height="5"/><rect x="20" y="62" width="56" height="4"/></g></g>
+    ${arc(0, knockout, 10)}${arc(0, "var(--text)", 4)}
+    ${orbit ? moon(true) : `<circle cx="87.5" cy="33.6" r="6" fill="var(--text)"/>`}`;
+  parent.append(g);
+}
+// The welcome mark: breathing, with the moon on a slow lap (ambient loops stay at 11 s or under).
+liveMark($("heroMark"), { orbit: calm.matches ? 0 : 11 });
+
+function closeAgentic() {
+  if (!AG?.open) return;
+  AG.open = false; clearTimeout(AG.timer);
+  document.body.classList.remove("is-agentic");
+  $("chatTop").setAttribute("aria-pressed", "true"); $("agenticTop").setAttribute("aria-pressed", "false");
+}
+function openAgentic() {
+  closeNav();
+  if (V.open) closeVoice();
+  AG.open = true; AG.sel = null;   // always opens on Mission control
+  document.body.classList.add("is-agentic");
+  $("chatTop").setAttribute("aria-pressed", "false"); $("agenticTop").setAttribute("aria-pressed", "true");
+  render(); refreshMissions();
+}
+$("agenticTop").onclick = openAgentic;
+$("chatTop").onclick = closeAgentic;
+
+const isLive = (m) => m.status === "running" || m.status === "queued";
+function stepLabel(s) {
+  const a = s.args || {};
+  let what = "";
+  if (s.tool === "web_search") what = a.query || "";
+  else if (s.tool === "read_page") { try { what = new URL(a.url).hostname.replace(/^www\./, ""); } catch { what = a.url || ""; } }
+  else if (s.tool === "calculate") what = a.expression || "";
+  else if (s.tool === "get_weather") what = a.location || "";
+  else if (s.tool === "list_add" || s.tool === "list_show") what = a.list || "";
+  else if (s.tool === "note_save" || s.tool === "propose_event") what = a.title || "";
+  else if (s.tool === "note_find") what = a.query || "";
+  return [AG_TOOLS[s.tool] || s.tool, what].filter(Boolean).join(" · ");
+}
+function toolsUsed(m) { return [...new Set(m.steps.map((s) => s.tool))]; }
+function elapsed(m) {
+  if (!m.started_at) return "";
+  const secs = Math.round(((m.finished_at ? new Date(m.finished_at) : new Date()) - new Date(m.started_at)) / 1000);
+  return secs < 60 ? `${secs} s` : `${Math.floor(secs / 60)} min ${secs % 60} s`;
+}
+function missionStatus(m) {
+  const n = m.steps.length, last = m.steps[n - 1];
+  if (m.status === "queued") {
+    const ahead = AG.missions.filter((x) => x.status === "running" || (x.status === "queued" && x.created_at < m.created_at)).length;
+    return ahead ? `Queued · ${ahead} ahead` : "Queued · starts when the house is quiet";
+  }
+  if (m.status === "running") return `Running · step ${n} of ${AG_MAX_STEPS}` + (last ? ` · ${stepLabel(last)}` : " · planning");
+  if (m.status === "done") return `Mission complete · ${n} steps · ${elapsed(m)}`;
+  if (m.status === "failed") return `Failed · ${(m.error || "unknown").replace(/_/g, " ")}`;
+  return `Stopped · ${n} steps`;
+}
+
+// rings: [{ color, spinning, label }]. The center mark's moon orbits while anything is running.
+function drawOrrery(rings, working, key, label) {
+  if (key === AG.orreryKey) return;  // redrawing restarts the orbits
+  AG.orreryKey = key;
+  const svg = $("agOrrery");
+  svg.replaceChildren();
+  const n = Math.max(rings.length, 1);
+  const rx = 98 + 22 * (n - 1), ry = 0.29 * rx, t = 20 * Math.PI / 180;
+  const w = Math.sqrt((rx * Math.cos(t)) ** 2 + (ry * Math.sin(t)) ** 2) + 10;
+  const h = Math.max(Math.sqrt((rx * Math.sin(t)) ** 2 + (ry * Math.cos(t)) ** 2), 52) + 10;
+  svg.setAttribute("viewBox", `${-w} ${-h} ${2 * w} ${2 * h}`);
+  svg.setAttribute("aria-label", label);
+  const make = (tag, attrs, parent = svg) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.append(e); return e; };
+  const durs = [6, 8.5, 11, 13.5, 16, 18.5, 21, 23.5];
+  const g = make("g", { transform: "rotate(-20)" });
+  if (!rings.length) make("ellipse", { rx: 98, ry: 0.29 * 98, style: "stroke: var(--rule-strong)", "stroke-dasharray": "4 6" }, g);
+  rings.forEach((ring, i) => {
+    const r = 98 + 22 * i, q = 0.29 * r, spin = ring.spinning && !calm.matches;
+    make("ellipse", { rx: r, ry: q, style: `stroke: ${ring.color}` }, g);
+    const a = (i * 2.1) % (2 * Math.PI);
+    const orb = make("circle", { r: 5, cx: spin ? 0 : r * Math.cos(a), cy: spin ? 0 : q * Math.sin(a), style: `fill: ${ring.color}` }, g);
+    if (spin) make("animateMotion", { dur: `${durs[i % durs.length]}s`, repeatCount: "indefinite",
+                                      path: `M ${r} 0 A ${r} ${q} 0 1 1 ${-r} 0 A ${r} ${q} 0 1 1 ${r} 0` }, orb);
+  });
+  liveMark(svg, { x: -44, y: -44, size: 88, orbit: working && !calm.matches ? 3 : 0 });
+}
+
+function render() {
+  const m = AG.sel ? AG.missions.find((x) => x.id === AG.sel) : null;
+  if (AG.sel && !m && AG.missions.length) AG.sel = null;   // gone from the list: back home
+  $("agHome").hidden = !!m; $("agDetail").hidden = !m; $("agBack").hidden = !m;
+  m ? renderDetail(m) : renderHome();
+  renderDecision();
+}
+
+function renderHome() {
+  const live = AG.missions.filter(isLive), watching = AG.watches.filter((w) => w.status === "active");
+  const running = live.find((x) => x.status === "running");
+  // One ring per running or queued mission (spinning while it runs), then one per active watch.
+  const rings = [...live.map((x, i) => ({ color: AG_COLORS[i % AG_COLORS.length], spinning: x.status === "running" })),
+                 ...watching.map((w, i) => ({ color: AG_COLORS[(live.length + i) % AG_COLORS.length], spinning: false }))];
+  drawOrrery(rings, !!running, `home|${live.map((x) => x.id + x.status).join()}|${watching.map((w) => w.id).join()}`,
+    `Mission control: ${live.length} mission${live.length === 1 ? "" : "s"} live, ${watching.length} watch${watching.length === 1 ? "" : "es"}`);
+  $("agTitle").textContent = "Mission control";
+  const parts = [];
+  if (running) parts.push("1 running");
+  if (live.length - (running ? 1 : 0)) parts.push(`${live.length - (running ? 1 : 0)} queued`);
+  if (watching.length) parts.push(`${watching.length} watch${watching.length === 1 ? "" : "es"}`);
+  if (AG.approvals.length) parts.push(`${AG.approvals.length} waiting for your OK`);
+  $("agStatus").textContent = parts.length ? parts.join(" · ") : "All quiet";
+
+  const cur = running || live[0];
+  $("agRunning").hidden = !cur;
+  $("agStop").hidden = true;   // home: Stop lives on the Running now card
+  if (cur) {
+    $("agRunEyebrow").textContent = cur.status === "running" ? "Running now" : "Up next";
+    $("agRunGoal").textContent = cur.goal;
+    $("agRunStatus").textContent = missionStatus(cur);
+    $("agRunOpen").onclick = () => openMission(cur.id);
+    $("agRunStop").onclick = () => stopMission(cur.id);
+  }
+
+  const list = $("agList"); list.replaceChildren();
+  $("agListH").hidden = !AG.missions.length;
+  $("agEmpty").hidden = !!AG.missions.length;
+  for (const x of AG.missions) {
+    const at = new Date(x.finished_at || x.created_at);
+    const b = el("button", { className: "row" }, el("span", { className: "st", textContent: AG_STATUS[x.status] || x.status }),
+      el("span", { className: "g", textContent: x.goal }),
+      el("span", { className: "when", textContent: at.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) }));
+    b.onclick = () => openMission(x.id);
+    list.append(el("li", {}, b));
+  }
+  renderWatches(); renderRoutines();
+}
+
+function renderDetail(m) {
+  const tools = toolsUsed(m);
+  drawOrrery(tools.map((t, i) => ({ color: AG_COLORS[i % AG_COLORS.length], spinning: m.status === "running" })),
+    m.status === "running", `${m.id}|${m.status}|${tools.join()}`,
+    tools.length ? `Mission orrery: ${tools.map((x) => AG_TOOLS[x] || x).join(", ")}` : "Mission orrery, standing by");
+  $("agStop").hidden = !isLive(m);
+  $("agStop").onclick = () => stopMission(m.id);
+  $("agTitle").textContent = m.goal;
+  $("agStatus").textContent = missionStatus(m);
+
+  const steps = $("agSteps"); steps.replaceChildren();
+  const all = m.steps, SHOWN = 6;
+  const hidden = AG.allSteps === m.id ? 0 : Math.max(0, all.length - SHOWN);
+  if (hidden) {
+    const more = el("button", { className: "ag-step", textContent: `+${hidden} earlier` });
+    more.onclick = () => { AG.allSteps = m.id; render(); };
+    steps.append(el("li", {}, more));
+  }
+  all.forEach((s, i) => {
+    if (i < hidden) return;
+    const current = m.status === "running" && i === all.length - 1;
+    const li = el("li", { className: "ag-step" + (current ? " current" : s.ok ? " done" : " failed") },
+      el("span", { className: "ag-dot" }), el("span", { className: "lbl", textContent: (s.ok && !current ? "✓ " : "") + stepLabel(s) }));
+    li.style.setProperty("--c", AG_COLORS[tools.indexOf(s.tool) % AG_COLORS.length]);
+    li.title = stepLabel(s) + (s.ok ? "" : ` (${s.error})`);
+    steps.append(li);
+  });
+
+  const done = m.status === "done";
+  $("agReport").hidden = !done;
+  if (done) {
+    $("agSummary").textContent = m.summary || "";
+    renderMd($("agResult"), m.result || "");
+    $("agCapRight").textContent = `${m.steps.length} steps · ${elapsed(m)}`;
+    $("agOpenChat").hidden = !m.conversation_id;
+  }
+  const body = $("agActivity").tBodies[0]; body.replaceChildren();
+  for (const s of m.steps)
+    body.append(el("tr", {},
+      el("td", { className: "mono", textContent: new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }) }),
+      el("td", { textContent: stepLabel(s) }),
+      el("td", { className: "mono", textContent: s.ok ? "OK" : (s.error || "error").split(":")[0].replace(/_/g, " ") })));
+}
+
+function openMission(id) {
+  AG.sel = id; render();
+  $("agentic").scrollTo({ top: 0, behavior: calm.matches ? "auto" : "smooth" });
+}
+$("agBack").onclick = () => { AG.sel = null; render(); $("agentic").scrollTo({ top: 0 }); };
+
+async function stopMission(id) {
+  for (const b of [$("agStop"), $("agRunStop")]) { b.disabled = true; b.textContent = "Stopping…"; }
+  try {
+    const res = await api(`/api/missions/${encodeURIComponent(id)}/abort`, { method: "POST" });
+    $("agNote").textContent = res.ok ? "Stopped. Nothing from it was saved." : "Couldn't stop it.";
+  } catch { $("agNote").textContent = "Couldn't reach THURSDAY."; }
+  $("agStop").textContent = "Stop mission"; $("agRunStop").textContent = "Stop";
+  for (const b of [$("agStop"), $("agRunStop")]) b.disabled = false;
+  refreshMissions();
+}
+
+// One decision at a time (DESIGN.md 8). Home: anything waiting. A mission: only its own.
+function renderDecision() {
+  const list = AG.sel ? AG.approvals.filter((a) => a.mission_id === AG.sel) : AG.approvals;
+  const a = list[0];
+  $("agDecision").hidden = !a;
+  if (!a) return;
+  $("agDecQ").textContent = a.kind === "reminder" ? `${a.summary.replace(/^r/, "R")}?` : `Add to your calendar: ${a.summary}?`;
+  $("agDecWhy").textContent = a.why || "";
+  $("agDecWhy").hidden = !a.why;
+  $("agDecCount").textContent = list.length > 1 ? `1 of ${list.length}` : "";
+  const answer = async (verb) => {
+    $("agApprove").disabled = $("agDecline").disabled = true;
+    try {
+      const res = await api(`/api/approvals/${encodeURIComponent(a.id)}/${verb}`, { method: "POST" });
+      const done = res.ok ? await res.json() : null;
+      $("agNote").textContent = !done ? "That one isn't waiting anymore."
+        : done.status === "approved" ? (done.kind === "reminder" ? "Reminder set on your phone." : `Saved: ${done.summary}.`)
+        : done.status === "failed" ? `Couldn't save it: ${done.result}` : "Declined. Nothing was saved.";
+    } catch { $("agNote").textContent = "Couldn't reach THURSDAY."; }
+    $("agApprove").disabled = $("agDecline").disabled = false;
+    refreshMissions();
+  };
+  $("agApprove").onclick = () => answer("approve");
+  $("agDecline").onclick = () => answer("decline");
+}
+
+function renderWatches() {
+  const box = $("agWatches"); box.replaceChildren();
+  $("agWatchH").hidden = !AG.watches.length;
+  const when = (iso) => new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  for (const w of AG.watches) {
+    const on = w.status === "active";
+    const meta = [`${on ? "Active" : w.status} · every ${w.every_hours} h`, `${w.runs} check${w.runs === 1 ? "" : "s"}`,
+                  on ? `next ${when(w.next_run_at)}` : ""].filter(Boolean).join(" · ");
+    const info = el("div", { className: "w" }, el("span", { className: "g", textContent: w.what }),
+      el("small", { textContent: `Tell you when: ${w.notify_when}` }), el("small", { textContent: meta }));
+    if (w.state) info.append(el("span", { className: "found", textContent: `Last found: ${w.state}` }));
+    const row = el("li", { className: "ag-watch" + (on ? "" : " off") }, info);
+    if (on) row.append(el("button", { className: "ag-stop", textContent: "Stop", onclick: async () => {
+      await api(`/api/watches/${encodeURIComponent(w.id)}/stop`, { method: "POST" }).catch(() => {});
+      refreshMissions();
+    } }));
+    box.append(row);
+  }
+}
+
+// Routines (missions.routine_start): a mission on a schedule, reported every run. Same rows as watches.
+function renderRoutines() {
+  const box = $("agRoutines"); box.replaceChildren();
+  const list = AG.routines || [];
+  $("agRoutineH").hidden = !list.length;
+  const when = (iso) => new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  for (const r of list) {
+    const on = r.status === "active";
+    const meta = [on ? "Active" : r.status, `${r.runs} run${r.runs === 1 ? "" : "s"}`, on ? `next ${when(r.next_run_at)}` : ""]
+      .filter(Boolean).join(" · ");
+    const info = el("div", { className: "w" }, el("span", { className: "g", textContent: r.goal }),
+      el("small", { textContent: r.when.replace(/^e/, "E") }), el("small", { textContent: meta }));
+    const row = el("li", { className: "ag-watch" + (on ? "" : " off") }, info);
+    if (on) row.append(el("button", { className: "ag-stop", textContent: "Stop", onclick: async () => {
+      await api(`/api/routines/${encodeURIComponent(r.id)}/stop`, { method: "POST" }).catch(() => {});
+      refreshMissions();
+    } }));
+    box.append(row);
+  }
+}
+
+async function refreshMissions() {
+  clearTimeout(AG.timer);
+  if (!AG.open) return;
+  try {
+    const [mres, wres, ares, rres] = await Promise.all([api("/api/missions"), api("/api/watches"), api("/api/approvals"),
+                                                        api("/api/routines")]);
+    if (mres.ok) AG.missions = await mres.json();
+    if (wres.ok) AG.watches = await wres.json();
+    if (ares.ok) AG.approvals = await ares.json();
+    if (rres.ok) AG.routines = await rres.json();
+    render();
+  } catch {}
+  const busy = AG.missions.some(isLive);
+  if (busy !== AG.wasBusy) { AG.wasBusy = busy; loadInfo(); }  // the sidebar's Missions row follows at once
+  AG.timer = setTimeout(refreshMissions, busy && !document.hidden ? 2000 : 15000);  // a hidden tab checks in slowly
+}
+
+$("agForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const goal = $("agGoal").value.trim();
+  if (goal.length < 8) { $("agNote").textContent = "Give him a bit more to go on."; return; }
+  $("agLaunch").disabled = true;
+  try {
+    const res = await api("/api/missions", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
+    if (res.ok) {
+      $("agGoal").value = "";
+      $("agNote").textContent = "Mission accepted. He'll report back out loud when it's done.";
+    } else $("agNote").textContent = res.status === 429 ? "Five missions are queued already." : "Couldn't start the mission.";
+  } catch { $("agNote").textContent = "Couldn't reach THURSDAY."; }
+  $("agLaunch").disabled = false;
+  refreshMissions();
+};
+$("agOpenChat").onclick = () => {
+  const m = AG.missions.find((x) => x.id === AG.sel);
+  if (m?.conversation_id) { loadConversations(); openConversation(m.conversation_id); }
+};
 </script>
 </body>
 </html>

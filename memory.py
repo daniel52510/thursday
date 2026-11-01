@@ -82,14 +82,163 @@ class MemoryDB:
                 updated_at TEXT NOT NULL
                 );
             CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id, happened_at);
+            -- His settings with each user (honesty, humor, discretion), in percent (mind.py).
+            CREATE TABLE IF NOT EXISTS settings (
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                value INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, name)
+                );
+            -- His own positions, formed in nightly reflection on what he and that user discussed.
+            CREATE TABLE IF NOT EXISTS stances (
+                user_id TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                position TEXT NOT NULL,
+                reasoning TEXT NOT NULL DEFAULT '',
+                confidence INTEGER NOT NULL DEFAULT 3,  -- 1-5
+                changed_from TEXT NOT NULL DEFAULT '',  -- the position he gave up, if he changed his mind
+                formed_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, topic)
+                );
+            -- One nightly mission-log entry per user and local day; followups are what he
+            -- means to raise when they next talk ({"text", "offered"}).
+            CREATE TABLE IF NOT EXISTS mission_log (
+                user_id TEXT NOT NULL,
+                day TEXT NOT NULL,
+                entry TEXT NOT NULL,
+                followups_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, day)
+                );
+            -- Missions: background tasks he works on alone (missions.py). status: queued, running,
+            -- done, failed, aborted. steps_json is the audit log of every tool call.
+            CREATE TABLE IF NOT EXISTS missions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                goal TEXT NOT NULL,
+                timezone TEXT,
+                status TEXT NOT NULL,
+                steps_json TEXT NOT NULL DEFAULT '[]',
+                summary TEXT,
+                result TEXT,
+                error TEXT,
+                conversation_id TEXT,
+                announced_at TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+                );
+            -- Lists (grocery, packing, to-do) and notes he keeps for each user (notes.py).
+            CREATE TABLE IF NOT EXISTS list_items (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                list_name TEXT NOT NULL,
+                text TEXT NOT NULL,
+                created_at TEXT NOT NULL
+                );
+            CREATE INDEX IF NOT EXISTS list_items_user ON list_items(user_id, list_name);
+            -- Approvals: actions a mission proposed that only happen with his OK (approvals.py).
+            -- status: pending, approved, declined, expired, failed.
+            CREATE TABLE IF NOT EXISTS approvals (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                mission_id TEXT,
+                kind TEXT NOT NULL,
+                args_json TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                why TEXT,
+                status TEXT NOT NULL,
+                result TEXT,
+                created_at TEXT NOT NULL,
+                decided_at TEXT
+                );
+            -- Watches: missions on a schedule that only report a change (missions.py). status:
+            -- active, done (what he asked about happened), stopped, expired.
+            CREATE TABLE IF NOT EXISTS watches (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                what TEXT NOT NULL,
+                notify_when TEXT NOT NULL,
+                every_hours INTEGER NOT NULL,
+                timezone TEXT,
+                status TEXT NOT NULL,
+                state TEXT,
+                runs INTEGER NOT NULL DEFAULT 0,
+                next_run_at TEXT NOT NULL,
+                last_run_at TEXT,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+                );
+            -- Routines: a mission on a schedule that reports every time (missions.py), e.g. "every
+            -- Sunday at 6 pm, my week ahead". days_json: Mon=0..Sun=6, [] = every day. status: active, stopped.
+            CREATE TABLE IF NOT EXISTS routines (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                goal TEXT NOT NULL,
+                time TEXT NOT NULL,
+                days_json TEXT NOT NULL DEFAULT '[]',
+                timezone TEXT NOT NULL,
+                status TEXT NOT NULL,
+                runs INTEGER NOT NULL DEFAULT 0,
+                next_run_at TEXT NOT NULL,
+                last_run_at TEXT,
+                created_at TEXT NOT NULL
+                );
+            CREATE TABLE IF NOT EXISTS notes (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (user_id, title)
+                );
             """)
             self._migrate_conversations(conn)
             # The recall note is chosen on a conversation's first turn and then frozen,
             # so her prompt (and Ollama's prompt cache) stays identical for every later turn.
             if "memory_note" not in {r["name"] for r in conn.execute("PRAGMA table_info(conversations)")}:
                 conn.execute("ALTER TABLE conversations ADD COLUMN memory_note TEXT")
+            self._migrate_users(conn)
+            if "watch_id" not in {r["name"] for r in conn.execute("PRAGMA table_info(missions)")}:
+                conn.execute("ALTER TABLE missions ADD COLUMN watch_id TEXT")
+            # A follow-up ("dig deeper on the second one") starts from the mission it builds on.
+            if "parent_id" not in {r["name"] for r in conn.execute("PRAGMA table_info(missions)")}:
+                conn.execute("ALTER TABLE missions ADD COLUMN parent_id TEXT")
 
     LEGACY_CONVERSATION = "legacy"
+
+    def _migrate_users(self, conn: sqlite3.Connection) -> None:
+        # Accounts: everything from before them belongs to the admin ("owner"). Facts get
+        # an owner too: a user id, or "family" for the memory family members share.
+        for table in ("conversations", "alarms"):
+            if "user_id" not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'owner'")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, updated_at)")
+        # "briefing": chime + spoken briefing (alarms from the web UI); "wake": she wakes you
+        # herself, softly (alarms she set in conversation). brief holds the topics or, for
+        # "wake", why you wanted to be up.
+        if "style" not in {r["name"] for r in conn.execute("PRAGMA table_info(alarms)")}:
+            conn.execute("ALTER TABLE alarms ADD COLUMN style TEXT NOT NULL DEFAULT 'briefing'")
+        if "user_id" not in {r["name"] for r in conn.execute("PRAGMA table_info(facts)")}:
+            # The key alone was the primary key; SQLite can't change that in place.
+            conn.executescript("""
+                CREATE TABLE facts_v2 (
+                    user_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value_json TEXT NOT NULL,
+                    confidence REAL DEFAULT 1.0,
+                    source TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, key)
+                    );
+                INSERT INTO facts_v2 SELECT 'owner', key, value_json, confidence, source, created_at, updated_at FROM facts;
+                DROP TABLE facts;
+                ALTER TABLE facts_v2 RENAME TO facts;
+            """)
 
     def _migrate_conversations(self, conn: sqlite3.Connection) -> None:
         # Messages predate conversations: add the column once, then file every
@@ -113,36 +262,43 @@ class MemoryDB:
 
     # --- conversations -------------------------------------------------------
 
-    def create_conversation(self, title: str) -> Dict[str, str]:
+    def create_conversation(self, title: str, user_id: str) -> Dict[str, str]:
         now = now_iso()
-        conv = {"id": uuid.uuid4().hex, "title": title, "created_at": now, "updated_at": now}
+        conv = {"id": uuid.uuid4().hex, "title": title, "created_at": now, "updated_at": now, "user_id": user_id}
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO conversations(id, title, created_at, updated_at) VALUES (:id,:title,:created_at,:updated_at)",
+                "INSERT INTO conversations(id, title, created_at, updated_at, user_id) "
+                "VALUES (:id,:title,:created_at,:updated_at,:user_id)",
                 conv,
             )
         return conv
 
-    def get_conversation(self, conversation_id: str) -> Optional[Dict[str, str]]:
+    def get_conversation(self, conversation_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, str]]:
+        """With user_id, only that user's conversation: anyone else's id reads as unknown."""
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+            row = conn.execute("SELECT * FROM conversations WHERE id = ? AND user_id = COALESCE(?, user_id)",
+                               (conversation_id, user_id)).fetchone()
         return dict(row) if row else None
 
-    def list_conversations(self, limit: int = 200) -> List[dict]:
+    def list_conversations(self, user_id: str, limit: int = 200) -> List[dict]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
+                "SELECT id, title, created_at, updated_at FROM conversations WHERE user_id = ? "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (user_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def rename_conversation(self, conversation_id: str, title: str) -> bool:
+    def rename_conversation(self, conversation_id: str, title: str, user_id: str) -> bool:
         with self._connect() as conn:
-            cur = conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
+            cur = conn.execute("UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?",
+                               (title, conversation_id, user_id))
         return cur.rowcount > 0
 
-    def delete_conversation(self, conversation_id: str) -> bool:
-        # Facts are global and stay; this conversation's messages and her memory of it go.
+    def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
+        # Facts stay; this conversation's messages and her memory of it go.
+        if not self.get_conversation(conversation_id, user_id):
+            return False
         with self._connect() as conn:
             conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
             conn.execute("DELETE FROM memories WHERE conversation_id = ?", (conversation_id,))
@@ -163,7 +319,8 @@ class MemoryDB:
         """Conversations quiet since `idle_before` with turns her memory doesn't cover yet."""
         with self._connect() as conn:
             rows = conn.execute("""
-                SELECT m.conversation_id AS id, MAX(m.id) AS last_id, MAX(m.created_at) AS last_at
+                SELECT m.conversation_id AS id, MAX(m.id) AS last_id, MAX(m.created_at) AS last_at,
+                       (SELECT user_id FROM conversations WHERE id = m.conversation_id) AS user_id
                 FROM messages m
                 WHERE m.tool_name IS NULL AND m.conversation_id IS NOT NULL
                 GROUP BY m.conversation_id
@@ -204,7 +361,267 @@ class MemoryDB:
             out.append(d)
         return out
             
+    # --- his mind: settings, stances, mission log (mind.py) --------------------
+
+    def get_settings(self, user_id: str) -> Dict[str, int]:
+        with self._connect() as conn:
+            return {r["name"]: r["value"] for r in conn.execute("SELECT name, value FROM settings WHERE user_id = ?", (user_id,))}
+
+    def set_setting(self, user_id: str, name: str, value: int) -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT INTO settings(user_id, name, value, updated_at) VALUES (?,?,?,?) "
+                         "ON CONFLICT(user_id, name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (user_id, name, int(value), now_iso()))
+
+    def list_stances(self, user_id: str, limit: int = 60) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM stances WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+                                (user_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def upsert_stance(self, user_id: str, topic: str, position: str, reasoning: str, confidence: int) -> None:
+        """A new position, or a revision; a changed position remembers the one it replaced."""
+        now = now_iso()
+        with self._connect() as conn:
+            old = conn.execute("SELECT position, changed_from FROM stances WHERE user_id = ? AND topic = ?",
+                               (user_id, topic)).fetchone()
+            changed_from = (old["position"] if old["position"] != position else old["changed_from"]) if old else ""
+            conn.execute("""
+                INSERT INTO stances(user_id, topic, position, reasoning, confidence, changed_from, formed_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(user_id, topic) DO UPDATE SET position=excluded.position, reasoning=excluded.reasoning,
+                    confidence=excluded.confidence, changed_from=excluded.changed_from, updated_at=excluded.updated_at
+            """, (user_id, topic, position, reasoning, int(confidence), changed_from, now, now))
+
+    def delete_stance(self, user_id: str, topic: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM stances WHERE user_id = ? AND topic = ?", (user_id, topic))
+
+    def save_mission_log(self, user_id: str, day: str, entry: str, followups: List[str]) -> None:
+        items = json.dumps([{"text": t, "offered": False} for t in followups], ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute("INSERT INTO mission_log(user_id, day, entry, followups_json, created_at) VALUES (?,?,?,?,?) "
+                         "ON CONFLICT(user_id, day) DO UPDATE SET entry=excluded.entry, followups_json=excluded.followups_json",
+                         (user_id, day, entry, items, now_iso()))
+
+    def latest_mission_log(self, user_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM mission_log WHERE user_id = ? ORDER BY day DESC LIMIT 1", (user_id,)).fetchone()
+        if not row:
+            return None
+        log = dict(row)
+        log["followups"] = json.loads(log.pop("followups_json") or "[]")
+        return log
+
+    def recent_assistant_messages(self, user_id: str, exclude_conversation: Optional[str], limit: int = 40) -> List[dict]:
+        """His latest replies to this user in other conversations, newest first (mind.recent_lines_note)."""
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT m.content, m.created_at FROM messages m JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.user_id = ? AND m.conversation_id IS NOT ? AND m.role = 'assistant' AND m.tool_name IS NULL
+                ORDER BY m.id DESC LIMIT ?
+            """, (user_id, exclude_conversation, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def last_talked_at(self, user_id: str, exclude_conversation: Optional[str]) -> Optional[str]:
+        """When this user last said something in another conversation (mind.time_note)."""
+        with self._connect() as conn:
+            return conn.execute("""
+                SELECT MAX(m.created_at) AS t FROM messages m JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.user_id = ? AND m.conversation_id IS NOT ? AND m.role = 'user'
+            """, (user_id, exclude_conversation)).fetchone()["t"]
+
+    def mark_followups_offered(self, user_id: str, day: str, texts: List[str]) -> None:
+        log = self.latest_mission_log(user_id)
+        if not log or log["day"] != day:
+            return
+        items = [{**f, "offered": f["offered"] or f["text"] in texts} for f in log["followups"]]
+        with self._connect() as conn:
+            conn.execute("UPDATE mission_log SET followups_json = ? WHERE user_id = ? AND day = ?",
+                         (json.dumps(items, ensure_ascii=False), user_id, day))
+
     # --- alarms --------------------------------------------------------------
+
+    # --- missions ---------------------------------------------------------------
+
+    @staticmethod
+    def _mission_row(row: sqlite3.Row) -> dict:
+        mission = dict(row)
+        mission["steps"] = json.loads(mission.pop("steps_json") or "[]")
+        return mission
+
+    def create_mission(self, user_id: str, goal: str, timezone: Optional[str], watch_id: Optional[str] = None,
+                       parent_id: Optional[str] = None) -> dict:
+        mission_id = uuid.uuid4().hex[:8]
+        with self._connect() as conn:
+            conn.execute("INSERT INTO missions(id, user_id, goal, timezone, status, created_at, watch_id, parent_id) "
+                         "VALUES (?,?,?,?,?,?,?,?)",
+                         (mission_id, user_id, goal, timezone, "queued", now_iso(), watch_id, parent_id))
+        return self.get_mission(mission_id)
+
+    def create_approval(self, user_id: str, mission_id: Optional[str], kind: str, args: dict, summary: str,
+                        why: str) -> dict:
+        approval_id = uuid.uuid4().hex[:8]
+        with self._connect() as conn:
+            conn.execute("INSERT INTO approvals(id, user_id, mission_id, kind, args_json, summary, why, status, created_at) "
+                         "VALUES (?,?,?,?,?,?,?,?,?)", (approval_id, user_id, mission_id, kind,
+                                                        json.dumps(args, ensure_ascii=False), summary, why, "pending", now_iso()))
+        return self.get_approval(approval_id)
+
+    @staticmethod
+    def _approval_row(row: sqlite3.Row) -> dict:
+        approval = dict(row)
+        approval["args"] = json.loads(approval.pop("args_json"))
+        return approval
+
+    def get_approval(self, approval_id: str, user_id: Optional[str] = None) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM approvals WHERE id = ? AND user_id = COALESCE(?, user_id)",
+                               (approval_id, user_id)).fetchone()
+        return self._approval_row(row) if row else None
+
+    def list_approvals(self, user_id: str, status: Optional[str] = None, mission_id: Optional[str] = None,
+                       limit: int = 30) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM approvals WHERE user_id = ? AND status = COALESCE(?, status) "
+                                "AND COALESCE(mission_id, '') = COALESCE(?, COALESCE(mission_id, '')) "
+                                "ORDER BY created_at LIMIT ?", (user_id, status, mission_id, limit)).fetchall()
+        return [self._approval_row(r) for r in rows]
+
+    def update_approval(self, approval_id: str, **fields: Any) -> None:
+        """Any of status, result, decided_at."""
+        updates = {k: v for k, v in fields.items() if k in {"status", "result", "decided_at"}}
+        if updates:
+            assignments = ", ".join(f"{k} = :{k}" for k in updates)
+            with self._connect() as conn:
+                conn.execute(f"UPDATE approvals SET {assignments} WHERE id = :id", {**updates, "id": approval_id})
+
+    def create_watch(self, user_id: str, what: str, notify_when: str, every_hours: int, timezone: Optional[str],
+                     expires_at: str) -> dict:
+        watch_id, now = uuid.uuid4().hex[:8], now_iso()
+        with self._connect() as conn:
+            conn.execute("INSERT INTO watches(id, user_id, what, notify_when, every_hours, timezone, status, next_run_at, "
+                         "expires_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                         (watch_id, user_id, what, notify_when, every_hours, timezone, "active", now, expires_at, now))
+        return self.get_watch(watch_id)
+
+    def get_watch(self, watch_id: str, user_id: Optional[str] = None) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM watches WHERE id = ? AND user_id = COALESCE(?, user_id)",
+                               (watch_id, user_id)).fetchone()
+        return dict(row) if row else None
+
+    def list_watches(self, user_id: Optional[str] = None, status: Optional[str] = None, limit: int = 30) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM watches WHERE user_id = COALESCE(?, user_id) AND status = COALESCE(?, status) "
+                                "ORDER BY created_at DESC LIMIT ?", (user_id, status, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_watch(self, watch_id: str, **fields: Any) -> None:
+        """Any of status, state, runs, next_run_at, last_run_at."""
+        updates = {k: v for k, v in fields.items() if k in {"status", "state", "runs", "next_run_at", "last_run_at"}}
+        if updates:
+            assignments = ", ".join(f"{k} = :{k}" for k in updates)
+            with self._connect() as conn:
+                conn.execute(f"UPDATE watches SET {assignments} WHERE id = :id", {**updates, "id": watch_id})
+
+    @staticmethod
+    def _routine_row(row: sqlite3.Row) -> dict:
+        routine = dict(row)
+        routine["days"] = json.loads(routine.pop("days_json") or "[]")
+        return routine
+
+    def create_routine(self, user_id: str, goal: str, time: str, days: list, timezone: str, next_run_at: str) -> dict:
+        routine_id = uuid.uuid4().hex[:8]
+        with self._connect() as conn:
+            conn.execute("INSERT INTO routines(id, user_id, goal, time, days_json, timezone, status, next_run_at, created_at) "
+                         "VALUES (?,?,?,?,?,?,?,?,?)", (routine_id, user_id, goal, time, json.dumps(days), timezone,
+                                                        "active", next_run_at, now_iso()))
+        return self.get_routine(routine_id)
+
+    def get_routine(self, routine_id: str, user_id: Optional[str] = None) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM routines WHERE id = ? AND user_id = COALESCE(?, user_id)",
+                               (routine_id, user_id)).fetchone()
+        return self._routine_row(row) if row else None
+
+    def list_routines(self, user_id: Optional[str] = None, status: Optional[str] = None, limit: int = 30) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM routines WHERE user_id = COALESCE(?, user_id) AND status = COALESCE(?, status) "
+                                "ORDER BY created_at DESC LIMIT ?", (user_id, status, limit)).fetchall()
+        return [self._routine_row(r) for r in rows]
+
+    def update_routine(self, routine_id: str, **fields: Any) -> None:
+        """Any of status, runs, next_run_at, last_run_at."""
+        updates = {k: v for k, v in fields.items() if k in {"status", "runs", "next_run_at", "last_run_at"}}
+        if updates:
+            assignments = ", ".join(f"{k} = :{k}" for k in updates)
+            with self._connect() as conn:
+                conn.execute(f"UPDATE routines SET {assignments} WHERE id = :id", {**updates, "id": routine_id})
+
+    def get_mission(self, mission_id: str, user_id: Optional[str] = None) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM missions WHERE id = ? AND user_id = COALESCE(?, user_id)",
+                               (mission_id, user_id)).fetchone()
+        return self._mission_row(row) if row else None
+
+    def list_missions(self, user_id: Optional[str] = None, status: Optional[str] = None, limit: int = 20) -> List[dict]:
+        """Newest first; all users' (for the worker) without user_id."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM missions WHERE user_id = COALESCE(?, user_id) AND status = COALESCE(?, status) "
+                                "ORDER BY created_at DESC LIMIT ?", (user_id, status, limit)).fetchall()
+        return [self._mission_row(r) for r in rows]
+
+    def update_mission(self, mission_id: str, **fields: Any) -> None:
+        """Any of status, steps, summary, result, error, conversation_id, announced_at, started_at, finished_at."""
+        allowed = {"status", "steps", "summary", "result", "error", "conversation_id", "announced_at", "started_at",
+                   "finished_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if "steps" in updates:
+            updates["steps_json"] = json.dumps(updates.pop("steps"), ensure_ascii=False)
+        if updates:
+            assignments = ", ".join(f"{k} = :{k}" for k in updates)
+            with self._connect() as conn:
+                conn.execute(f"UPDATE missions SET {assignments} WHERE id = :id", {**updates, "id": mission_id})
+
+    # --- lists and notes -------------------------------------------------------
+
+    def list_items(self, user_id: str, list_name: Optional[str] = None) -> List[dict]:
+        """One list's items, oldest first; every list's without list_name."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM list_items WHERE user_id = ? AND list_name = COALESCE(?, list_name) "
+                                "ORDER BY created_at", (user_id, list_name)).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_list_item(self, user_id: str, list_name: str, text: str) -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT INTO list_items(id, user_id, list_name, text, created_at) VALUES (?,?,?,?,?)",
+                         (uuid.uuid4().hex, user_id, list_name, text, now_iso()))
+
+    def delete_list_items(self, user_id: str, ids: List[str]) -> None:
+        with self._connect() as conn:
+            conn.executemany("DELETE FROM list_items WHERE id = ? AND user_id = ?", [(i, user_id) for i in ids])
+
+    def save_note(self, user_id: str, title: str, body: str) -> dict:
+        """A new note, or more text on the note with that title."""
+        now = now_iso()
+        with self._connect() as conn:
+            conn.execute("INSERT INTO notes(id, user_id, title, body, created_at, updated_at) VALUES (?,?,?,?,?,?) "
+                         "ON CONFLICT(user_id, title) DO UPDATE SET body = notes.body || char(10) || excluded.body, "
+                         "updated_at = excluded.updated_at", (uuid.uuid4().hex, user_id, title, body, now, now))
+            row = conn.execute("SELECT * FROM notes WHERE user_id = ? AND title = ?", (user_id, title)).fetchone()
+        return dict(row)
+
+    def list_notes(self, user_id: str, limit: int = 200) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+                                (user_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_note(self, user_id: str, title: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM notes WHERE user_id = ? AND title = ?", (user_id, title))
+        return cur.rowcount > 0
 
     @staticmethod
     def _alarm_row(row: sqlite3.Row) -> dict:
@@ -213,29 +630,35 @@ class MemoryDB:
         alarm["enabled"] = bool(alarm["enabled"])
         return alarm
 
-    def list_alarms(self) -> List[dict]:
+    def list_alarms(self, user_id: Optional[str] = None) -> List[dict]:
+        """One user's alarms; all of them (for the scheduler) without user_id."""
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM alarms ORDER BY time").fetchall()
+            rows = conn.execute("SELECT * FROM alarms WHERE user_id = COALESCE(?, user_id) ORDER BY time",
+                                (user_id,)).fetchall()
         return [self._alarm_row(r) for r in rows]
 
-    def get_alarm(self, alarm_id: str) -> Optional[dict]:
+    def get_alarm(self, alarm_id: str, user_id: Optional[str] = None) -> Optional[dict]:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM alarms WHERE id = ?", (alarm_id,)).fetchone()
+            row = conn.execute("SELECT * FROM alarms WHERE id = ? AND user_id = COALESCE(?, user_id)",
+                               (alarm_id, user_id)).fetchone()
         return self._alarm_row(row) if row else None
 
-    def create_alarm(self, time: str, days: List[int], timezone: str, brief: str, enabled: bool = True) -> dict:
+    def create_alarm(self, time: str, days: List[int], timezone: str, brief: str, enabled: bool = True,
+                     user_id: str = "owner", style: str = "briefing") -> dict:
         now = now_iso()
         alarm_id = uuid.uuid4().hex
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO alarms(id, time, days, timezone, brief, enabled, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (alarm_id, time, ",".join(map(str, sorted(days))), timezone, brief, int(enabled), now, now),
+                "INSERT INTO alarms(id, time, days, timezone, brief, enabled, created_at, updated_at, user_id, style) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (alarm_id, time, ",".join(map(str, sorted(days))), timezone, brief, int(enabled), now, now, user_id, style),
             )
         return self.get_alarm(alarm_id)
 
-    def update_alarm(self, alarm_id: str, **fields: Any) -> Optional[dict]:
+    def update_alarm(self, alarm_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[dict]:
         """Update any of time, days, timezone, brief, enabled, last_fired_at."""
+        if user_id and not self.get_alarm(alarm_id, user_id):
+            return None
         allowed = {"time", "days", "timezone", "brief", "enabled", "last_fired_at"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if "days" in updates:
@@ -249,26 +672,28 @@ class MemoryDB:
                 conn.execute(f"UPDATE alarms SET {assignments} WHERE id = :id", {**updates, "id": alarm_id})
         return self.get_alarm(alarm_id)
 
-    def delete_alarm(self, alarm_id: str) -> bool:
+    def delete_alarm(self, alarm_id: str, user_id: Optional[str] = None) -> bool:
         with self._connect() as conn:
-            cur = conn.execute("DELETE FROM alarms WHERE id = ?", (alarm_id,))
+            cur = conn.execute("DELETE FROM alarms WHERE id = ? AND user_id = COALESCE(?, user_id)", (alarm_id, user_id))
         return cur.rowcount > 0
 
-    def upsert_fact(self, key: str, value: Any, confidence: float = 1.0, source: Optional[str] = None) -> None:
+    # --- facts: per user, or "family" for the memory family members share -------
+
+    def upsert_fact(self, user_id: str, key: str, value: Any, confidence: float = 1.0, source: Optional[str] = None) -> None:
         value_json = json.dumps(value, ensure_ascii = False)
         ts = now_iso()
         with self._connect() as conn:
             conn.execute("""
-            INSERT INTO facts(key, value_json, confidence, source, created_at, updated_at)
-            VALUES (?,?,?,?,?,?)
-            ON CONFLICT(key) DO UPDATE SET
+            INSERT INTO facts(user_id, key, value_json, confidence, source, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(user_id, key) DO UPDATE SET
                 value_json = excluded.value_json,
                 confidence = excluded.confidence,
                          source = excluded.source,
                          updated_at = excluded.updated_at
-            """, (key, value_json, confidence, source, ts, ts))
+            """, (user_id, key, value_json, confidence, source, ts, ts))
 
-    def upsert_facts(self, facts: List[dict]) -> int:
+    def upsert_facts(self, facts: List[dict], user_id: str) -> int:
         """Upsert a batch of facts. Returns number of facts processed."""
         count = 0
         for f in facts:
@@ -276,6 +701,7 @@ class MemoryDB:
             if not key:
                 continue
             self.upsert_fact(
+                user_id,
                 key=key,
                 value=f.get("value"),
                 confidence=float(f.get("confidence", 1.0)),
@@ -283,15 +709,20 @@ class MemoryDB:
             )
             count += 1
         return count
-    
-    def get_fact(self, key: str) -> Optional[Any]:
+
+    def get_fact(self, key: str, user_id: str) -> Optional[Any]:
         with self._connect() as conn:
-            row = conn.execute("SELECT value_json FROM facts WHERE key=?", (key,)).fetchone()
+            row = conn.execute("SELECT value_json FROM facts WHERE user_id = ? AND key = ?", (user_id, key)).fetchone()
             return json.loads(row["value_json"]) if row else None
-    def list_facts(self) -> Dict[str, Any]:
+
+    def list_facts(self, user_id: str) -> Dict[str, Any]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT key, value_json FROM facts ORDER BY key").fetchall()
+            rows = conn.execute("SELECT key, value_json FROM facts WHERE user_id = ? ORDER BY key", (user_id,)).fetchall()
             return {r["key"]: json.loads(r["value_json"]) for r in rows}
+
+    def delete_fact(self, user_id: str, key: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute("DELETE FROM facts WHERE user_id = ? AND key = ?", (user_id, key)).rowcount > 0
     def log_message (
         self,
         role: str,
@@ -319,6 +750,25 @@ class MemoryDB:
                 # Most recently used conversations sort to the top of the sidebar.
                 conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
             
+    def revise_last_reply(self, conversation_id: str, content: str) -> None:
+        """Make the reply to the latest user message `content`: replace it if
+        it was saved, add it if not, delete it if `content` is empty. Used when
+        a spoken reply is cut off, so history holds only what was heard."""
+        with self._connect() as conn:
+            user = conn.execute("SELECT MAX(id) FROM messages WHERE conversation_id = ? AND role = 'user'",
+                                (conversation_id,)).fetchone()[0] or 0
+            reply = conn.execute("""
+                SELECT MAX(id) FROM messages
+                WHERE conversation_id = ? AND role = 'assistant' AND tool_name IS NULL AND id > ?
+            """, (conversation_id, user)).fetchone()[0]
+            if reply and content:
+                conn.execute("UPDATE messages SET content = ? WHERE id = ?", (content, reply))
+            elif reply:
+                conn.execute("DELETE FROM messages WHERE id = ?", (reply,))
+            elif content:
+                conn.execute("INSERT INTO messages(role, content, created_at, conversation_id) VALUES ('assistant', ?, ?, ?)",
+                             (content, now_iso(), conversation_id))
+
     def recent_messages(self, limit: int = 30, conversation_id: Optional[str] = None) -> List[dict]:
         where, args = ("WHERE conversation_id = ?", (conversation_id, limit)) if conversation_id else ("", (limit,))
         with self._connect() as conn:
@@ -342,25 +792,6 @@ class MemoryDB:
             })
         return out
 
-    def get_memory_context(self, history_limit: int = 20, include_tools: bool = False) -> Dict[str, Any]:
-        facts = self.list_facts()
-        msgs = self.recent_messages(history_limit)
-
-        # Compact recent message history for prompt injection
-        cleaned_msgs: List[dict] = []
-        for m in msgs:
-            entry = {"role": m["role"], "content": m["content"]}
-            if include_tools:
-                entry["tool_name"] = m["tool_name"]
-                # Keep tool output only if you really want it; can be noisy.
-                entry["tool_result"] = m["tool_result"]
-            cleaned_msgs.append(entry)
-
-        # Clean facts: do not return None/empty-string values
-        cleaned_facts: Dict[str, Any] = {}
-        for key, value in facts.items():
-            if value is None or value == "":
-                continue
-            cleaned_facts[key] = value
-
-        return {"facts": cleaned_facts, "recent_messages": cleaned_msgs}
+    def prompt_facts(self, user_id: str) -> Dict[str, Any]:
+        """A user's facts for the prompt, without None/empty-string values."""
+        return {k: v for k, v in self.list_facts(user_id).items() if v is not None and v != ""}

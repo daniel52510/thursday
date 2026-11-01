@@ -1,7 +1,8 @@
 .venv
 # Virtual environments
 .venv/
-.venv-tts/ 
+.venv-tts/
+.venv-stt/
 venv/
 .env/
 
@@ -46,3 +47,19 @@ out/tts
 # Voice design candidates (only the picked voices/thursday.* is kept)
 voices/candidates*/
 voices/thursday.prev.*
+
+# Wake-word training recordings (your voice) and training datasets: never commit.
+wake-data/
+wake-train/
+
+# Terraform (infra/): state and plans can hold resource details; never commit them
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Claude Code local session settings (personal config, not part of the project)
+.claude/
+*.tfvars
+rocky_preview/

@@ -1,11 +1,12 @@
-"""iCloud calendar access over CalDAV.
+"""iCloud calendar access over CalDAV, per user.
 
-Credentials come from .env (ICLOUD_USERNAME, ICLOUD_APP_PASSWORD: an Apple
-app-specific password, never the account password). They are never logged
-or returned to the model.
+Each user's credentials (Apple ID + an Apple app-specific password, never the
+account password) live encrypted in the vault, saved from Settings. The admin
+may still use ICLOUD_USERNAME / ICLOUD_APP_PASSWORD from .env; server startup
+moves those into the vault. They are never logged or returned to the model.
 
 Discovering the calendars costs several round trips to iCloud, so it happens
-once per process; each question after that is one REPORT per calendar.
+once per process and user; each question after that is one REPORT per calendar.
 
 Changes are two-step and the confirmation is enforced here, not left to the
 model: calendar_create / calendar_delete only store a pending change (delete
@@ -28,6 +29,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import caldav
 import icalendar
 
+import vault
+from accounts import OWNER
 from tools import ToolResult
 
 ICLOUD_URL = os.getenv("ICLOUD_CALDAV_URL", "https://caldav.icloud.com")
@@ -55,30 +58,47 @@ DELETE_INTENT = re.compile(
 _HEDGE = re.compile(r"\b(but|actually|instead|change|wait|not|don't)\b", re.I)
 
 _lock = threading.Lock()
-_calendars: list | None = None
+_calendars: dict[str, list] = {}  # user id -> that user's event calendars
+CREDENTIAL = "apple_calendar"
 _pending: dict[str, dict] = {}  # conversation id -> prepared change
 _listed: dict[str, dict] = {}  # conversation id -> {event id: event} from the latest calendar_events
 
 
-def _get_calendars() -> list:
-    global _calendars
+def env_credentials() -> dict | None:
+    user, password = os.getenv("ICLOUD_USERNAME", ""), os.getenv("ICLOUD_APP_PASSWORD", "")
+    return {"username": user, "app_password": password} if user and password else None
+
+
+def discover(username: str, app_password: str) -> list:
+    """The account's event calendars (iCloud also lists reminder lists here). Raises on bad credentials."""
+    client = caldav.DAVClient(url=ICLOUD_URL, username=username, password=app_password, timeout=10)
+    return [c for c in client.principal().calendars() if "VEVENT" in _components(c)]
+
+
+def forget(user_id: str) -> None:
+    """Drop a user's cached calendars (their credentials changed)."""
     with _lock:
-        if _calendars is None:
-            user, password = os.getenv("ICLOUD_USERNAME", ""), os.getenv("ICLOUD_APP_PASSWORD", "")
-            if not user or not password:
+        _calendars.pop(user_id, None)
+
+
+def _get_calendars(user_id: str | None = None) -> list:
+    # The agent puts the speaking user in TURN; alarms and warm-up are the admin's.
+    user_id = user_id or (TURN.get() or {}).get("user") or OWNER
+    with _lock:
+        if user_id not in _calendars:
+            creds = vault.shared().get(user_id, CREDENTIAL) or (env_credentials() if user_id == OWNER else None)
+            if not creds:
                 raise LookupError("not_configured")
-            client = caldav.DAVClient(url=ICLOUD_URL, username=user, password=password, timeout=10)
             t = time.monotonic()
-            # Only calendars that hold events (iCloud also lists reminder lists here).
-            _calendars = [c for c in client.principal().calendars() if "VEVENT" in _components(c)]
-            print(f"[calendar] discovered {len(_calendars)} calendars in {int((time.monotonic() - t) * 1000)} ms")
-        return _calendars
+            _calendars[user_id] = discover(creds["username"], creds["app_password"])
+            print(f"[calendar] discovered {len(_calendars[user_id])} calendars in {int((time.monotonic() - t) * 1000)} ms")
+        return _calendars[user_id]
 
 
 def warm_up() -> None:
-    """Discover calendars ahead of the first question (~3.5 s against iCloud)."""
+    """Discover the admin's calendars ahead of the first question (~3.5 s against iCloud)."""
     try:
-        _get_calendars()
+        _get_calendars(OWNER)
     except LookupError:
         pass  # not configured: calendar_events reports it when asked
     except Exception as exc:
@@ -188,6 +208,44 @@ def _pick_calendar(name: str):
     return calendars[0]
 
 
+def prepare_event(args: Dict[str, Any]) -> tuple:
+    """(calendar, event, read_back) from calendar_create's args, nothing saved. Raises ValueError,
+    ZoneInfoNotFoundError (bad input) or LookupError (no such calendar). Also used by approvals.py."""
+    title = str(args.get("title") or "").strip()[:200]
+    if not title or not args.get("start"):
+        raise ValueError("missing title or start; ask the user")
+    tz = ZoneInfo(str(args.get("timezone") or os.getenv("THURSDAY_TIMEZONE") or "UTC"))
+    raw = str(args["start"]).strip()
+    if "T" in raw or " " in raw:
+        start: date | datetime = datetime.fromisoformat(raw)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=tz)
+        end: date | datetime = start + timedelta(minutes=max(5, min(int(args.get("duration_minutes") or 60), 24 * 60)))
+    else:
+        start = date.fromisoformat(raw)
+        end = start + timedelta(days=1)
+    cal = _pick_calendar(str(args.get("calendar") or ""))
+    location = str(args.get("location") or "").strip()[:200]
+    read_back = f"{title}, {_spoken(start)}" + (f" until {_spoken(end).split(' at ')[-1]}" if isinstance(start, datetime) else ", all day")
+    read_back += (f", at {location}" if location else "") + f", on the {cal.get_display_name()} calendar"
+    return cal, {"summary": title, "dtstart": start, "dtend": end, "location": location}, read_back
+
+
+def save_event(cal, ev: dict) -> None:
+    vevent = icalendar.Event()
+    vevent.add("uid", f"{uuid.uuid4()}@thursday")
+    vevent.add("dtstamp", datetime.now(timezone.utc))
+    for key in ("summary", "dtstart", "dtend"):
+        vevent.add(key, ev[key])
+    if ev["location"]:
+        vevent.add("location", ev["location"])
+    vcal = icalendar.Calendar()
+    vcal.add("prodid", "-//THURSDAY//EN")
+    vcal.add("version", "2.0")
+    vcal.add_component(vevent)
+    cal.save_event(ical=vcal.to_ical().decode())
+
+
 def calendar_create(args: Dict[str, Any]) -> ToolResult:
     """
     Prepares an event; nothing is saved until calendar_confirm.
@@ -201,32 +259,14 @@ def calendar_create(args: Dict[str, Any]) -> ToolResult:
     turn = TURN.get()
     if not turn:
         return ToolResult(ok=False, tool_name="calendar_create", error="no_conversation")
-    title = str(args.get("title") or "").strip()[:200]
-    if not title or not args.get("start"):
-        return ToolResult(ok=False, tool_name="calendar_create", error="missing title or start; ask the user")
     try:
-        tz = ZoneInfo(str(args.get("timezone") or os.getenv("THURSDAY_TIMEZONE") or "UTC"))
-        raw = str(args["start"]).strip()
-        if "T" in raw or " " in raw:
-            start: date | datetime = datetime.fromisoformat(raw)
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=tz)
-            end: date | datetime = start + timedelta(minutes=max(5, min(int(args.get("duration_minutes") or 60), 24 * 60)))
-        else:
-            start = date.fromisoformat(raw)
-            end = start + timedelta(days=1)
-        cal = _pick_calendar(str(args.get("calendar") or ""))
+        cal, event, read_back = prepare_event(args)
     except (ValueError, ZoneInfoNotFoundError) as exc:
         return ToolResult(ok=False, tool_name="calendar_create", error=f"bad_input: {exc}")
     except LookupError as exc:
         return ToolResult(ok=False, tool_name="calendar_create", error=str(exc))
-
-    location = str(args.get("location") or "").strip()[:200]
-    read_back = f"{title}, {_spoken(start)}" + (f" until {_spoken(end).split(' at ')[-1]}" if isinstance(start, datetime) else ", all day")
-    read_back += (f", at {location}" if location else "") + f", on the {cal.get_display_name()} calendar"
     _pending[turn["conversation"]] = {
-        "kind": "create", "turn": turn["turn"], "at": time.monotonic(), "calendar": cal,
-        "event": {"summary": title, "dtstart": start, "dtend": end, "location": location},
+        "kind": "create", "turn": turn["turn"], "at": time.monotonic(), "calendar": cal, "event": event,
         "read_back": read_back,
     }
     return ToolResult(
@@ -276,6 +316,11 @@ def calendar_delete(args: Dict[str, Any]) -> ToolResult:
     )
 
 
+def plain_yes(said: str) -> bool:
+    """A plain yes ("yes", "do it", "book it"), not "yes, but make it 4". Also used by approvals.py."""
+    return bool(_YES.match(said or "")) and not _HEDGE.search(said or "")
+
+
 def confirms_pending(conversation_id: str, said: str) -> bool:
     """True when this message is a plain yes to a change still waiting in this conversation.
     The agent then runs calendar_confirm itself instead of hoping the model does."""
@@ -308,19 +353,6 @@ def calendar_confirm(args: Dict[str, Any]) -> ToolResult:
         print(f"[calendar] deleted event in {int((time.monotonic() - t) * 1000)} ms")
         return ToolResult(ok=True, tool_name="calendar_confirm", data={"status": "deleted", "event": pending["read_back"]})
 
-    ev = pending["event"]
-    vevent = icalendar.Event()
-    vevent.add("uid", f"{uuid.uuid4()}@thursday")
-    vevent.add("dtstamp", datetime.now(timezone.utc))
-    for key in ("summary", "dtstart", "dtend"):
-        vevent.add(key, ev[key])
-    if ev["location"]:
-        vevent.add("location", ev["location"])
-    vcal = icalendar.Calendar()
-    vcal.add("prodid", "-//THURSDAY//EN")
-    vcal.add("version", "2.0")
-    vcal.add_component(vevent)
-
-    pending["calendar"].save_event(ical=vcal.to_ical().decode())
+    save_event(pending["calendar"], pending["event"])
     print(f"[calendar] created event in {int((time.monotonic() - t) * 1000)} ms")
     return ToolResult(ok=True, tool_name="calendar_confirm", data={"status": "saved", "event": pending["read_back"]})

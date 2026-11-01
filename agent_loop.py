@@ -7,17 +7,21 @@ from typing import Optional
 import requests
 
 from agent_schemas import FactExtraction
+from accounts import FAMILY, FAMILY_ROLES
 from memory import MemoryDB
 
 FACT_EXTRACTOR_SYSTEM = """
 You are a fact extractor for a local assistant.
 Return ONLY valid JSON matching this shape:
-{"facts":[{"key":string,"value":any,"confidence":number,"source":"explicit_user"|"assistant_inference"|"tool_result"}]}
+{"facts":[{"key":string,"value":any,"confidence":number,"source":"explicit_user"|"assistant_inference"|"tool_result","scope":"personal"|"family"}]}
 
 Rules:
 - Extract ONLY stable, long-lived facts (name, preferences, timezone, ongoing constraints/goals).
 - Max 5 facts.
 - DO NOT store secrets (passwords, tokens, API keys), financial numbers, or anything sensitive.
+- scope "family" only for facts about the household that would help any family member: family members'
+  names, birthdays and relationships, pets, the home, shared routines and plans. Everything about the
+  speaker themself (their preferences, work, health, feelings) is "personal".
 - If nothing worth saving: {"facts":[]}
 """.strip()
 
@@ -109,6 +113,8 @@ def should_extract_facts(text: str) -> bool:
         "my email",
         "my phone",
         "my address",
+        "my wife", "my husband", "my son", "my daughter", "my mom", "my dad", "my kids",
+        "our dog", "our cat", "our house", "my family", "birthday",
     ]
     return any(x in t for x in triggers)
 
@@ -142,6 +148,7 @@ _EPHEMERAL_FACT = re.compile(r"time|date|day|weather|temperature|forecast|curren
 
 def run_fact_extractor(
     db: MemoryDB,
+    user: dict,
     user_prompt: str,
     final_reply: str,
     tool_results_json: Optional[list],
@@ -182,5 +189,11 @@ TOOL_RESULTS_JSON:
         f.model_dump() for f in extraction.facts
         if f.source != "tool_result" and not _EPHEMERAL_FACT.search(f.key)
     ]
-    if keep:
-        db.upsert_facts(keep)
+    # Family facts go to the shared family memory only when a family member said them.
+    family = user["role"] in FAMILY_ROLES
+    shared = [f for f in keep if f["scope"] == "family" and family]
+    private = [f for f in keep if f not in shared]
+    if private:
+        db.upsert_facts(private, user["id"])
+    if shared:
+        db.upsert_facts(shared, FAMILY)

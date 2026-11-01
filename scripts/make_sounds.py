@@ -1,4 +1,5 @@
-"""Generates THURSDAY's UI sounds: the listening ping and the thinking loop.
+"""Generates THURSDAY's UI sounds: the listening ping, the thinking loop and
+the "done listening" close.
 (The alarm chime is scripts/make_alarm_chime.py.)
 
 Synthesized from scratch (one soft A major pad, blooming for the ping and
@@ -50,6 +51,12 @@ def ping() -> list[float]:
     return finish(out, peak=0.14, fade_s=0.004)
 
 
+def close() -> list[float]:
+    # "I've stopped listening": the ping played backwards, quieter, so it closes
+    # what the ping opened (the satellite plays it when a follow-up window ends).
+    return finish(ping()[::-1], peak=0.09, fade_s=0.004)
+
+
 def thinking() -> list[float]:
     # A major pad breathing twice per loop. Every frequency completes a whole
     # number of cycles in LOOP_S and the swell bottoms out at the loop point,
@@ -78,6 +85,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     write(out_dir / "thursday-ping.wav", ping())
     write(out_dir / "thursday-thinking.wav", thinking())
+    write(out_dir / "thursday-close.wav", close())
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ Return ONLY JSON:
 - summary: 1-3 sentences, first person, past tense ("We talked about...", "They told me..."). Keep the specific
   details they'd expect you to remember (names, plans, dates, what they decided) over generalities.
 - their_mood: a few words on how they seemed.
-- her_feeling: a few words on how the conversation felt to you (amused, close, worried for them, delighted...).
+- her_feeling: a few words on your own read of the conversation (productive, he needed a push, a good argument...).
 - open_threads: only things that will have news later and that they'd be glad you asked about: a decision
   they were weighing, something coming up for them, a problem or worry they were dealing with. Not curiosities
   about what they said, not things you could just look up. At most 2, each under 15 words. Usually empty.
@@ -52,7 +52,7 @@ Return ONLY JSON:
 RECALL_GUIDE = (
     "What you remember from earlier conversations (your own memories, newest first; not facts to recite). "
     "Let them shape how you talk, like someone who knows them. When there's a natural opening, especially early on, "
-    "you can bring up one open thread in passing (\"Wait, did you ever decide...?\"). At most one per conversation, "
+    "you can bring up one open thread in passing (\"The job offer. Decided yet?\"). At most one per conversation, "
     "and let it go if they're in the middle of something. Never list memories or mention having a record."
 )
 
@@ -82,7 +82,8 @@ def write_memory(db: MemoryDB, conv: dict) -> dict:
         "keep_alive": OLLAMA_KEEP_ALIVE,
     })
     note = MemoryNote.model_validate(json.loads(raw)).model_dump()
-    db.upsert_memory(conv["id"], note, covered_until=conv["last_id"], happened_at=conv["last_at"])
+    db.upsert_memory(conv["id"], note, covered_until=conv["last_id"], happened_at=conv["last_at"],
+                     user_id=conv["user_id"] or "owner")
     return note
 
 
@@ -132,10 +133,10 @@ def _score(m: dict, now: datetime) -> float:
     return m["importance"] + recency + (1.5 if m["open_threads"] else 0)
 
 
-def recall_note(db: MemoryDB, conversation_id: str | None, tz: timezone | None = None) -> str:
-    """The memories worth carrying into this conversation, phrased for her prompt ("" if none)."""
+def recall_note(db: MemoryDB, conversation_id: str | None, user_id: str, tz: timezone | None = None) -> str:
+    """The memories (of this user's other conversations) worth carrying into this one, phrased for her prompt."""
     now = datetime.now(tz or timezone.utc)
-    memories = [m for m in db.recent_memories(conversation_id) if m["importance"] >= 2]
+    memories = [m for m in db.recent_memories(conversation_id, user_id=user_id) if m["importance"] >= 2]
     if not memories:
         return ""
     picked = sorted(memories, key=lambda m: _score(m, now), reverse=True)[:RECALL_COUNT]
@@ -146,7 +147,7 @@ def recall_note(db: MemoryDB, conversation_id: str | None, tz: timezone | None =
         if m["their_mood"]:
             line += f" They seemed {_lower_first(m['their_mood'])}."
         if m["her_feeling"]:
-            line += f" You felt {_lower_first(m['her_feeling'])}."
+            line += f" Your read: {_lower_first(m['her_feeling'])}."
         if m["open_threads"]:
             line += " Still open: " + "; ".join(t.rstrip(".") for t in m["open_threads"]) + "."
         lines.append(line)

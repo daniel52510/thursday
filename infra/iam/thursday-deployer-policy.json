@@ -1,0 +1,44 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EdgeServerAndDns",
+      "Effect": "Allow",
+      "Action": "lightsail:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "BudgetAlarms",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:ViewBudget",
+        "budgets:ModifyBudget",
+        "budgets:ListTagsForResource",
+        "budgets:TagResource",
+        "budgets:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DomainLookupOnlyNoPurchase",
+      "Effect": "Allow",
+      "Action": [
+        "route53domains:CheckDomainAvailability",
+        "route53domains:GetDomainSuggestions",
+        "route53domains:ListPrices"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "OnlyVirginia",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    }
+  ]
+}

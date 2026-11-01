@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.thursday.stt</string>
+  <!-- Runs from ~/thursday-stt, not the repo: macOS won't let launch agents read ~/Documents
+       ("Operation not permitted"). install.sh copies stt_native.py there and builds the venv. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__STT__/.venv-stt/bin/uvicorn</string><string>stt_native:app</string>
+    <string>--host</string><string>127.0.0.1</string><string>--port</string><string>9300</string>
+    <string>--log-level</string><string>info</string>
+  </array>
+  <key>WorkingDirectory</key><string>__STT__</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <!-- Start at login and restart if it exits; wait 10 s between attempts. -->
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/thursday/stt.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/thursday/stt.log</string>
+</dict>
+</plist>
