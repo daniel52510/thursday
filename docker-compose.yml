@@ -92,7 +92,9 @@ services:
   # .git read-only (never .env, brain/ or ignored files) and writes only runner-out/. No env_file,
   # no Docker socket, capped CPU and memory. It takes the GPU only when the house is quiet.
   runner:
-    build: ./runner
+    build:
+      context: .
+      dockerfile: runner/Dockerfile  # allowlist: runner/Dockerfile.dockerignore
     command: ["--worker"]
     restart: unless-stopped
     image: thursday-runner:latest
