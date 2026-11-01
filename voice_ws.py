@@ -633,6 +633,26 @@ class Session:
         self.role = "client"   # "satellite" after its hello
         self.sat_status: dict = {}  # a satellite's latest "status" report, for /api/info
         self.heard_at = 0.0  # last time the user said something; alarms check on them instead of re-waking
+        self._music_q: asyncio.Queue | None = None  # music frames for a satellite (send_music)
+
+    def send_music(self, frame: bytes) -> None:
+        """A music frame (music.serve_tap) for this satellite, "MUS0" + PCM. Queued and sent by one task
+        so a slow Wi-Fi link drops music frames instead of holding up the tap or a reply."""
+        if self._music_q is None:
+            self._music_q = asyncio.Queue(maxsize=50)  # ~2 s
+            self._music_sender = asyncio.create_task(self._send_music())
+        try:
+            self._music_q.put_nowait(b"MUS0" + frame)
+        except asyncio.QueueFull:
+            pass
+
+    async def _send_music(self) -> None:
+        while True:
+            data = await self._music_q.get()
+            try:
+                await self.ws.send_bytes(data)
+            except Exception:  # the satellite left: its session goes, and this task with it
+                return
 
     async def set_state(self, state: str) -> None:
         was, self.state = self.state, state
@@ -1197,6 +1217,12 @@ class Session:
         if self._turn and not self._turn.done():
             self._turn.cancel()
         await self.http.aclose()
+
+
+@router.websocket("/ws/music-tap")
+async def music_tap(ws: WebSocket) -> None:
+    """The Mac's music tap (mac/music_tap): YouTube Music's sound, relayed to the satellites."""
+    await music.serve_tap(ws)
 
 
 @router.websocket("/ws/voice")

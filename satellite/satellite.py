@@ -226,12 +226,22 @@ class Player:
     audio reaches the speaker a constant time after it's written, and the echo canceller knows
     when each sample played. (An aplay per sound started 50-300 ms late, and a different amount
     each time, so the canceller never locked on: 0-2 dB removed on real replies.)
-    Starting a sound replaces the current one; stop() cuts it off at once."""
+    Starting a sound replaces the current one; stop() cuts it off at once.
+
+    Music (YouTube Music from the Mac's tap, music()) is its own channel, mixed under everything
+    else: it waits for MUSIC_PREROLL_S before it starts (and again after running dry), so Wi-Fi
+    hiccups don't stutter it; it's ducked to MUSIC_DUCK while he talks or speaks; and it goes into
+    the echo canceller's reference like any other sound, so the wake word works over it. It never
+    counts as "playing": that's still only his voice and cues."""
 
     RATE = 24000                 # the replies' rate; other sounds are resampled to it
     BLOCK = 480                  # 20 ms
     BUFFER_US = 100_000          # aplay's ALSA buffer
     FADE = 96                    # 4 ms: the ramp at either side of a gap (_soften)
+    MUSIC_PREROLL_S = 0.25       # buffered before music (re)starts
+    MUSIC_MAX_S = 1.0            # more than this queued (clock drift): the oldest goes
+    MUSIC_GAIN = float(os.getenv("THURSDAY_MUSIC_GAIN", "0.5"))
+    MUSIC_DUCK = 0.15            # of MUSIC_GAIN while anyone talks or he speaks
     # Samples between the write and the speaker: pipe + ALSA buffer + aplay's period in hand.
     # Placed 40 ms early on purpose: an early reference is absorbed by the filter, a late one isn't.
     PIPELINE_S = (2048 + BUFFER_US * RATE // 1_000_000 + BLOCK) / RATE - 0.04
@@ -246,6 +256,10 @@ class Player:
         self._anchors: deque = deque(maxlen=250)  # write time - samples/RATE, last ~5 s
         self._audible_until = 0.0     # when the last real (non-silent) block leaves the speaker
         self._dry = True              # the last block written ended in silence: the next one fades in
+        self._music = bytearray()     # music not yet mixed in (music())
+        self._music_live = False      # past the pre-roll: mixing
+        self._mgain = 0.0             # music gain now, ramped toward its target block by block
+        self.ducking = lambda: False  # set by the satellite: is anyone talking to him?
         self._ref_base: int | None = None  # mic sample index where this aplay's sample 0 plays
         self.gain = 1.0  # for the current reply stream
         self.rate = self.RATE  # of the current reply stream
@@ -289,6 +303,9 @@ class Player:
             else:
                 self._dry = True
             block = block.ljust(self.BLOCK * 2, b"\0")
+            mixed = self._mix_music(block, real)
+            heard = real or mixed is not None
+            block = mixed or block
             proc = self._proc
             try:
                 proc.stdin.write(block)
@@ -306,8 +323,38 @@ class Player:
                 self._place(at, first)
             if real:
                 self._audible_until = at + self.BLOCK / self.RATE + 0.04
-                if self.ref and self._ref_base is not None:
-                    self.ref.add_at(block, self.RATE, self._ref_base + first * SAMPLE_RATE // self.RATE)
+            if heard and self.ref and self._ref_base is not None:
+                self.ref.add_at(block, self.RATE, self._ref_base + first * SAMPLE_RATE // self.RATE)
+
+    def music(self, pcm: bytes) -> None:
+        """A frame of music (24 kHz mono int16) from the server."""
+        with self._lock:
+            self._music += pcm
+            excess = len(self._music) - int(self.MUSIC_MAX_S * self.RATE) * 2
+            if excess > 0:
+                del self._music[:excess + int(0.5 * self.RATE) * 2]  # back to ~0.5 s queued
+
+    def _mix_music(self, block: bytes, voice: bool) -> bytes | None:
+        """The block with this block's music mixed under it, or None when no music plays."""
+        n = self.BLOCK * 2
+        with self._lock:
+            if not self._music_live:
+                if len(self._music) < int(self.MUSIC_PREROLL_S * self.RATE) * 2:
+                    return None
+                self._music_live, self._mgain = True, 0.0  # starts from silence: the ramp is its fade-in
+            m = bytes(self._music[:n])
+            del self._music[:n]
+            if len(self._music) < n:  # ran dry: fade out what's here, then pre-roll again
+                self._music_live = False
+        x = np.frombuffer(m.ljust(n, b"\0"), dtype=np.int16).astype(np.float32)
+        if not self._music_live:
+            x[:len(m) // 2] *= np.linspace(1.0, 0.0, len(m) // 2, dtype=np.float32)
+        target = self.MUSIC_GAIN * night_gain() * (self.MUSIC_DUCK if voice or self.ducking() else 1.0)
+        new = self._mgain + max(-0.1, min(0.1, target - self._mgain))  # ~100 ms to duck or fade in: no clicks
+        ramp = np.linspace(self._mgain, new, len(x), dtype=np.float32)
+        self._mgain = new
+        out = np.frombuffer(block, dtype=np.int16).astype(np.float32) + x * ramp
+        return np.clip(out, -32768, 32767).astype(np.int16).tobytes()
 
     def _soften(self, block: bytes, runs_dry: bool) -> bytes:
         """No hard edges at a gap. The voice's stream can arrive late (its start and sentence breaks run
@@ -441,6 +488,7 @@ class Satellite:
         self.wake = _wake_model()
         self.wake_name = next(iter(self.wake.models))
         self.player = Player()
+        self.player.ducking = lambda: self.state != "wake"  # music down while anyone talks to him
         self.aec = None
         if AEC_MODE in ("shadow", "on"):
             try:
@@ -747,7 +795,10 @@ class Satellite:
     async def _recv_loop(self, ws) -> None:
         async for msg in ws:
             if isinstance(msg, bytes):
-                self._on_audio(msg)
+                if msg[:4] == b"MUS0":  # music from the Mac's tap: its own channel (Player.music)
+                    self.player.music(msg[4:])
+                else:
+                    self._on_audio(msg)
                 continue
             ev = json.loads(msg)
             kind = ev.get("type")

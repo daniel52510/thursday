@@ -8,12 +8,19 @@ the app; the token goes to the vault (never .env, never logged). The server list
 
 Finding things is ytmusicapi (pinned), signed out: a search gives the video or playlist id, and
 "changeVideo" plays it. A song plays with its radio queued behind it ("RDAMVM" + id), so it keeps
-going with music like it. Ducking: while anyone talks to him the volume drops to DUCK_VOLUME and
-comes back after the reply (voice_ws.Session.set_state). /state allows one read per 5 s, so the
-last state is cached.
+going with music like it. /state allows one read per 5 s, so the last state is cached.
+
+Where it plays (music_output): on the satellite by default. THURSDAY Music Tap (mac/music_tap, a
+launchd agent) taps the app's sound with the Mac muted and streams 24 kHz mono to /ws/music-tap;
+serve_tap relays it to every satellite ("MUS0" + PCM frames), which mixes it under his voice, ducks
+it locally while anyone talks, and cancels it from the mic, so the wake word works over music. On
+the Mac, the tap stops muting and ducking is the app's volume: DUCK_VOLUME while anyone talks, the
+old level after the reply (voice_ws.Session.set_state).
 """
 from __future__ import annotations
 
+import asyncio
+import hmac
 import logging
 import os
 import sys
@@ -22,6 +29,7 @@ import time
 from typing import Any, Dict
 
 import httpx
+import numpy as np
 
 from accounts import OWNER
 from tools import ToolResult
@@ -33,7 +41,14 @@ DUCK_VOLUME = int(os.getenv("MUSIC_DUCK_VOLUME", "20"))
 STATE_EVERY_S = 5.2  # the app's limit: one /state per 5 s
 PLAYING = 1          # player.trackState: -1 unknown, 0 paused, 1 playing, 2 buffering
 
+TAP_TOKEN = os.getenv("MUSIC_TAP_TOKEN", "")
+TAP_SILENCE_S = 1.5  # this long under SILENT_RMS and the satellite stops getting frames (its buffer drains)
+SILENT_RMS = 30.0
+OUTPUT = {"where": os.getenv("MUSIC_OUTPUT", "satellite")}  # "satellite" or "mac"
+
 logger = logging.getLogger("thursday.voice")
+_taps: set = set()  # connected music taps (normally one)
+_loop: asyncio.AbstractEventLoop | None = None
 _state: dict = {"at": 0.0, "value": None}
 _duck: dict = {"restore": None}  # the volume to put back after a turn, if we lowered it
 _lock = threading.Lock()
@@ -166,6 +181,60 @@ def music_now(args: Dict[str, Any]) -> ToolResult:
     return ToolResult(ok=True, tool_name="music_now", data=_now(st))
 
 
+def music_output(args: Dict[str, Any]) -> ToolResult:
+    """Where music plays: the satellite (the Mac muted) or the Mac's own output."""
+    where = str(args.get("where") or "")
+    if where not in ("satellite", "mac"):
+        return ToolResult(ok=False, tool_name="music_output", error="where must be satellite or mac")
+    OUTPUT["where"] = where
+    _tell_taps()
+    if where == "satellite" and not _taps:
+        return ToolResult(ok=True, tool_name="music_output", data={
+            "where": where, "warning": "the Mac's music tap isn't connected, so the satellite hears nothing yet"})
+    return ToolResult(ok=True, tool_name="music_output", data={"where": where})
+
+
+def _tell_taps() -> None:
+    """Mute the app on the Mac while the satellite plays it; let the Mac play it otherwise."""
+    if _loop is None:
+        return
+    for ws in list(_taps):
+        asyncio.run_coroutine_threadsafe(ws.send_json({"mute": OUTPUT["where"] == "satellite"}), _loop)
+
+
+async def serve_tap(ws) -> None:
+    """/ws/music-tap: the Mac's tap streams the app's sound; satellites get it while it isn't silent."""
+    global _loop
+    if not TAP_TOKEN or not hmac.compare_digest(ws.headers.get("x-music-tap-token", ""), TAP_TOKEN):
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    _loop = asyncio.get_running_loop()
+    _taps.add(ws)
+    logger.info("music tap connected")
+    await ws.send_json({"mute": OUTPUT["where"] == "satellite"})
+    from voice_ws import SATELLITES  # on first use: voice_ws imports this module
+    loud_at = 0.0
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            frame = msg.get("bytes")
+            if not frame or OUTPUT["where"] != "satellite":
+                continue
+            x = np.frombuffer(frame[: len(frame) // 2 * 2], dtype="<i2").astype(np.float32)
+            if len(x) and float(np.sqrt(np.mean(x * x))) > SILENT_RMS:
+                loud_at = time.monotonic()
+            if time.monotonic() - loud_at > TAP_SILENCE_S:
+                continue  # paused or between songs: send nothing, the satellite's music fades out
+            for sat in list(SATELLITES):
+                sat.send_music(frame)
+    finally:
+        _taps.discard(ws)
+        logger.info("music tap disconnected")
+
+
 def music_recommend(args: Dict[str, Any]) -> ToolResult:
     """Songs like the one playing (or like a song he names), from YouTube Music's own radio."""
     try:
@@ -195,7 +264,10 @@ def _why(exc: Exception) -> str:
 # --- ducking (voice_ws) ---------------------------------------------------------------------
 
 def duck() -> None:
-    """Someone started talking to him: music down to DUCK_VOLUME, if it's playing louder."""
+    """Someone started talking to him: music down to DUCK_VOLUME, if it's playing louder. On the
+    satellite the satellite ducks it itself, at once."""
+    if OUTPUT["where"] == "satellite":
+        return
     try:
         now = _now(state())
         if now["playing"] and (now["volume"] or 0) > DUCK_VOLUME and _duck["restore"] is None:
@@ -218,7 +290,7 @@ def unduck() -> None:
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "music_play",
-        "description": "Play music on YouTube Music (the Mac's speakers): a song, an artist, an album, or a playlist for a "
+        "description": "Play music on YouTube Music (on his satellite speaker, or the Mac: music_output): a song, an artist, an album, or a playlist for a "
         "mood or activity. A song keeps going with its radio. query 'more like this' plays the current song's radio.",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "What to play, e.g. 'Bohemian Rhapsody', 'Daft Punk', 'lofi beats for focus'"},
@@ -233,6 +305,12 @@ TOOL_SCHEMAS = [
                                                   "set_volume", "mute", "unmute", "like"]},
             "level": {"type": "integer", "description": "0-100, for set_volume"}},
             "required": ["action"]}}},
+    {"type": "function", "function": {
+        "name": "music_output",
+        "description": "Where music plays: 'satellite' (his speaker here, the default) or 'mac' (the Mac's own speakers "
+        "or whatever the Mac outputs to).",
+        "parameters": {"type": "object", "properties": {"where": {"type": "string", "enum": ["satellite", "mac"]}},
+                       "required": ["where"]}}},
     {"type": "function", "function": {
         "name": "music_now", "description": "What's playing on YouTube Music right now, and whether it's paused.",
         "parameters": {"type": "object", "properties": {}}}},
