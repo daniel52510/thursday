@@ -38,6 +38,10 @@ GRANITE = float(os.getenv("ROCKY_GRANITE", "0"))
 LAYER_GAIN = 0.85         # the ocarina layer, before CHORD_MIX: about the voice's own level
 DEVICE_GAIN = 1.4         # the band-limited translator voice loses its lows; this gives them back
 STREAM_MARGIN_S = 0.08    # streaming holds back this much: the filters' look-ahead (~50 ms) and some
+# Most new audio a streaming pass waits for (Stream). The old x1.4 growth made passes ever further
+# apart, so audio left in growing bursts and the satellite ran dry between them (2026-11-01: dry
+# median 232 ms per sentence; capped at 0.4 s plus VOICE_PREROLL_MS 250: 0 ms, 9/10 runs clean).
+STREAM_PASS_MAX_S = float(os.getenv("ROCKY_STREAM_PASS_MAX_S", "0.4"))
 HOP_S = 0.010                  # analysis hop
 DORIAN = (0, 2, 3, 5, 7, 9, 10)  # D Dorian, as semitones above D
 OCARINA = (294.0, 700.0)       # the chord root lives here (D4 up to about F5)
@@ -312,10 +316,9 @@ class Stream:
     look-ahead isn't settled yet. A piece ending "question?" holds back enough for its chime.
     finish() returns the rest, chime and fade included.
 
-    Reprocessing runs often at first (the first words go out fast) and then each time the piece
-    has grown 40%, so the total stays ~3.5 passes instead of growing with the square of its
-    length; the TTS runs ~1.8x faster than real time, so the bigger later batches never starve
-    playback."""
+    Reprocessing runs often at first (the first words go out fast), then each time the piece has
+    grown 40%, but never more than STREAM_PASS_MAX_S of new audio between passes: bigger batches
+    starved the satellite between them. ~75 ms of CPU per second of audio."""
 
     def __init__(self, sr: int, text: str) -> None:
         self.sr, self.text = sr, text
@@ -329,7 +332,8 @@ class Stream:
         self.x = np.concatenate([self.x, np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0])
         if len(self.x) < self.next:
             return b""
-        self.next = max(len(self.x) + int(self.sr * 0.08), int(len(self.x) * 1.4))
+        n = len(self.x)
+        self.next = n + max(int(self.sr * 0.08), min(int(n * 0.4), int(self.sr * STREAM_PASS_MAX_S)))
         y = process(self.x, self.sr, self.text, final=False)
         return self._take(y, len(y) - self.margin)
 

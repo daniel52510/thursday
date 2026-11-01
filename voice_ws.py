@@ -158,11 +158,12 @@ TTS_TIMEOUT = httpx.Timeout(60, connect=5)
 TTS_CAPS_TTL_S = 30
 STREAM_MIN_BYTES = 7680  # 160 ms of 24 kHz int16: the smallest WAV we forward
 STREAM_FIRST_BYTES = 3840  # 80 ms: the first one goes out sooner
-# A reply's first WAV waits until this much audio is ready. Orpheus's stream starts slower than real
-# time (and stalls after a short opening sentence like "On it."), so an 80 ms start ran the satellite
-# dry within ~110 ms on nearly every reply (measured 2026-11-01): a stutter. Costs about this much
-# extra time to first audio, on a reply's first piece only.
-PREROLL_MS = int(os.getenv("VOICE_PREROLL_MS", "0"))
+# A reply's first WAV waits until this much audio is ready. An 80 ms start ran the satellite dry
+# ~110 ms in on nearly every reply: Rocky holds back its 80 ms look-ahead and its +2 st shift
+# shortens the audio ~12%, so the next WAV couldn't land in time (a stutter). With Rocky's capped
+# passes (rocky_voice.STREAM_PASS_MAX_S), 250 ms made 9/10 test sentences gapless, for about
+# +160 ms to first audio on a reply's first piece only (measured 2026-11-01). 0 = off.
+PREROLL_MS = int(os.getenv("VOICE_PREROLL_MS", "250"))
 ROCKY_FEED_BYTES = 3840  # Rocky reprocesses the piece every 80 ms of new audio
 _tts_caps = {"at": 0.0, "stream": False, "rate": 24000, "engine": ""}
 
