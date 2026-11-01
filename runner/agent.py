@@ -145,6 +145,34 @@ SCHEMAS = [
 ]
 
 
+# Review mode (improvements.code_review_start): read the code, change nothing, report findings.
+READ_ONLY = ("list_files", "read_file", "search")
+REVIEW_SCHEMAS = [t for t in SCHEMAS if t["function"]["name"] in READ_ONLY] + [_schema(
+    "report_review", "Done reading: your findings, most serious first (none is a fine answer).",
+    {"summary": {"type": "string", "description": "2-3 sentences: what you looked at and the overall state"},
+     "findings": {"type": "array", "items": {"type": "object", "properties": {
+         "file": _S, "line": {"type": "integer"}, "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+         "problem": {"type": "string", "description": "What goes wrong, for whom, when: a concrete input or situation"},
+         "fix": {"type": "string", "description": "The smallest change that would fix it"}},
+         "required": ["file", "severity", "problem", "fix"]}}},
+    ["summary", "findings"])]
+
+
+def _review_system() -> str:
+    guide = (WORK / "CLAUDE.md").read_text()[:3000] if (WORK / "CLAUDE.md").exists() else ""
+    return f"""You are THURSDAY's engineer, reviewing THURSDAY's own code for real bugs. You can only read; nothing you do changes the code. Daniel reads your report and decides what to fix.
+
+How to work:
+- Focus on what the task names; otherwise on the code that handles his requests (agent_stream.py, voice_ws.py, the tools).
+- Read the actual code (search, then read_file around the hits). Only report what you saw in the code: a file and line, and a concrete situation where it goes wrong.
+- Real bugs over style: wrong behavior, crashes, races, a request that can silently do nothing, a claim made without the action, security holes, latency costs. Skip naming, formatting and taste.
+- At most 6 findings, most serious first. Fewer good findings beat many weak ones; none is fine if you found none.
+- You have {MAX_STEPS} tool calls. Then call report_review once.
+
+The project's guide (CLAUDE.md):
+{guide}"""
+
+
 def _system() -> str:
     guide = (WORK / "CLAUDE.md").read_text()[:5000] if (WORK / "CLAUDE.md").exists() else ""
     return f"""You are THURSDAY's engineer, improving THURSDAY's own code in a sandbox. Daniel reviews every change before it goes anywhere; nothing you do here is live.
@@ -221,11 +249,14 @@ def _report(**fields) -> None:
     print(json.dumps(fields.get("status")), fields.get("summary", ""), sep="\n")
 
 
-def run(task: str) -> None:
+def run(task: str, kind: str = "change") -> None:
     subprocess.run(["git", "clone", "-q", "--branch", BASE, SRC, str(WORK)], check=True)
     _git("checkout", "-q", "-b", BRANCH)
     base_sha = _git("rev-parse", "HEAD").strip()
-    messages = [{"role": "system", "content": _system()}, {"role": "user", "content": f"Task: {task}"}]
+    review = kind == "review"
+    schemas = REVIEW_SCHEMAS if review else SCHEMAS
+    messages = [{"role": "system", "content": _review_system() if review else _system()},
+                {"role": "user", "content": f"{'Review' if review else 'Task'}: {task}"}]
     steps, started, nudges, work = [], time.monotonic(), 0, 0.0
     with httpx.Client(timeout=httpx.Timeout(600, connect=5)) as http:
         while True:
@@ -234,8 +265,9 @@ def run(task: str) -> None:
                 return _report(status="failed", error="out_of_budget", task=task, steps=steps)
             if over:
                 nudges += 1
-                messages.append({"role": "user", "content": "Budget's spent: run_checks if you haven't, then finish."})
-            msg, secs = _chat(http, messages, SCHEMAS)
+                messages.append({"role": "user", "content": "Budget's spent: report_review now." if review else
+                                 "Budget's spent: run_checks if you haven't, then finish."})
+            msg, secs = _chat(http, messages, schemas)
             work += secs
             calls = msg.get("tool_calls") or []
             messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
@@ -243,12 +275,21 @@ def run(task: str) -> None:
                 nudges += 1
                 if nudges > 3:
                     return _report(status="failed", error="no_finish", task=task, steps=steps)
-                messages.append({"role": "user", "content": "Keep going with the tools, or call finish."})
+                messages.append({"role": "user", "content": "Keep going with the tools, or call "
+                                 + ("report_review." if review else "finish.")})
                 continue
             for call in calls:
                 name, args = call["function"]["name"], call["function"].get("arguments") or {}
-                if name == "finish":
+                if name == "finish" and not review:
                     return _finish(task, args, steps, base_sha, started)
+                if name == "report_review" and review:
+                    findings = [f for f in (args.get("findings") or []) if isinstance(f, dict) and f.get("problem")][:6]
+                    return _report(status="review_ready", kind="review", task=task, summary=str(args.get("summary") or ""),
+                                   findings=findings, steps=steps, minutes=round((time.monotonic() - started) / 60, 1))
+                if review and name not in READ_ONLY:
+                    result = {"ok": False, "error": "review mode: read only. Call report_review when done."}
+                    messages.append({"role": "tool", "tool_name": name, "content": json.dumps(result)})
+                    continue
                 try:
                     result = TOOLS[name](args) if name in TOOLS else {"error": "unknown tool"}
                 except Exception as exc:  # a bad path or argument is the model's to route around
@@ -302,7 +343,7 @@ def worker() -> None:
             path.unlink()
             _fresh_work()
             print(f"job {JOB}: {job['task'][:120]}", flush=True)
-            run(job["task"])
+            run(job["task"], job.get("kind", "change"))
         except Exception as exc:  # one bad job never stops the worker
             _report(status="failed", error=f"{type(exc).__name__}: {exc}"[:300], task=str(job.get("task", "")))
         finally:

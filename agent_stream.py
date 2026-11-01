@@ -116,7 +116,7 @@ Facts and tools:
 - A mission on a schedule (every Sunday evening, every weekday at 7): routine_start, read back first like a mission; routine_list, routine_stop. It reports every time, unlike a watch.
 - "Send that to my phone" (a mission write-up, an address, a list): send_to_phone.
 - Music (YouTube Music, on his satellite speaker by default): music_play for a song, artist, album, or a playlist for a mood or activity; music_control to pause, resume, skip, go back or change the volume; music_now for what's playing; music_recommend for songs like it; music_output to move it between the satellite and the Mac. Music plays only when music_play ran this turn. Confirm in a few words ("Daft Punk, playing."). If the music app is off, say so in one line.
-- He asks you to improve or fix yourself (how you answer something, a habit he dislikes): improve_start, read back first like a mission. It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
+- You can read and change your own code (Python, in a sandbox, with his review): never say you can't reach, see or fix it. He asks you to improve or fix yourself (how you answer something, a habit he dislikes, a bug): improve_start, read back first like a mission. He asks you to review your code or find bugs in it: code_review_start (reads only, findings come to the chat). It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
 - A "Self-review" conversation holds your own ideas for improving yourself (you review the last days every night; self_review_now when he asks). There, talk them through with him: what goes wrong, the fix, what it might break, answer his questions honestly. When he settles on one, improve_start with the change as you agreed it, read back first.
 - Things your missions proposed wait for his OK (approval_list). When he answers, approval_decide: approve only on his plain yes to that thing, never on your own; no or not now declines. Say what happened in a few words.
 - His lists (grocery, packing, to-do) and notes: list_add, list_show, list_remove, note_save, note_find. Confirm in a few words ("Eggs and oat milk, added."); read a list back in one sentence. A list or note changes only when a tool changes it, every time: "got the eggs" is list_remove, "add bread" is list_add, even if you talked about that list a moment ago. Never say you added, removed or saved something unless the tool did it this turn.
@@ -551,6 +551,26 @@ def _music_intent(text: str) -> tuple[str, dict] | None:
     return None
 
 
+# Work on his own code, asked plainly, goes to the tools in code: the model kept answering "I cannot
+# reach my own core files" (2026-11-01). A review reads and reports; a fix is read back, then queued.
+_YOUR_CODE = r"(?:your(?:self)?|your\s+(?:own\s+|internal\s+)?(?:code|programming|prompt|behaviou?r|internals?|software)|how\s+you)"
+_SELF_REVIEW = re.compile(rf"\b(?:review|audit|check|look\s+(?:over|through|at)|scan|inspect|go\s+through)\s+(?:all\s+)?"
+                          rf"(?:of\s+)?{_YOUR_CODE}\b|\b(?:find|look\s+for|any)\s+(?:potential\s+|possible\s+)?bugs?\s+"
+                          rf"in\s+(?:your|ur)\b|\binternal\s+code\b"
+                          rf"|\b(?:improvements?|fixes|upgrades)\s+(?:to|for|in)\s+your\s+(?:own\s+)?code\b", re.I)
+_SELF_FIX = re.compile(rf"\b(?:fix|improve|change|update|upgrade|patch|tweak|debug|enhance|rewrite)\s+(?:up\s+)?{_YOUR_CODE}\b"
+                       rf"|\b(?:fix|change)\s+(?:that|it|this)\s+in\s+your\s+(?:own\s+)?code\b|\bself[-\s]improve\b", re.I)
+
+
+def _self_code_intent(text: str) -> tuple[str, dict] | None:
+    """Work on his own code he asked for plainly, as (tool, args); None leaves it to the model."""
+    if _SELF_REVIEW.search(text):
+        return "code_review_start", {"focus": text[:300]}
+    if _SELF_FIX.search(text):
+        return "improve_start", {"task": text[:1000]}  # read back first: he can add detail before it starts
+    return None
+
+
 _DELIBERATE = re.compile(r"\b(think\s+(it|this|that)\s+(over|through)|take\s+your\s+time|think\s+(hard|carefully)|"
                          r"really\s+think|give\s+it\s+(some\s+)?(real\s+)?thought)\b", re.I)
 _REQUEST = re.compile(
@@ -804,7 +824,8 @@ def record_cut_off(conversation_id: str | None, heard: str, user_id: str) -> Non
 def _started(name: str, result) -> bool:
     """A mission or routine actually started (not held for his yes): the reply confirms, it doesn't ask."""
     data = result.get("data") if isinstance(result, dict) else result.data
-    return name in ("mission_start", "routine_start", "improve_start") and (data or {}).get("status") == "STARTED"
+    return name in ("mission_start", "routine_start", "improve_start", "code_review_start") \
+        and (data or {}).get("status") == "STARTED"
 
 
 async def stream_prompt(*args, **kwargs) -> AsyncIterator[dict]:
@@ -915,6 +936,15 @@ async def _stream_prompt(
             f"{name} already ran for what he just said. Reply from its result in a few words, and don't call a "
             "music tool again this turn." if result.ok else
             f"{name} failed ({result.error}). Say so plainly in one line; never say it's playing or stopped.")})
+    elif self_call := (_self_code_intent(user_prompt) if mode in ("voice", "chat") and user["id"] == OWNER else None):
+        name, args = self_call
+        yield {"type": "tool", "name": name, "args": args}
+        result = await run_and_record(name, args)
+        yield {"type": "tool_result", "name": name, "ok": result.ok, "started": _started(name, result)}
+        executed.add(f"{name}:{json.dumps(args, sort_keys=True)}")
+        messages.append({"role": "system", "content": (
+            f"{name} already ran for what he just said: follow its note. You can read and change your own code "
+            "this way; never say you can't." if result.ok else f"{name} failed ({result.error}). Say so in one line.")})
     # "Add X to my calendar" must go through calendar_create; the model has
     # answered "I've prepared it" without calling anything.
     elif _CALENDAR_ADD.search(user_prompt):

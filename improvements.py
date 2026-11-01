@@ -167,24 +167,56 @@ def improve_start(args: Dict[str, Any]) -> ToolResult:
     task = " ".join(str(args.get("task") or "").split())[:1000]
     if len(task.split()) < 4:
         return ToolResult(ok=False, tool_name="improve_start", error="task_too_vague: ask what he wants changed")
-    queue = OUT / "queue"
-    if len(list(queue.glob("*.json"))) >= MAX_QUEUED:
+    if len(list((OUT / "queue").glob("*.json"))) >= MAX_QUEUED:
         return ToolResult(ok=False, tool_name="improve_start", error=f"already_{MAX_QUEUED}_jobs_queued")
     if not args.get("confirmed"):
         return missions._read_back(turn, "improve_start", {"task": task, "confirmed": True}, task)
-    queue.mkdir(parents=True, exist_ok=True)
-    job = datetime.now().strftime("%Y%m%d-%H%M%S")
-    while (queue / f"{job}.json").exists() or (OUT / f"{job}.json").exists():
-        time.sleep(1)
-        job = datetime.now().strftime("%Y%m%d-%H%M%S")
-    (queue / f"{job}.json").write_text(json.dumps({"job": job, "task": task, "queued_at": datetime.now(timezone.utc).isoformat()}))
-    logger.info("improvement %s queued: %s", job, task[:120])
+    job = _queue(task)
     result = ToolResult(ok=True, tool_name="improve_start", data={
         "job": job, "status": "STARTED",
         "note": "Confirm in one short statement, no question: you work on it when the house is quiet and his phone "
                 "gets the change to review. Nothing changes until he approves it."})
     missions._started[(turn.get("conversation") or "", "improve_start")] = (result, time.monotonic())
     return result
+
+
+def _queue(task: str, kind: str = "change") -> str:
+    queue = OUT / "queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    job = datetime.now().strftime("%Y%m%d-%H%M%S")
+    while (queue / f"{job}.json").exists() or (OUT / f"{job}.json").exists():
+        time.sleep(1)
+        job = datetime.now().strftime("%Y%m%d-%H%M%S")
+    (queue / f"{job}.json").write_text(json.dumps({"job": job, "task": task, "kind": kind,
+                                                   "queued_at": datetime.now(timezone.utc).isoformat()}))
+    logger.info("%s %s queued: %s", "code review" if kind == "review" else "improvement", job, task[:120])
+    return job
+
+
+def code_review_start(args: Dict[str, Any]) -> ToolResult:
+    """A read-only look through his code for bugs: no read-back needed, it changes nothing."""
+    if (TURN.get() or {}).get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="code_review_start", error="self_improvement_is_daniels_only")
+    if len(list((OUT / "queue").glob("*.json"))) >= MAX_QUEUED:
+        return ToolResult(ok=False, tool_name="code_review_start", error=f"already_{MAX_QUEUED}_jobs_queued")
+    focus = " ".join(str(args.get("focus") or "").split())[:500] or "the code that handles his requests"
+    job = _queue(focus, "review")
+    return ToolResult(ok=True, tool_name="code_review_start", data={"job": job, "status": "STARTED", "focus": focus, "note":
+        "Confirm in one short statement, no question: you read your own code when the house is quiet, change "
+        "nothing, and post what you find in the chat (and his phone) to talk through."})
+
+
+def _review_write_up(report: dict) -> str:
+    findings = report.get("findings") or []
+    parts = [report.get("summary") or "I read through my code.",
+             f"{len(findings)} finding(s), most serious first:" if findings else "I found nothing worth fixing."]
+    for n, f in enumerate(findings, 1):
+        where = f"`{f.get('file')}`" + (f", line {f['line']}" if f.get("line") else "")
+        parts.append(f"**{n}. [{str(f.get('severity', '')).upper()}] {where}**\n- Problem: {f.get('problem')}\n- Fix: {f.get('fix')}")
+    if findings:
+        parts.append("Tell me which you want fixed, or ask about any of them. When we agree, I make the change in my "
+                     "sandbox and you review it before anything is live.")
+    return "\n\n".join(parts)
 
 
 def improve_status(args: Dict[str, Any]) -> ToolResult:
@@ -211,7 +243,18 @@ async def run_notifier() -> None:
                 report = json.loads(path.read_text())
                 if report.get("notified"):
                     continue
-                if path.stat().st_mtime >= started:
+                if path.stat().st_mtime >= started and report.get("kind") == "review":
+                    # A code review becomes a conversation to talk through, like a self-review.
+                    from agent_loop import initalize_db
+                    db = initalize_db()
+                    conv = db.create_conversation(f"Code review · {datetime.now(ZoneInfo(REVIEW_TZ)):%b %-d}", OWNER)
+                    db.log_message(role="user", content=f"Review your code: {report.get('task')}", conversation_id=conv["id"])
+                    db.log_message(role="assistant", content=_review_write_up(report), conversation_id=conv["id"])
+                    n = len(report.get("findings") or [])
+                    await asyncio.to_thread(approvals.push, f"THURSDAY reviewed its code: {n} finding(s)",
+                                            (report.get("summary") or "")[:400], click=approvals.link(conv["id"]), tags=("mag",))
+                    logger.info("code review %s finished: %d finding(s)", report.get("job"), n)
+                elif path.stat().st_mtime >= started:
                     title = "THURSDAY has a change for you to review" if report.get("status") == "ready" \
                         else f"THURSDAY's improvement job ended: {report.get('status')}"
                     await asyncio.to_thread(approvals.push, title, (report.get("summary") or report.get("error") or "")[:500],
@@ -422,6 +465,12 @@ async def start_self_review() -> None:
     await run_self_review()
 
 
+TOOL_SCHEMAS.append({"type": "function", "function": {
+    "name": "code_review_start",
+    "description": "Read through your own code for bugs and report them (changes nothing): when he asks you to review, "
+    "audit or find bugs in your code. Findings arrive as a Code review conversation in the chat.",
+    "parameters": {"type": "object", "properties": {
+        "focus": {"type": "string", "description": "What to look at, if he named it: 'the music code', 'alarms'"}}}}})
 TOOL_SCHEMAS.append({"type": "function", "function": {
     "name": "self_review_now",
     "description": "Review your recent conversations with him for where you fell short, and propose fixes to yourself "
