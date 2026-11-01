@@ -37,7 +37,9 @@ MAX_STEPS = 40
 MAX_WORK_S = 20 * 60
 READ_LINES = 200
 RESULT_CHARS = 6000
-WORK, OUT, SRC = Path("/work"), Path("/out"), "/repo.git"
+WORK, SRC = Path("/work"), "/repo.git"
+FLAGS = Path("/out")                             # activity, busy flags, the queue: shared with core
+OUT = Path(os.getenv("RUNNER_OUT", "/out"))      # reports and bundles (the benchmark keeps its own)
 BRANCH = f"thursday/improve-{JOB}"
 QUIET_S = 30         # like missions.QUIET_S: nobody has talked for this long
 FRESH_S = 120        # a busy flag older than this is a crashed holder's, not a live one
@@ -201,14 +203,14 @@ def _trim(messages: list[dict]) -> None:
 def _age(name: str) -> float:
     """Seconds since /out/<name> was last touched (inf when it isn't there)."""
     try:
-        return time.time() - (OUT / name).stat().st_mtime
+        return time.time() - (FLAGS / name).stat().st_mtime
     except OSError:
         return float("inf")
 
 
 def _flag(name: str, on: bool = True) -> None:
     try:
-        (OUT / name).touch() if on else (OUT / name).unlink(missing_ok=True)
+        (FLAGS / name).touch() if on else (FLAGS / name).unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -328,7 +330,7 @@ def _fresh_work() -> None:
 def worker() -> None:
     """The runner service: one queued job at a time, oldest first, never alongside a mission."""
     global JOB, BRANCH
-    queue = OUT / "queue"
+    queue = FLAGS / "queue"
     queue.mkdir(parents=True, exist_ok=True)
     print(f"runner worker: {MODEL}, base {BASE}", flush=True)
     while True:
