@@ -87,12 +87,14 @@ services:
     volumes:
       - ntfy-cache:/var/cache/ntfy
     restart: unless-stopped
-  # Self-improvement jobs (runner/agent.py), only when started: scripts/improve.sh "task".
-  # It sees the repo's .git read-only (never .env, brain/ or ignored files) and writes only
-  # runner-out/. No env_file, no Docker socket, capped CPU and memory.
+  # Self-improvement jobs (runner/agent.py): a worker for the jobs THURSDAY queues out loud
+  # (improvements.improve_start), or one job by hand: scripts/improve.sh "task". It sees the repo's
+  # .git read-only (never .env, brain/ or ignored files) and writes only runner-out/. No env_file,
+  # no Docker socket, capped CPU and memory. It takes the GPU only when the house is quiet.
   runner:
-    profiles: ["runner"]
     build: ./runner
+    command: ["--worker"]
+    restart: unless-stopped
     image: thursday-runner:latest
     extra_hosts:
       - "host.docker.internal:host-gateway"

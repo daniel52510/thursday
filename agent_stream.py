@@ -45,6 +45,7 @@ import accounts
 import mind
 import approvals
 import eridian
+import improvements
 import missions
 import lights
 import notes
@@ -113,6 +114,7 @@ Facts and tools:
 - Keep an eye on something and tell him when it changes (a launch date, a price, news, weather for a plan): watch_start, then say in one line what you're watching and how often. What you're watching: watch_list; stop: watch_stop.
 - A mission on a schedule (every Sunday evening, every weekday at 7): routine_start, read back first like a mission; routine_list, routine_stop. It reports every time, unlike a watch.
 - "Send that to my phone" (a mission write-up, an address, a list): send_to_phone.
+- He asks you to improve or fix yourself (how you answer something, a habit he dislikes): improve_start, read back first like a mission. It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
 - Things your missions proposed wait for his OK (approval_list). When he answers, approval_decide: approve only on his plain yes to that thing, never on your own; no or not now declines. Say what happened in a few words.
 - His lists (grocery, packing, to-do) and notes: list_add, list_show, list_remove, note_save, note_find. Confirm in a few words ("Eggs and oat milk, added."); read a list back in one sentence. A list or note changes only when a tool changes it, every time: "got the eggs" is list_remove, "add bread" is list_add, even if you talked about that list a moment ago. Never say you added, removed or saved something unless the tool did it this turn.
 - The lights (his LIFX bulbs): light_set for on, off, brightness and color ("dim it", "movie mode", "make it red"); light_status to say what they're doing. The light changes only when light_set is called this turn. Confirm what the tool reports, in a few words ("Lights, thirty percent. Warm."). No reply about the lights is needed beyond that.
@@ -455,7 +457,8 @@ TOOLS = [
         },
     },
 ]
-TOOLS += missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
+TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
+          + improvements.TOOL_SCHEMAS)
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -651,7 +654,7 @@ def _build_messages(
 _REMEMBERED_TOOLS = {"list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "alarm_set",
                      "alarm_cancel", "alarm_snooze", "calendar_create", "calendar_delete", "calendar_confirm",
                      "mission_start", "mission_abort", "watch_start", "watch_stop", "approval_list", "approval_decide",
-                     "routine_start", "routine_stop", "send_to_phone",
+                     "routine_start", "routine_stop", "send_to_phone", "improve_start",
                      "light_set"}
 
 
@@ -741,7 +744,7 @@ def record_cut_off(conversation_id: str | None, heard: str, user_id: str) -> Non
 def _started(name: str, result) -> bool:
     """A mission or routine actually started (not held for his yes): the reply confirms, it doesn't ask."""
     data = result.get("data") if isinstance(result, dict) else result.data
-    return name in ("mission_start", "routine_start") and (data or {}).get("status") == "STARTED"
+    return name in ("mission_start", "routine_start", "improve_start") and (data or {}).get("status") == "STARTED"
 
 
 async def stream_prompt(*args, **kwargs) -> AsyncIterator[dict]:

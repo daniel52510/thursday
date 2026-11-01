@@ -11,15 +11,27 @@ the Agentic page; nothing reaches his code without his Approve:
   decline  deletes the branch; the report stays as a record
 
 Going live (rebuild) and publishing (git push) stay his, by hand. The repo is mounted at REPO_DIR.
+
+Out loud: improve_start queues a job for the runner service (runner-out/queue), read back first
+and started on his plain yes like a mission (missions.confirms_pending); improve_status says how
+jobs went. run_notifier pushes each finished job to his phone, the tap opening its review card.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict
+
+from accounts import OWNER
+from calendar_tool import TURN
+from tools import ToolResult
 
 REPO = Path(os.getenv("REPO_DIR", "/repo"))
 OUT = REPO / "runner-out"
@@ -29,6 +41,8 @@ GIT_ID = ["-c", "user.name=THURSDAY (approved by Daniel)", "-c", "user.email=run
 PROTECTED = re.compile(r"^(runner/|approvals\.py$|vault\.py$|improvements\.py$|docker-compose\.ya?ml$|Dockerfile|\.env|"
                        r"\.git|\.gitignore$|\.dockerignore$|scripts/improve\.sh$|scripts/deploy_sat\.sh$|brain/|infra/)")
 _ID = re.compile(r"^\d{8}-\d{6}$")
+MAX_QUEUED = 3
+logger = logging.getLogger("thursday.voice")
 
 
 class GateError(Exception):
@@ -120,3 +134,97 @@ def decline(job: str) -> dict:
     report.update(decision="declined", decided_at=datetime.now(timezone.utc).isoformat())
     _save(job, report)
     return report
+
+
+# --- out loud --------------------------------------------------------------------------------
+
+def improve_start(args: Dict[str, Any]) -> ToolResult:
+    import missions  # on first use: the read-back helpers live there, shared with missions and routines
+    turn = TURN.get() or {}
+    if turn.get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="improve_start", error="self_improvement_is_daniels_only")
+    if args.get("confirmed"):
+        held = missions._take_confirmed(turn, "improve_start")
+        if held is None:
+            started = missions._started.get((turn.get("conversation") or "", "improve_start"))
+            if started and time.monotonic() - started[1] <= missions.CONFIRM_TTL_S:
+                return started[0]
+            return ToolResult(ok=False, tool_name="improve_start",
+                              error="not_confirmed: read the task back (call without confirmed) and wait for his yes")
+        args = held
+    task = " ".join(str(args.get("task") or "").split())[:1000]
+    if len(task.split()) < 4:
+        return ToolResult(ok=False, tool_name="improve_start", error="task_too_vague: ask what he wants changed")
+    queue = OUT / "queue"
+    if len(list(queue.glob("*.json"))) >= MAX_QUEUED:
+        return ToolResult(ok=False, tool_name="improve_start", error=f"already_{MAX_QUEUED}_jobs_queued")
+    if not args.get("confirmed"):
+        return missions._read_back(turn, "improve_start", {"task": task, "confirmed": True}, task)
+    queue.mkdir(parents=True, exist_ok=True)
+    job = datetime.now().strftime("%Y%m%d-%H%M%S")
+    while (queue / f"{job}.json").exists() or (OUT / f"{job}.json").exists():
+        time.sleep(1)
+        job = datetime.now().strftime("%Y%m%d-%H%M%S")
+    (queue / f"{job}.json").write_text(json.dumps({"job": job, "task": task, "queued_at": datetime.now(timezone.utc).isoformat()}))
+    logger.info("improvement %s queued: %s", job, task[:120])
+    result = ToolResult(ok=True, tool_name="improve_start", data={
+        "job": job, "status": "STARTED",
+        "note": "Confirm in one short statement, no question: you work on it when the house is quiet and his phone "
+                "gets the change to review. Nothing changes until he approves it."})
+    missions._started[(turn.get("conversation") or "", "improve_start")] = (result, time.monotonic())
+    return result
+
+
+def improve_status(args: Dict[str, Any]) -> ToolResult:
+    if (TURN.get() or {}).get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="improve_status", error="self_improvement_is_daniels_only")
+    queued = [json.loads(p.read_text()) for p in sorted((OUT / "queue").glob("*.json"))] if (OUT / "queue").exists() else []
+    said = {"ready": "waiting for his review on the Agentic page", "no_change": "changed nothing", "failed": "failed",
+            "checks_failed": "its change failed the checks, so nothing was kept"}
+    return ToolResult(ok=True, tool_name="improve_status", data={
+        "queued": [q["task"][:120] for q in queued],
+        "working_now": (OUT / "runner-busy").exists() and time.time() - (OUT / "runner-busy").stat().st_mtime < 120,
+        "recent": [{"task": (j.get("task") or "")[:120], "result": j.get("decision") or said.get(j["status"], j["status"]),
+                    "summary": (j.get("summary") or j.get("error") or "")[:300]} for j in jobs(5)]})
+
+
+async def run_notifier() -> None:
+    """Each finished job, once, to his phone; the tap opens its review card. Jobs finished before
+    this process started were already announced (improve.sh, or the last run)."""
+    import approvals  # on first use
+    started = time.time()
+    while True:
+        try:
+            for path in sorted(OUT.glob("*.json")) if OUT.exists() else []:
+                report = json.loads(path.read_text())
+                if report.get("notified"):
+                    continue
+                if path.stat().st_mtime >= started:
+                    title = "THURSDAY has a change for you to review" if report.get("status") == "ready" \
+                        else f"THURSDAY's improvement job ended: {report.get('status')}"
+                    await asyncio.to_thread(approvals.push, title, (report.get("summary") or report.get("error") or "")[:500],
+                                            click=approvals.link(), tags=("hammer_and_wrench",))
+                    logger.info("improvement %s finished: %s", report.get("job"), report.get("status"))
+                report["notified"] = True
+                path.write_text(json.dumps(report, indent=1))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("improvement notifier")
+        await asyncio.sleep(10)
+
+
+TOOL_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "improve_start",
+        "description": "Change your own code or behavior when he asks you to improve yourself ('make your weather "
+        "answers shorter', 'fix how you say times'). The first call only holds it for his yes (read it back). The "
+        "change is made in a sandbox and waits for his review; nothing changes until he approves it.",
+        "parameters": {"type": "object", "properties": {
+            "task": {"type": "string", "description": "What to change and why, in full, with any example he gave"},
+            "confirmed": {"type": "boolean", "description": "True only right after he said yes to your read-back"}},
+            "required": ["task"]}}},
+    {"type": "function", "function": {
+        "name": "improve_status", "description": "How his self-improvement jobs went: queued, working, waiting for review.",
+        "parameters": {"type": "object", "properties": {}}}},
+]

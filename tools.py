@@ -9,7 +9,7 @@ import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "light_set", "light_status"]
+    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "improve_start", "improve_status", "light_set", "light_status"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -617,6 +617,13 @@ def _lights(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
         return getattr(lights, name)(args)
     return run
 
+def _improvement(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
+    # Imported on first use: improvements imports this module.
+    def run(args: Dict[str, Any]) -> ToolResult:
+        import improvements
+        return getattr(improvements, name)(args)
+    return run
+
 def _notes(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
     # Imported on first use: notes imports this module.
     def run(args: Dict[str, Any]) -> ToolResult:
@@ -651,6 +658,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "approval_list": _approval("approval_list"),
     "approval_decide": _approval("approval_decide"),
     "send_to_phone": _approval("send_to_phone"),
+    **{name: _improvement(name) for name in ("improve_start", "improve_status")},
     "routine_start": _mission("routine_start"),
     "routine_list": _mission("routine_list"),
     "routine_stop": _mission("routine_stop"),

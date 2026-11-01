@@ -39,6 +39,7 @@ import os
 import socket
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
@@ -80,12 +81,35 @@ SHARED_TOOLS = ("web_search", "get_time", "get_weather", "calendar_events", "spo
 
 logger = logging.getLogger("thursday.voice")  # the logger with a handler (voice_ws): lines reach docker logs
 _last_activity = 0.0
+# Shared with the self-improvement runner (runner/agent.py) through files in runner-out/: when
+# anyone last talked (activity), and who holds the GPU (mission-busy, runner-busy). The runner
+# starts a job only when no mission runs; a mission waits for a job that's already running.
+RUNNER_OUT = Path(os.getenv("REPO_DIR", "/repo")) / "runner-out"
+FLAG_FRESH_S = 120  # an older flag is a crashed holder's
+_heartbeat = 0.0
+
+
+def _flag(name: str, on: bool = True) -> None:
+    try:
+        (RUNNER_OUT / name).touch() if on else (RUNNER_OUT / name).unlink(missing_ok=True)
+    except OSError:  # no runner-out (outside the container): nothing to share
+        pass
+
+
+def _runner_busy() -> bool:
+    try:
+        return time.time() - (RUNNER_OUT / "runner-busy").stat().st_mtime < FLAG_FRESH_S
+    except OSError:
+        return False
 
 
 def touch() -> None:
-    """Someone is talking to him: missions stay off the GPU until it's quiet again."""
-    global _last_activity
+    """Someone is talking to him: missions (and the runner) stay off the GPU until it's quiet again."""
+    global _last_activity, _heartbeat
     _last_activity = time.monotonic()
+    if _last_activity - _heartbeat >= 1:  # the runner reads the file's time; once a second is plenty
+        _heartbeat = _last_activity
+        _flag("activity")
 
 
 # --- the voice model's tools -------------------------------------------------
@@ -643,7 +667,8 @@ def _check_abort(mid: str | None) -> None:
 
 
 async def _wait_quiet(mid: str | None = None) -> None:
-    while time.monotonic() - _last_activity < QUIET_S:
+    _flag("mission-busy")
+    while time.monotonic() - _last_activity < QUIET_S or _runner_busy():  # a code job already running goes first
         _check_abort(mid)
         await asyncio.sleep(1)
 
@@ -949,9 +974,12 @@ async def _work() -> None:
                 continue
             mission = queued[-1]
             try:
+                _flag("mission-busy")
                 await _run(http, mission)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.exception("mission %s failed", mission["id"])
                 db.update_mission(mission["id"], status="failed", error=type(exc).__name__, finished_at=now_iso())
+            finally:
+                _flag("mission-busy", False)  # the GPU is the runner's to take

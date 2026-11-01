@@ -50,9 +50,11 @@ async def lifespan(app: FastAPI):
     remembering = asyncio.create_task(run_memory_writer())
     reflecting = asyncio.create_task(run_reflection())
     on_missions = asyncio.create_task(missions.run_worker())
+    on_improvements = asyncio.create_task(improvements.run_notifier())
     asyncio.create_task(warm_phone_disclosure())  # Rocky's call opening, ready before any call
     yield
     on_missions.cancel()
+    on_improvements.cancel()
     scheduler.cancel()
     remembering.cancel()
     reflecting.cancel()

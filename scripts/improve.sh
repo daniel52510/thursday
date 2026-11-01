@@ -10,7 +10,7 @@ task=${1:?usage: scripts/improve.sh "<task>"}
 id=$(date +%Y%m%d-%H%M%S)
 mkdir -p runner-out
 
-docker compose --profile runner run --rm -e JOB_ID="$id" runner "$task"
+docker compose run --rm -e JOB_ID="$id" runner "$task"
 
 report=runner-out/$id.json
 [ -f "$report" ] || { echo "no report: the job crashed (see output above)" >&2; exit 1; }

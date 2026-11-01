@@ -1,6 +1,7 @@
 """THURSDAY's self-improvement runner: one coding job, in a sandbox, ending on a branch for Daniel.
 
-    docker compose --profile runner run --rm -e JOB_ID=<id> runner "<task>"   (scripts/improve.sh does this)
+    docker compose run --rm -e JOB_ID=<id> runner "<task>"   (scripts/improve.sh does this)
+    agent.py --worker   (the runner service: jobs THURSDAY queues in /out/queue, improvements.improve_start)
 
 The repo arrives as its .git folder only, read-only (/repo.git): git never holds .env, brain/ or
 any ignored file, so no secret or memory reaches the sandbox. The job clones it into /work, branches
@@ -8,12 +9,18 @@ thursday/improve-<id> off RUNNER_BASE, and a local model (RUNNER_MODEL, Ollama o
 with a few tools. Protected paths can't be touched. Checks (runner/checks.py) must pass before it
 commits; the commits leave as a git bundle in /out with a JSON report. Nothing is merged, pushed or
 deployed here: that's Daniel's call, after he reads the diff.
+
+It shares the Mac's GPU with the voice and the missions, through files in /out (written by
+missions.py): every model call waits until nobody has talked for QUIET_S (/out/activity) and is
+dropped the moment someone does; a job starts only when no mission is running (/out/mission-busy),
+and while one runs /out/runner-busy tells missions to wait. The time budget counts work, not waiting.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -32,6 +39,8 @@ READ_LINES = 200
 RESULT_CHARS = 6000
 WORK, OUT, SRC = Path("/work"), Path("/out"), "/repo.git"
 BRANCH = f"thursday/improve-{JOB}"
+QUIET_S = 30         # like missions.QUIET_S: nobody has talked for this long
+FRESH_S = 120        # a busy flag older than this is a crashed holder's, not a live one
 
 # What a job may never change: its own sandbox, the approval gate, secrets and deploy config.
 PROTECTED = re.compile(r"^(runner/|approvals\.py$|vault\.py$|improvements\.py$|docker-compose\.ya?ml$|Dockerfile|\.env|\.git|"
@@ -161,11 +170,48 @@ def _trim(messages: list[dict]) -> None:
             m["content"] = m["content"][:500] + " [trimmed]"
 
 
-def _chat(http: httpx.Client, messages: list[dict], tools: list[dict]) -> dict:
-    res = http.post(CHAT_URL, json={"model": MODEL, "messages": messages, "tools": tools, "stream": False, "think": True,
-                                    "keep_alive": "2m", "options": {"num_ctx": NUM_CTX}})
-    res.raise_for_status()
-    return res.json()["message"]
+def _age(name: str) -> float:
+    """Seconds since /out/<name> was last touched (inf when it isn't there)."""
+    try:
+        return time.time() - (OUT / name).stat().st_mtime
+    except OSError:
+        return float("inf")
+
+
+def _flag(name: str, on: bool = True) -> None:
+    try:
+        (OUT / name).touch() if on else (OUT / name).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _chat(http: httpx.Client, messages: list[dict], tools: list[dict]) -> tuple[dict, float]:
+    """One model call: after a quiet spell, streamed, and dropped (then retried) the moment anyone
+    talks, the way missions do. Returns the message and the seconds of actual work."""
+    body = {"model": MODEL, "messages": messages, "tools": tools, "stream": True, "think": True,
+            "keep_alive": "2m", "options": {"num_ctx": NUM_CTX}}
+    while True:
+        while _age("activity") < QUIET_S:
+            time.sleep(1)
+        _flag("runner-busy")
+        started, content, calls, dropped = time.monotonic(), [], [], False
+        with http.stream("POST", CHAT_URL, json=body) as res:
+            res.raise_for_status()
+            for line in res.iter_lines():
+                if _age("activity") < time.monotonic() - started:  # someone talked since this call began
+                    dropped = True
+                    break
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                msg = chunk.get("message") or {}
+                content.append(msg.get("content") or "")
+                calls.extend(msg.get("tool_calls") or [])
+                if chunk.get("done"):
+                    break
+        if not dropped:
+            return {"content": "".join(content), "tool_calls": calls}, time.monotonic() - started
+        print("paused: someone's talking", flush=True)
 
 
 def _report(**fields) -> None:
@@ -180,16 +226,17 @@ def run(task: str) -> None:
     _git("checkout", "-q", "-b", BRANCH)
     base_sha = _git("rev-parse", "HEAD").strip()
     messages = [{"role": "system", "content": _system()}, {"role": "user", "content": f"Task: {task}"}]
-    steps, started, nudges = [], time.monotonic(), 0
+    steps, started, nudges, work = [], time.monotonic(), 0, 0.0
     with httpx.Client(timeout=httpx.Timeout(600, connect=5)) as http:
         while True:
-            over = len(steps) >= MAX_STEPS or time.monotonic() - started > MAX_WORK_S
+            over = len(steps) >= MAX_STEPS or work > MAX_WORK_S
             if over and nudges >= 2:
                 return _report(status="failed", error="out_of_budget", task=task, steps=steps)
             if over:
                 nudges += 1
                 messages.append({"role": "user", "content": "Budget's spent: run_checks if you haven't, then finish."})
-            msg = _chat(http, messages, SCHEMAS)
+            msg, secs = _chat(http, messages, SCHEMAS)
+            work += secs
             calls = msg.get("tool_calls") or []
             messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
             if not calls:
@@ -231,7 +278,40 @@ def _finish(task: str, args: dict, steps: list, base_sha: str, started: float) -
             steps=steps, minutes=round((time.monotonic() - started) / 60, 1))
 
 
+def _fresh_work() -> None:
+    """An empty /work for the next clone."""
+    for p in WORK.iterdir():
+        shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink()
+
+
+def worker() -> None:
+    """The runner service: one queued job at a time, oldest first, never alongside a mission."""
+    global JOB, BRANCH
+    queue = OUT / "queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    print(f"runner worker: {MODEL}, base {BASE}", flush=True)
+    while True:
+        jobs = sorted(queue.glob("*.json"))
+        if not jobs or _age("mission-busy") < FRESH_S:
+            time.sleep(3)
+            continue
+        path, job = jobs[0], {}
+        try:
+            job = json.loads(path.read_text())
+            JOB, BRANCH = job["job"], f"thursday/improve-{job['job']}"
+            path.unlink()
+            _fresh_work()
+            print(f"job {JOB}: {job['task'][:120]}", flush=True)
+            run(job["task"])
+        except Exception as exc:  # one bad job never stops the worker
+            _report(status="failed", error=f"{type(exc).__name__}: {exc}"[:300], task=str(job.get("task", "")))
+        finally:
+            _flag("runner-busy", False)
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--worker"]:
+        worker()
     if len(sys.argv) < 2 or not sys.argv[1].strip():
-        sys.exit("usage: agent.py '<task>'")
+        sys.exit("usage: agent.py '<task>' | agent.py --worker")
     run(sys.argv[1].strip())
