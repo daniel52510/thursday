@@ -6,6 +6,8 @@ websockets==17.1
 pydantic==2.12.5
 httpx==0.28.1
 requests==2.32.5
+# YouTube Music search and radio, signed out (music.py)
+ytmusicapi==1.12.3
 numpy==2.4.2
 onnxruntime==1.31.0
 tzdata==2025.3

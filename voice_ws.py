@@ -48,6 +48,7 @@ from fastapi import APIRouter, WebSocket, status
 import accounts
 import interject
 import missions
+import music
 import rocky_voice
 from agent_stream import VOICE_TAG, record_cut_off, strip_voice_tags, stream_prompt
 from vad import FRAME_BYTES, FRAME_MS, SAMPLE_RATE, BargeIn, Endpointer, VADConfig
@@ -634,9 +635,14 @@ class Session:
         self.heard_at = 0.0  # last time the user said something; alarms check on them instead of re-waking
 
     async def set_state(self, state: str) -> None:
-        self.state = state
+        was, self.state = self.state, state
         if state != "idle":
             missions.touch()  # keep the GPU for the voice while anyone's mid-conversation
+        # Music down while anyone talks to him, back after (music.py); off the event loop: it's HTTP.
+        if was == "idle" and state != "idle":
+            self._music_task = asyncio.create_task(asyncio.to_thread(music.duck))  # kept: unreferenced tasks can vanish
+        elif state == "idle" and was != "idle":
+            self._music_task = asyncio.create_task(asyncio.to_thread(music.unduck))
         if state == "idle":
             self.idle_since = time.monotonic()
         await self.ws.send_json({"type": "state", "state": state})
