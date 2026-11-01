@@ -231,6 +231,7 @@ class Player:
     RATE = 24000                 # the replies' rate; other sounds are resampled to it
     BLOCK = 480                  # 20 ms
     BUFFER_US = 100_000          # aplay's ALSA buffer
+    FADE = 96                    # 4 ms: the ramp at either side of a gap (_soften)
     # Samples between the write and the speaker: pipe + ALSA buffer + aplay's period in hand.
     # Placed 40 ms early on purpose: an early reference is absorbed by the filter, a late one isn't.
     PIPELINE_S = (2048 + BUFFER_US * RATE // 1_000_000 + BLOCK) / RATE - 0.04
@@ -244,6 +245,7 @@ class Player:
         self._written = 0             # samples written to this aplay
         self._anchors: deque = deque(maxlen=250)  # write time - samples/RATE, last ~5 s
         self._audible_until = 0.0     # when the last real (non-silent) block leaves the speaker
+        self._dry = True              # the last block written ended in silence: the next one fades in
         self._ref_base: int | None = None  # mic sample index where this aplay's sample 0 plays
         self.gain = 1.0  # for the current reply stream
         self.rate = self.RATE  # of the current reply stream
@@ -280,7 +282,12 @@ class Player:
                     self._pending += self._loop
                 block = bytes(self._pending[:self.BLOCK * 2])
                 del self._pending[:self.BLOCK * 2]
+                runs_dry = not self._pending  # nothing after this block (yet): it's the edge of a gap
             real = bool(block)
+            if real:
+                block = self._soften(block, runs_dry)
+            else:
+                self._dry = True
             block = block.ljust(self.BLOCK * 2, b"\0")
             proc = self._proc
             try:
@@ -301,6 +308,20 @@ class Player:
                 self._audible_until = at + self.BLOCK / self.RATE + 0.04
                 if self.ref and self._ref_base is not None:
                     self.ref.add_at(block, self.RATE, self._ref_base + first * SAMPLE_RATE // self.RATE)
+
+    def _soften(self, block: bytes, runs_dry: bool) -> bytes:
+        """No hard edges at a gap. The voice's stream can arrive late (its start and sentence breaks run
+        slower than real time), and the speaker then went from mid-waveform to zeros and back: a click
+        each time. Now the last 4 ms before a gap fade out and the first 4 ms after one fade in. A gap
+        that closes within the same 20 ms only dips for 4 ms."""
+        x = np.frombuffer(block, dtype=np.int16).astype(np.float32)
+        n = min(self.FADE, len(x))
+        if self._dry:
+            x[:n] *= np.linspace(0.0, 1.0, n, dtype=np.float32)
+        if runs_dry:
+            x[-n:] *= np.linspace(1.0, 0.0, n, dtype=np.float32)
+        self._dry = runs_dry
+        return x.astype(np.int16).tobytes()
 
     def _place(self, at: float, first: int) -> None:
         """Line this aplay's samples up with the mic's once, after the pipeline has filled; from then on

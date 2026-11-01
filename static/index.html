@@ -472,6 +472,14 @@
   .ag-watch .found { display: block; margin-top: 4px; font-size: 13.5px; color: var(--text-muted); }
   .ag-watch .ag-stop { flex: none; }
   .ag-watch.off .g { color: var(--text-faint); }
+  /* Changes to review (improvements.py): one card per self-improvement job, diff on demand. */
+  .ag-changes { align-self: stretch; display: grid; gap: 12px; }
+  .ag-changes .ag-decision { margin: 0; }
+  .ag-changes .done { font: 11px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); margin: 0; }
+  .ag-changes .cmd { font: 12.5px/1.5 var(--mono); color: var(--text-muted); margin: 0; overflow-wrap: anywhere; }
+  .ag-diff { background: var(--code-bg); color: #E6E2D8; border-radius: 14px; padding: 12px 14px; margin: 4px 0 0; max-height: 60vh;
+             overflow: auto; font: 12px/1.55 var(--mono); white-space: pre; }
+  .ag-diff .add { color: #7FD69A; } .ag-diff .del { color: #FF8A7A; } .ag-diff .hunk { color: #8FB0FF; } .ag-diff .meta { color: #A8A396; }
   @media (max-width: 640px) { .ag-title { font-size: 26px; } .ag-col { padding: 12px 16px 56px; } .ag-report { padding: 16px; } }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -602,6 +610,8 @@
           <button type="submit" id="agLaunch">Launch</button>
         </form>
         <p class="ag-note" id="agNote">He works on it in the background and pauses while you talk to him.</p>
+        <h2 class="ag-h" id="agChangeH" hidden>Changes to review</h2>
+        <div class="ag-changes" id="agChanges"></div>
         <h2 class="ag-h" id="agWatchH" hidden>Watching</h2>
         <ul class="ag-list" id="agWatches"></ul>
         <h2 class="ag-h" id="agRoutineH" hidden>Routines</h2>
@@ -2164,7 +2174,7 @@ function renderHome() {
     b.onclick = () => openMission(x.id);
     list.append(el("li", {}, b));
   }
-  renderWatches(); renderRoutines();
+  renderChanges(); renderWatches(); renderRoutines();
 }
 
 function renderDetail(m) {
@@ -2274,6 +2284,59 @@ function renderWatches() {
   }
 }
 
+// Changes to review (improvements.py): THURSDAY's self-improvement jobs. Waiting ones get Review /
+// Approve / Decline; Approve merges into his checkout (the server refuses over uncommitted work).
+// Going live and pushing stay his, by hand: the card says how.
+function renderChanges() {
+  const box = $("agChanges"); box.replaceChildren();
+  const jobs = (AG.changes || []).filter((j) => j.status === "ready" || j.decision).slice(0, 6);
+  $("agChangeH").hidden = !jobs.length;
+  for (const j of jobs) {
+    const waiting = j.status === "ready" && !j.decision;
+    const files = (j.files || []).join(", ");
+    const card = el("div", { className: "ag-decision", role: "group", ariaLabel: "Change to review" },
+      el("div", { className: "eyebrow" }, el("span", { textContent: waiting ? "Change for your review" : j.decision === "approved" ? "Merged" : "Declined" }),
+        el("span", { textContent: j.job })),
+      el("p", { className: "q", textContent: j.title || j.task }),
+      el("p", { className: "why", textContent: j.summary || "" }),
+      el("p", { className: "lock", textContent: `${files}${j.model ? ` · ${j.model}` : ""}${j.minutes != null ? ` · ${j.minutes} min` : ""}` }));
+    if (j.decision === "approved") {
+      card.append(el("p", { className: "cmd", textContent: `Merged as ${j.merged}. Live after: docker compose up -d --build thursday-core · publish: git push` }));
+    }
+    const note = el("p", { className: "cmd", hidden: true });
+    const diff = el("pre", { className: "ag-diff", hidden: true });
+    if (waiting) {
+      const review = el("button", { className: "no", textContent: "Review diff" });
+      const yes = el("button", { className: "yes", textContent: "Approve & merge" });
+      const no = el("button", { className: "no", textContent: "Decline" });
+      review.onclick = async () => {
+        if (!diff.hidden) { diff.hidden = true; review.textContent = "Review diff"; return; }
+        review.disabled = true;
+        try {
+          const r = await call(`/api/improvements/${encodeURIComponent(j.job)}`);
+          diff.replaceChildren(...(r.diff || "No changes.").split("\n").map((line) => el("span", {
+            className: line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ") ? "meta"
+              : line.startsWith("@@") ? "hunk" : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "",
+            textContent: line + "\n" })));
+          if (r.protected?.length) { note.hidden = false; note.textContent = `Touches protected files: ${r.protected.join(", ")}. Decline it.`; }
+          diff.hidden = false; review.textContent = "Hide diff";
+        } catch (e) { note.hidden = false; note.textContent = e.message; }
+        review.disabled = false;
+      };
+      const decide = async (verb) => {
+        yes.disabled = no.disabled = true;
+        try { await call(`/api/improvements/${encodeURIComponent(j.job)}/${verb}`, { method: "POST" }); refreshMissions(); }
+        catch (e) { note.hidden = false; note.textContent = e.message; yes.disabled = no.disabled = false; }
+      };
+      yes.onclick = () => decide("approve");
+      no.onclick = () => decide("decline");
+      card.append(el("div", { className: "btns" }, review, yes, no));
+    }
+    card.append(note, diff);
+    box.append(card);
+  }
+}
+
 // Routines (missions.routine_start): a mission on a schedule, reported every run. Same rows as watches.
 function renderRoutines() {
   const box = $("agRoutines"); box.replaceChildren();
@@ -2299,12 +2362,13 @@ async function refreshMissions() {
   clearTimeout(AG.timer);
   if (!AG.open) return;
   try {
-    const [mres, wres, ares, rres] = await Promise.all([api("/api/missions"), api("/api/watches"), api("/api/approvals"),
-                                                        api("/api/routines")]);
+    const [mres, wres, ares, rres, cres] = await Promise.all([api("/api/missions"), api("/api/watches"), api("/api/approvals"),
+                                                              api("/api/routines"), api("/api/improvements")]);
     if (mres.ok) AG.missions = await mres.json();
     if (wres.ok) AG.watches = await wres.json();
     if (ares.ok) AG.approvals = await ares.json();
     if (rres.ok) AG.routines = await rres.json();
+    if (cres.ok) AG.changes = await cres.json();
     render();
   } catch {}
   const busy = AG.missions.some(isLive);

@@ -23,3 +23,6 @@ wake-data/
 .claude/
 infra/
 rocky_preview/
+
+runner-out/
+runner/

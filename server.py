@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 import accounts
 import approvals
+import improvements
 import calendar_tool
 import missions
 import vault
@@ -603,6 +604,30 @@ def stop_watch(watch_id: str, user: dict = Depends(owner_only)):
         raise HTTPException(status_code=404, detail="watch not found")
     db.update_watch(watch_id, status="stopped")
     return db.get_watch(watch_id, user["id"])
+
+
+@app.get("/api/improvements")
+def list_improvements(user: dict = Depends(owner_only)):
+    return improvements.jobs()
+
+
+@app.get("/api/improvements/{job}")
+def review_improvement(job: str, user: dict = Depends(owner_only)):
+    try:
+        return improvements.review(job)
+    except improvements.GateError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/improvements/{job}/{answer}")
+async def decide_improvement(job: str, answer: str, user: dict = Depends(owner_only)):
+    """His Approve merges the job's branch into his checkout (improvements.py says when it won't)."""
+    if answer not in ("approve", "decline"):
+        raise HTTPException(status_code=404, detail="approve or decline")
+    try:
+        return await asyncio.to_thread(improvements.approve if answer == "approve" else improvements.decline, job)
+    except improvements.GateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @app.get("/api/routines")

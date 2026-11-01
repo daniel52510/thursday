@@ -34,6 +34,9 @@ services:
       # The vault key (vault.py): outside the repo and the image, read-only. Create it first
       # (32 random bytes, base64) or Docker makes a directory here and the vault stays off.
       - ${HOME}/.config/thursday/master.key:/run/secrets/thursday_master_key:ro
+      # The approval gate (improvements.py): reads runner-out/ and, on his Approve, merges the
+      # reviewed branch into this checkout. It refuses when the checkout has uncommitted work.
+      - .:/repo
     ports:
       - "8000:8000"
       # Plain http://thursday.local (no port) on the LAN. Same app, same login.
@@ -84,6 +87,26 @@ services:
     volumes:
       - ntfy-cache:/var/cache/ntfy
     restart: unless-stopped
+  # Self-improvement jobs (runner/agent.py), only when started: scripts/improve.sh "task".
+  # It sees the repo's .git read-only (never .env, brain/ or ignored files) and writes only
+  # runner-out/. No env_file, no Docker socket, capped CPU and memory.
+  runner:
+    profiles: ["runner"]
+    build: ./runner
+    image: thursday-runner:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      OLLAMA_URL: http://host.docker.internal:11434
+      RUNNER_MODEL: ${RUNNER_MODEL:-gemma4:31b}
+      RUNNER_BASE: ${RUNNER_BASE:-container-branch}
+    volumes:
+      - ./.git:/repo.git:ro
+      - ./runner-out:/out
+    cpus: 2
+    mem_limit: 2g
+    security_opt:
+      - no-new-privileges:true
   searxng:
     image: searxng/searxng:latest
     container_name: searxng

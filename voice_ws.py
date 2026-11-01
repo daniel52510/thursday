@@ -158,6 +158,11 @@ TTS_TIMEOUT = httpx.Timeout(60, connect=5)
 TTS_CAPS_TTL_S = 30
 STREAM_MIN_BYTES = 7680  # 160 ms of 24 kHz int16: the smallest WAV we forward
 STREAM_FIRST_BYTES = 3840  # 80 ms: the first one goes out sooner
+# A reply's first WAV waits until this much audio is ready. Orpheus's stream starts slower than real
+# time (and stalls after a short opening sentence like "On it."), so an 80 ms start ran the satellite
+# dry within ~110 ms on nearly every reply (measured 2026-11-01): a stutter. Costs about this much
+# extra time to first audio, on a reply's first piece only.
+PREROLL_MS = int(os.getenv("VOICE_PREROLL_MS", "0"))
 ROCKY_FEED_BYTES = 3840  # Rocky reprocesses the piece every 80 ms of new audio
 _tts_caps = {"at": 0.0, "stream": False, "rate": 24000, "engine": ""}
 
@@ -555,7 +560,7 @@ async def _tts_streams(http: httpx.AsyncClient) -> bool:
     return _tts_caps["stream"]
 
 
-async def _tts_stream(http: httpx.AsyncClient, text: str):
+async def _tts_stream(http: httpx.AsyncClient, text: str, first_bytes: int = STREAM_FIRST_BYTES):
     """Yield one piece as WAVs while the server is still generating it, in Rocky's voice:
     rocky_voice.Stream processes as audio arrives (bit-identical to processing the whole piece)
     and holds back only its filters' look-ahead. The first WAV goes out at STREAM_FIRST_BYTES,
@@ -575,7 +580,7 @@ async def _tts_stream(http: httpx.AsyncClient, text: str):
                 cut = len(buf) - len(buf) % 2  # whole int16 samples only
                 ready += await asyncio.to_thread(rocky.feed, buf[:cut])
                 buf = buf[cut:]
-                if len(ready) >= (STREAM_FIRST_BYTES if first else STREAM_MIN_BYTES):
+                if len(ready) >= (first_bytes if first else STREAM_MIN_BYTES):
                     yield _pcm_to_wav(ready, rate)
                     ready, first = b"", False
         if len(buf) >= 2:
@@ -1077,7 +1082,10 @@ class Session:
                         if beat:
                             await self._send_audio(_pcm_to_wav(bytes(_tts_caps["rate"] * BEAT_MS // 1000 * 2),
                                                                _tts_caps["rate"]))
-                        async for audio in _tts_stream(self.http, text):
+                        # The reply's first audio waits for PREROLL_MS of it: see PREROLL_MS.
+                        first_bytes = max(STREAM_FIRST_BYTES, _tts_caps["rate"] * 2 * PREROLL_MS // 1000) \
+                            if sent == 0 else STREAM_FIRST_BYTES
+                        async for audio in _tts_stream(self.http, text, first_bytes):
                             audio_s += _wav_seconds(audio)
                             await send(audio, started, seg)
                         seg["done"] = True

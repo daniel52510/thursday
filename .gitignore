@@ -63,3 +63,6 @@ crash.log
 .claude/
 *.tfvars
 rocky_preview/
+
+# Self-improvement job output (scripts/improve.sh)
+runner-out/
