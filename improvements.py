@@ -37,6 +37,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+import httpx
 from typing import Any, Dict
 
 from accounts import OWNER
