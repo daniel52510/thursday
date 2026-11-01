@@ -1,0 +1,3 @@
+# The deployer image builds from the repo root: only its script gets in.
+*
+!deploy/deployer.sh

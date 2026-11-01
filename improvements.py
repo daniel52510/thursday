@@ -137,6 +137,30 @@ def approve(job: str) -> dict:
     return report
 
 
+def deploy_request(job: str) -> dict:
+    """His Deploy on a merged change: a request for the deployer (deploy/deployer.sh), which tests,
+    rebuilds, checks health and rolls back on its own. One at a time."""
+    report = _report(job)
+    if report.get("decision") != "approved":
+        raise GateError("only a merged change can be deployed")
+    state = deploy_status()
+    if state.get("state") in ("requested", "testing", "building") or (OUT / "deploy" / "request.json").exists():
+        raise GateError("a deploy is already running")
+    (OUT / "deploy").mkdir(parents=True, exist_ok=True)
+    (OUT / "deploy" / "request.json").write_text(json.dumps({"job": job, "at": datetime.now(timezone.utc).isoformat()}))
+    (OUT / "deploy" / "status.json").write_text(json.dumps({"state": "requested", "detail": "waiting for the deployer",
+                                                            "job": job, "at": datetime.now(timezone.utc).isoformat()}))
+    logger.info("deploy of %s requested", job)
+    return deploy_status()
+
+
+def deploy_status() -> dict:
+    try:
+        return json.loads((OUT / "deploy" / "status.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
 def decline(job: str) -> dict:
     report = _report(job)
     if report.get("decision"):
@@ -237,8 +261,17 @@ async def run_notifier() -> None:
     this process started were already announced (improve.sh, or the last run)."""
     import approvals  # on first use
     started = time.time()
+    deployed = (deploy_status().get("state"), deploy_status().get("at"))
     while True:
         try:
+            now = deploy_status()
+            if (now.get("state"), now.get("at")) != deployed:  # a deploy moved on: his phone hears the outcome
+                deployed = (now.get("state"), now.get("at"))
+                if now.get("state") in ("live", "rolled_back", "refused", "broken"):
+                    title = {"live": "THURSDAY's change is live", "rolled_back": "Deploy rolled back",
+                             "refused": "Deploy refused", "broken": "Deploy broke: check THURSDAY"}[now["state"]]
+                    await asyncio.to_thread(approvals.push, title, str(now.get("detail") or "")[:300], click=approvals.link(),
+                                            tags=("rocket",) if now["state"] == "live" else ("warning",))
             for path in sorted(OUT.glob("*.json")) if OUT.exists() else []:
                 report = json.loads(path.read_text())
                 if report.get("notified"):

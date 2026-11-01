@@ -6,7 +6,8 @@
 2. Rocky's grammar (eridian.py, pure stdlib) still does what Daniel approved: questions end
    ", question?", exclamations ", exclamation!", statements stay bare, a confirmation turn asks
    nothing. Add a case here whenever he approves a new rule.
-The sandbox has no FastAPI, Ollama or devices, so nothing that needs them runs here.
+3. The test suite (tests/, pytest): the logic that has broken before. The image has core's pinned
+   dependencies but no network, Ollama or devices; the tests need none of them.
 """
 from __future__ import annotations
 
@@ -54,6 +55,14 @@ def main(root: Path) -> int:
             failed += 1
             print(f"ROCKY FAIL {text!r}: want {want!r}, got {got!r}" + (f", streamed {streamed!r}" if streamed != got else ""))
     print(f"rocky grammar: {len(ROCKY)} cases, {'all pass' if not failed else 'see failures above'}")
+    if (root / "tests").is_dir():
+        res = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], cwd=root,
+                             capture_output=True, text=True, timeout=600)
+        tail = (res.stdout + res.stderr).strip().splitlines()
+        print("tests: " + (tail[-1] if tail else "no output"))
+        if res.returncode:
+            failed += 1
+            print("\n".join(line for line in tail if line.startswith(("FAILED", "ERROR", "E ")))[-2500:])
     return 1 if failed else 0
 
 

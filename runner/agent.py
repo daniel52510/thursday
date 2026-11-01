@@ -17,6 +17,7 @@ and while one runs /out/runner-busy tells missions to wait. The time budget coun
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -85,8 +86,9 @@ def read_file(args: dict) -> dict:
 
 
 def search(args: dict) -> dict:
-    res = subprocess.run(["git", "grep", "-n", "-I", "-E", str(args["pattern"]), "--", _rel(_path(args.get("dir", ".")))],
-                         cwd=WORK, capture_output=True, text=True)
+    context = max(0, min(5, int(args.get("context") or 0)))  # lines around each hit
+    res = subprocess.run(["git", "grep", "-n", "-I", "-E", *(["-C", str(context)] if context else []), str(args["pattern"]),
+                          "--", _rel(_path(args.get("dir", ".")))], cwd=WORK, capture_output=True, text=True)
     hits = res.stdout.splitlines()
     return {"hits": [h[:200] for h in hits[:60]], "more": max(0, len(hits) - 60)}
 
@@ -107,6 +109,43 @@ def edit_file(args: dict) -> dict:
     return {"ok": True, "path": _rel(p)}
 
 
+def edit_lines(args: dict) -> dict:
+    """Replace lines start..end (inclusive, as read_file numbers them): for when old text won't match."""
+    p = _writable(args["path"])
+    lines = p.read_text().splitlines(keepends=True)
+    start, end = int(args["start"]), int(args["end"])
+    if not 1 <= start <= end <= len(lines):
+        return {"ok": False, "error": f"lines {start}-{end} aren't in the file (it has {len(lines)})"}
+    new = str(args["new"])
+    lines[start - 1:end] = [new if new.endswith("\n") or not new else new + "\n"]
+    p.write_text("".join(lines))
+    after = p.read_text().splitlines()
+    lo = max(0, start - 3)
+    return {"ok": True, "path": _rel(p), "now": "\n".join(f"{lo + i + 1}\t{x}" for i, x in enumerate(after[lo:start + 3 + new.count("\n")]))}
+
+
+def show_diff(_: dict | None = None) -> dict:
+    return {"diff": _git("diff")[:6000] or "no changes yet"}
+
+
+def undo_file(args: dict) -> dict:
+    """Put a file back as it was (a new file is removed)."""
+    p = _writable(args["path"])
+    if _git("ls-files", "--", _rel(p)).strip():
+        _git("checkout", "--", _rel(p))
+    elif p.exists():
+        p.unlink()
+    return {"ok": True, "path": _rel(p)}
+
+
+def run_tests(args: dict) -> dict:
+    """Some of the tests, fast: pytest -k <match> (all without match)."""
+    match = str(args.get("match") or "")
+    res = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *(["-k", match] if match else []),
+                          "tests"], cwd=WORK, capture_output=True, text=True, timeout=300)
+    return {"passed": res.returncode in (0, 5), "output": (res.stdout + res.stderr)[-2500:]}
+
+
 def create_file(args: dict) -> dict:
     p = _writable(args["path"])
     if p.exists():
@@ -122,6 +161,7 @@ def run_checks(_: dict | None = None) -> dict:
 
 
 TOOLS = {"list_files": list_files, "read_file": read_file, "search": search, "edit_file": edit_file,
+         "edit_lines": edit_lines, "show_diff": show_diff, "undo_file": undo_file, "run_tests": run_tests,
          "create_file": create_file, "run_checks": run_checks}
 
 
@@ -135,8 +175,14 @@ SCHEMAS = [
     _schema("list_files", "Tracked files under a folder.", {"dir": _S}, []),
     _schema("read_file", f"Read {READ_LINES} lines of a file, numbered, from start (default 1).",
             {"path": _S, "start": {"type": "integer"}}, ["path"]),
-    _schema("search", "git grep -E across the repo (or a folder): find where something is.", {"pattern": _S, "dir": _S},
-            ["pattern"]),
+    _schema("search", "git grep -E across the repo (or a folder): find where something is.",
+            {"pattern": _S, "dir": _S, "context": {"type": "integer", "description": "Lines around each hit, 0-5"}}, ["pattern"]),
+    _schema("edit_lines", "Replace lines start..end (inclusive, numbered as read_file shows) with new text. Use it when "
+            "edit_file's old text won't match; read the lines first.",
+            {"path": _S, "start": {"type": "integer"}, "end": {"type": "integer"}, "new": _S}, ["path", "start", "end", "new"]),
+    _schema("show_diff", "Your changes so far, as a diff.", {}, []),
+    _schema("undo_file", "Put a file back as it was before your changes.", {"path": _S}, ["path"]),
+    _schema("run_tests", "Run some tests fast (pytest -k match), or all of them without match.", {"match": _S}, []),
     _schema("edit_file", "Replace old with new in a file. old must match the file exactly once, whitespace included.",
             {"path": _S, "old": _S, "new": _S}, ["path", "old", "new"]),
     _schema("create_file", "Create a new file.", {"path": _S, "content": _S}, ["path", "content"]),
@@ -149,14 +195,44 @@ SCHEMAS = [
 
 # Review mode (improvements.code_review_start): read the code, change nothing, report findings.
 READ_ONLY = ("list_files", "read_file", "search")
+CRITIC = """You review one change to THURSDAY's code before it's committed. You see the task and the diff only.
+Reply JSON only: {"ok": true} if the diff does exactly what the task asks, no more; or {"ok": false, "problems": ["..."]}
+listing what's wrong: the task not (fully) done, a behavior it breaks, changes the task didn't ask for, a style that
+doesn't match the code around it, a bug fix without a test that would have caught it. Be strict but concrete."""
+VERIFY = """You check findings from a code review against the code they quote. For each finding, decide whether the
+problem is real given that code: the code must actually do what the finding says goes wrong, for a concrete input.
+Drop anything that depends on a guess about what a library returns, or that the code already handles.
+Reply JSON only: {"keep": [indexes of the findings that are real]}."""
+
+
+def _code_map() -> str:
+    """Each Python file and the first line of what it says it does: where to look first."""
+    rows = []
+    for p in sorted(WORK.glob("*.py")) + sorted(WORK.glob("satellite/*.py")) + sorted(WORK.glob("tests/*.py")):
+        try:
+            doc = (ast.get_docstring(ast.parse(p.read_text())) or "").strip().splitlines()
+        except (SyntaxError, OSError):
+            continue
+        rows.append(f"- {_rel(p)}: {doc[0][:130] if doc else ''}")
+    return "\n".join(rows)
+
+
+def _json(text: str) -> dict:
+    text = (text or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    try:
+        return json.loads(text[start:end + 1]) if start >= 0 else {}
+    except ValueError:
+        return {}
 REVIEW_SCHEMAS = [t for t in SCHEMAS if t["function"]["name"] in READ_ONLY] + [_schema(
     "report_review", "Done reading: your findings, most serious first (none is a fine answer).",
     {"summary": {"type": "string", "description": "2-3 sentences: what you looked at and the overall state"},
      "findings": {"type": "array", "items": {"type": "object", "properties": {
          "file": _S, "line": {"type": "integer"}, "severity": {"type": "string", "enum": ["high", "medium", "low"]},
          "problem": {"type": "string", "description": "What goes wrong, for whom, when: a concrete input or situation"},
+         "quote": {"type": "string", "description": "The exact line(s) of code the problem is in, copied from read_file"},
          "fix": {"type": "string", "description": "The smallest change that would fix it"}},
-         "required": ["file", "severity", "problem", "fix"]}}},
+         "required": ["file", "severity", "problem", "fix", "quote"]}}},
     ["summary", "findings"])]
 
 
@@ -169,6 +245,7 @@ How to work:
 - Read the actual code (search, then read_file around the hits). Only report what you saw in the code: a file and line, and a concrete situation where it goes wrong.
 - Real bugs over style: wrong behavior, crashes, races, a request that can silently do nothing, a claim made without the action, security holes, latency costs. Skip naming, formatting and taste.
 - At most 6 findings, most serious first. Fewer good findings beat many weak ones; none is fine if you found none.
+- Quote the exact code line(s) for each finding. Don't guess what a library returns: if a finding depends on that, leave it out.
 - You have {MAX_STEPS} tool calls. Then call report_review once.
 
 The project's guide (CLAUDE.md):
@@ -180,12 +257,17 @@ def _system() -> str:
     return f"""You are THURSDAY's engineer, improving THURSDAY's own code in a sandbox. Daniel reviews every change before it goes anywhere; nothing you do here is live.
 
 How to work:
-- Find the code first (search, then read_file around the hits). Read before you edit; edit_file needs the exact current text.
+- Start with a short plan in your first reply's text (2-4 lines: which files, what change, how you'll check it), then use the tools.
+- Find the code first (the map below says what each file does; search, then read_file around the hits). Read before you edit; edit_file needs the exact current text (edit_lines when it won't match).
 - Make the smallest change that does the task. Match the surrounding style, comments and naming. Don't refactor or touch unrelated code.
 - Protected files (runner/, approvals.py, vault.py, docker-compose, Dockerfiles, .env, .gitignore, .dockerignore, infra/, deploy scripts) can't be changed. If the task needs one, say so in finish without changing it.
-- After your edits, run_checks. If they fail, fix what you broke. Then call finish once.
+- A bug fix comes with a test in tests/ that fails without your fix (run_tests to see it pass). Match the tests already there.
+- After your edits, show_diff to check them, then run_checks. If they fail, fix what you broke. Then call finish.
 - If the task is unclear or can't be done safely, change nothing and call finish explaining why.
 - You have {MAX_STEPS} tool calls and about {MAX_WORK_S // 60} minutes.
+
+The code (file: what it does):
+{_code_map()}
 
 The project's guide (CLAUDE.md):
 {guide}"""
@@ -259,7 +341,7 @@ def run(task: str, kind: str = "change") -> None:
     schemas = REVIEW_SCHEMAS if review else SCHEMAS
     messages = [{"role": "system", "content": _review_system() if review else _system()},
                 {"role": "user", "content": f"{'Review' if review else 'Task'}: {task}"}]
-    steps, started, nudges, work = [], time.monotonic(), 0, 0.0
+    steps, started, nudges, work, rounds, critiqued = [], time.monotonic(), 0, 0.0, 0, False
     with httpx.Client(timeout=httpx.Timeout(600, connect=5)) as http:
         while True:
             over = len(steps) >= MAX_STEPS or work > MAX_WORK_S
@@ -283,9 +365,33 @@ def run(task: str, kind: str = "change") -> None:
             for call in calls:
                 name, args = call["function"]["name"], call["function"].get("arguments") or {}
                 if name == "finish" and not review:
+                    # Our gate, not the model's word: checks first, then one review of the diff by a fresh pass.
+                    # What fails goes back to it to fix (twice at most) instead of ending the job.
+                    back = None
+                    if _git("status", "--porcelain").strip() and rounds < 2:
+                        checks = run_checks()
+                        if not checks["passed"]:
+                            back = f"Checks failed:\n{checks['output'][-1500:]}\nFix it, then call finish again."
+                        elif not critiqued:
+                            critiqued = True
+                            verdict, secs = _chat(http, [{"role": "system", "content": CRITIC}, {"role": "user", "content":
+                                                  f"Task: {task}\n\nDiff:\n{_git('diff')[:8000]}"}], [])
+                            work += secs
+                            v = _json(verdict.get("content"))
+                            if v.get("ok") is False and v.get("problems"):
+                                back = ("A review of your diff found:\n- " + "\n- ".join(map(str, v["problems"][:5])) +
+                                        "\nFix what's right about it (or explain in finish why not), then call finish again.")
+                    if back:
+                        rounds += 1
+                        steps.append({"tool": "finish", "args": {"sent_back": back[:120]}, "ok": False})
+                        print(f"finish sent back: {back[:120]}", flush=True)
+                        messages.append({"role": "tool", "tool_name": "finish", "content": json.dumps({"ok": False, "error": back})})
+                        continue
                     return _finish(task, args, steps, base_sha, started)
                 if name == "report_review" and review:
                     findings = [f for f in (args.get("findings") or []) if isinstance(f, dict) and f.get("problem")][:6]
+                    findings, secs = _verify_findings(http, findings)
+                    work += secs
                     return _report(status="review_ready", kind="review", task=task, summary=str(args.get("summary") or ""),
                                    findings=findings, steps=steps, minutes=round((time.monotonic() - started) / 60, 1))
                 if review and name not in READ_ONLY:
@@ -302,6 +408,38 @@ def run(task: str, kind: str = "change") -> None:
                 messages.append({"role": "tool", "tool_name": name,
                                  "content": json.dumps(result, ensure_ascii=False)[:RESULT_CHARS]})
             _trim(messages)
+
+
+def _quoted(f: dict) -> str | None:
+    """The code around a finding's quote, or None when the quote isn't in that file (a misread)."""
+    try:
+        text = _path(str(f.get("file") or "")).read_text()
+    except (OSError, ValueError):
+        return None
+    squash = lambda t: " ".join(t.split())
+    quote = squash(str(f.get("quote") or ""))
+    lines = text.splitlines()
+    for i in range(len(lines)):
+        if quote and quote[:80] in squash(" ".join(lines[i:i + 6])):
+            return "\n".join(f"{n + 1}\t{x}" for n, x in enumerate(lines[max(0, i - 8):i + 14], start=max(0, i - 8)))
+    return None
+
+
+def _verify_findings(http: httpx.Client, findings: list[dict]) -> tuple[list[dict], float]:
+    """Keep only findings whose quote is really in the file and that a second look agrees are real."""
+    quoted = [(f, code) for f in findings if (code := _quoted(f))]
+    if len(quoted) < len(findings):
+        print(f"review: dropped {len(findings) - len(quoted)} finding(s) whose quote isn't in the file", flush=True)
+    if not quoted:
+        return [], 0.0
+    shown = "\n\n".join(f"[{i}] {f.get('file')}: {f.get('problem')}\nCode:\n{code}" for i, (f, code) in enumerate(quoted))
+    verdict, secs = _chat(http, [{"role": "system", "content": VERIFY}, {"role": "user", "content": shown[:12000]}], [])
+    keep = _json(verdict.get("content")).get("keep")
+    if not isinstance(keep, list):
+        return [f for f, _ in quoted], secs  # no verdict: keep what's quoted
+    kept = [f for i, (f, _) in enumerate(quoted) if i in keep]
+    print(f"review: second look kept {len(kept)} of {len(quoted)}", flush=True)
+    return kept, secs
 
 
 def _finish(task: str, args: dict, steps: list, base_sha: str, started: float) -> None:

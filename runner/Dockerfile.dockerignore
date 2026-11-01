@@ -1,0 +1,6 @@
+# The runner image builds from the repo root: only these get in (never .env, brain/, keys).
+*
+!requirements.txt
+!requirements-test.txt
+!runner/agent.py
+!runner/checks.py

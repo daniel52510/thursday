@@ -109,6 +109,23 @@ services:
     mem_limit: 2g
     security_opt:
       - no-new-privileges:true
+  # Deploys a merged self-improvement change when he taps Deploy (deploy/deployer.sh): tests, rebuild,
+  # health check, rollback. The only container with the Docker socket, which is root on Docker: it
+  # listens on nothing and runs one fixed sequence. The repo is mounted at its host path because
+  # compose resolves the other services' bind mounts against it; it reads .env for the same reason.
+  deployer:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: thursday-deployer:latest
+    restart: unless-stopped
+    environment:
+      REPO: ${PWD}
+      HOME: ${HOME}
+    working_dir: ${PWD}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}:${PWD}
   searxng:
     image: searxng/searxng:latest
     container_name: searxng

@@ -2301,7 +2301,20 @@ function renderChanges() {
       el("p", { className: "why", textContent: j.summary || "" }),
       el("p", { className: "lock", textContent: `${files}${j.model ? ` · ${j.model}` : ""}${j.minutes != null ? ` · ${j.minutes} min` : ""}` }));
     if (j.decision === "approved") {
-      card.append(el("p", { className: "cmd", textContent: `Merged as ${j.merged}. Live after: docker compose up -d --build thursday-core · publish: git push` }));
+      const dep = AG.deploy && AG.deploy.job === j.job ? AG.deploy : null;
+      const running = dep && ["requested", "testing", "building"].includes(dep.state);
+      card.append(el("p", { className: "cmd", textContent: dep ? `Deploy: ${dep.state} · ${dep.detail}`
+        : `Merged as ${j.merged}. Deploy runs the tests, rebuilds, checks health, and rolls back if it isn't. Publish: git push` }));
+      if (!dep || !running) {
+        const go = el("button", { className: "yes", textContent: dep && dep.state === "live" ? "Deploy again" : "Deploy now" });
+        const note = el("p", { className: "cmd", hidden: true });
+        go.onclick = async () => {
+          go.disabled = true;
+          try { AG.deploy = await call(`/api/improvements/${encodeURIComponent(j.job)}/deploy`, { method: "POST" }); refreshMissions(); }
+          catch (e) { note.hidden = false; note.textContent = e.message; go.disabled = false; }
+        };
+        card.append(el("div", { className: "btns" }, go), note);
+      }
     }
     const note = el("p", { className: "cmd", hidden: true });
     const diff = el("pre", { className: "ag-diff", hidden: true });
@@ -2369,6 +2382,8 @@ async function refreshMissions() {
     if (ares.ok) AG.approvals = await ares.json();
     if (rres.ok) AG.routines = await rres.json();
     if (cres.ok) AG.changes = await cres.json();
+    const dres = await api("/api/deploy");
+    if (dres.ok) AG.deploy = await dres.json();
     render();
   } catch {}
   const busy = AG.missions.some(isLive);

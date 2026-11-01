@@ -258,6 +258,8 @@ def _why(exc: Exception) -> str:
         return "music_app_off: YouTube Music Desktop isn't running on the Mac"
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 403):
         return "not_paired: the music app needs pairing again"
+    if isinstance(exc, RuntimeError):  # ours, already worded for him ("not_paired: ...")
+        return str(exc)[:200]
     return f"{type(exc).__name__}: {exc}"[:200]
 
 

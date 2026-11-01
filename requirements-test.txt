@@ -1,0 +1,2 @@
+# Test-only dependencies (runner image; tests/): pinned like the rest.
+pytest==9.1.1

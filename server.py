@@ -623,6 +623,19 @@ def review_improvement(job: str, user: dict = Depends(owner_only)):
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@app.get("/api/deploy")
+def get_deploy(user: dict = Depends(owner_only)):
+    return improvements.deploy_status()
+
+
+@app.post("/api/improvements/{job}/deploy")
+def deploy_improvement(job: str, user: dict = Depends(owner_only)):
+    try:
+        return improvements.deploy_request(job)
+    except improvements.GateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @app.post("/api/improvements/{job}/{answer}")
 async def decide_improvement(job: str, answer: str, user: dict = Depends(owner_only)):
     """His Approve merges the job's branch into his checkout (improvements.py says when it won't)."""
