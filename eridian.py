@@ -38,7 +38,7 @@ _SUBJ = r"(you|we|they|I|he|she|it|that|this|there)"
 
 # Whole sentences he'd say his own way (matched without the end punctuation, any case).
 _SWAPS = {
-    "Gracious.": ("thanks", "thank you", "thanks a lot", "thank you so much", "thanks so much"),
+    "Gracious.": ("thanks", "thank you", "thanks a lot", "thank you so much", "thanks so much", "cheers"),
     "Amaze!": ("awesome", "amazing", "fantastic", "wonderful", "incredible", "great", "excellent"),
     "Yes.": ("sure", "absolutely", "of course", "definitely", "certainly", "yep", "yeah", "you bet"),
 }
