@@ -124,3 +124,42 @@ def test_night_whisper_can_be_turned_off(owner_turn):
     assert a._voice_intent("whisper at night") == ("voice_setting", {"night_whisper": True})
     mind.voice_setting({"night_whisper": False})
     assert not mind.voice_style("owner", NIGHT)["whisper"]
+
+
+@pytest.mark.parametrize("said,args", [("volume to 50%.", {"volume": 50}), ("Can you lower the volume to 10%?", {"volume": 10}),
+                                       ("turn the volume down", {"change": "quieter"}), ("volume up", {"change": "louder"})])
+def test_plain_volume_is_his_voice_when_no_music_plays(said, args, monkeypatch):
+    import music
+    monkeypatch.setattr(music, "playing_hint", lambda: False)
+    assert a._voice_intent(said) == ("voice_setting", args)
+
+
+def test_plain_volume_is_the_music_while_it_plays(monkeypatch):
+    import music
+    monkeypatch.setattr(music, "playing_hint", lambda: True)
+    assert a._voice_intent("volume to 50%") is None
+    assert a._music_intent("set the volume to 50") == ("music_control", {"action": "set_volume", "level": 50})
+
+
+def test_music_volume_is_always_music(monkeypatch):
+    import music
+    monkeypatch.setattr(music, "playing_hint", lambda: False)
+    assert a._voice_intent("music volume to 30") is None
+
+
+def test_whats_your_volume_reads_the_setting(owner_turn):
+    owner_turn("what's your volume at?")
+    assert a._voice_intent("What's your volume at?") == ("voice_setting", {"report": True})
+    mind.voice_setting({"volume": 40})
+    assert mind.voice_setting({"report": True}).data["voice_volume"] == 40
+
+
+def test_pause_and_play_keep_the_playing_hint(monkeypatch):
+    import music
+    monkeypatch.setattr(music, "_cmd", lambda *a, **k: None)
+    monkeypatch.setattr(music, "_find", lambda q, k: ({"videoId": "x", "playlistId": "RDAMVMx"}, "x"))
+    music._state["value"] = None
+    music.music_play({"query": "jazz"})
+    assert music.playing_hint()
+    music.music_control({"action": "pause"})
+    assert not music.playing_hint()

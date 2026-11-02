@@ -48,6 +48,16 @@ OUTPUT = {"where": os.getenv("MUSIC_OUTPUT", "satellite")}  # "satellite" or "ma
 
 logger = logging.getLogger("thursday.voice")
 _taps: set = set()  # connected music taps (normally one)
+# Is music playing, as far as our own commands know: no network, so a request can ask it on the spot
+# (agent_stream: a plain "volume to 50%" is music only while music plays). The cached state agrees when fresh.
+_playing = {"on": False}
+
+
+def playing_hint() -> bool:
+    st = _state["value"]
+    if st is not None and time.monotonic() - _state["at"] < 20:
+        return ((st.get("player") or {}).get("trackState")) == PLAYING
+    return _playing["on"]
 _loop: asyncio.AbstractEventLoop | None = None
 _state: dict = {"at": 0.0, "value": None}
 _duck: dict = {"restore": None}  # the volume to put back after a turn, if we lowered it
@@ -145,6 +155,7 @@ def music_play(args: Dict[str, Any]) -> ToolResult:
             target, what = found
         _cmd("changeVideo", target)
         _cmd("play")  # changeVideo keeps a paused player paused (it played ~1 s and stopped)
+        _playing["on"] = True
         _duck["restore"] = None
         logger.info("music: playing %s", what)
         return ToolResult(ok=True, tool_name="music_play", data={"playing": what})
@@ -162,6 +173,8 @@ def music_control(args: Dict[str, Any]) -> ToolResult:
             _cmd("setVolume", level)
         elif action in commands:
             _cmd(commands[action])
+            if action in ("pause", "resume"):
+                _playing["on"] = action == "resume"
         else:
             return ToolResult(ok=False, tool_name="music_control", error=f"unknown action {action}")
         if action.startswith("volume") or action in ("set_volume", "mute", "unmute", "pause"):

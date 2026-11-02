@@ -38,12 +38,16 @@ GRANITE = float(os.getenv("ROCKY_GRANITE", "0"))
 # Whisper (style["whisper"], his "whisper" / "speak normally"): the vocoder puts his formants on breath
 # noise instead of a voice, so the words come with no voiced pitch; no chord layer; this much of the level.
 WHISPER_LEVEL = 0.55
-# "clean": breath only. "soft": the clean whisper with some of his real voice under it, a breathy murmur.
+# "clean": breath only. "soft" (default): mostly his real voice, hushed, with breath over it and his
+# chords quietly under: how people actually speak at night. A fully unvoiced synthetic whisper sounded
+# creepy (2026-11-01), so soft keeps the voice; and the chords keep it Rocky.
 # Breath is kept to WHISPER_BAND (a whisper has no low rumble: full-band noise sounded like a chain
 # smoker, 2026-11-01), and the shape ignores his pitch harmonics (wide bins, smoothed over time).
 WHISPER_MODE = os.getenv("ROCKY_WHISPER_MODE", "soft")
 WHISPER_BAND = (300.0, 6500.0)
-WHISPER_VOICE = 0.3  # of his voice under the breath, in "soft"
+WHISPER_VOICE = 0.65   # his voice vs. breath, in "soft"
+WHISPER_CHORDS = 0.4   # of CHORD_MIX under a soft whisper (none under a clean one)
+WHISPER_SOFT_LEVEL = 0.35  # ~-9 dB: a hush, not a mumble
 LAYER_GAIN = 0.85         # the ocarina layer, before CHORD_MIX: about the voice's own level
 DEVICE_GAIN = 1.4         # the band-limited translator voice loses its lows; this gives them back
 STREAM_MARGIN_S = 0.08    # streaming holds back this much: the filters' look-ahead (~50 ms) and some
@@ -166,7 +170,8 @@ def _whisper(voice: np.ndarray, sr: int) -> np.ndarray:
         ev[i] = 0.65 * ev[i] + 0.35 * ev[i - 1]
     out = sc * band * ev / (ec + 1e-3 * ec.max(axis=1, keepdims=True) + 1e-9)
     if WHISPER_MODE == "soft":
-        out = out + WHISPER_VOICE * sv * band
+        hush = 1 / (1 + (f / 4000) ** 2)  # a softer voice has less bright top
+        out = (1 - WHISPER_VOICE) * out + WHISPER_VOICE * sv * band * hush
     target = (np.abs(sv * band) ** 2).sum(axis=1)  # each frame at his own in-band level
     gain = np.sqrt(target / np.maximum((np.abs(out) ** 2).sum(axis=1), 1e-12))
     return _istft(out * gain[:, None], win, 256, len(voice))
@@ -290,8 +295,12 @@ def process(x: np.ndarray, sr: int, text: str = "", final: bool = True, style: d
         layer[:edge] *= ramp
         if final:
             layer[-edge:] *= ramp[::-1]
-    if whisper:  # breath only: no chords under a whisper
-        return _limit(WHISPER_LEVEL * _granite(_whisper(voice, sr), sr)) * volume
+    if whisper:
+        hushed = _granite(_whisper(voice, sr), sr)
+        if WHISPER_MODE == "soft":  # his chords stay, quietly: still Rocky
+            mix = CHORD_MIX * WHISPER_CHORDS
+            return _limit(WHISPER_SOFT_LEVEL * ((1 - mix) * hushed + mix * layer)) * volume
+        return _limit(WHISPER_LEVEL * hushed) * volume
     return _limit((1 - CHORD_MIX) * speech + CHORD_MIX * layer) * volume
 
 

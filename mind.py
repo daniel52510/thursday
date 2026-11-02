@@ -121,6 +121,10 @@ def voice_setting(args: Dict[str, Any]) -> ToolResult:
             changed["normal_until"] = int(ends.timestamp())  # "speak normally" at night: until morning
     if isinstance(args.get("night_whisper"), bool):
         changed["night_whisper"] = int(args["night_whisper"])
+    if not changed and args.get("report"):  # "what's your volume?"
+        return ToolResult(ok=True, tool_name="voice_setting", data={
+            "voice_volume": now["voice_volume"], "whisper_now": voice_style(user_id)["whisper"],
+            "note": "That's your voice's volume (music has its own). Say it in a few words."})
     if not changed:
         return ToolResult(ok=False, tool_name="voice_setting", error="say a volume, louder/quieter, or whisper on/off")
     for name, value in changed.items():
@@ -140,7 +144,8 @@ VOICE_SCHEMA = {"type": "function", "function": {
         "volume": {"type": "integer", "description": "1-100 percent"},
         "change": {"type": "string", "enum": ["louder", "quieter"]},
         "whisper": {"type": "boolean"},
-        "night_whisper": {"type": "boolean", "description": "Whisper on your own at night (22-7), on by default"}}}}}
+        "night_whisper": {"type": "boolean", "description": "Whisper on your own at night (22-7), on by default"},
+        "report": {"type": "boolean", "description": "Just say what your voice volume is now"}}}}}
 
 
 def settings(db: MemoryDB, user_id: str) -> Dict[str, int]:

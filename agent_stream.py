@@ -557,8 +557,31 @@ def _bare_level(cid: str, text: str) -> tuple[str, dict] | None:
     return "music_control", {"action": "set_volume", "level": level}
 
 
+# "volume" alone: his voice, unless music is playing (then the music). He said "volume to 50%" and "go to
+# ten percent" meaning the voice; with music paused they went to the music (2026-11-01).
+_PLAIN_VOLUME = re.compile(r"^(?!.*\b(?:music|song|track|playlist|your)\b).*\bvolume\b", re.I)
+_VOLUME_LEVEL = re.compile(r"\b(\d{1,3})\s*(?:%|percent)?|\b(up|down|higher|lower|louder|quieter)\b", re.I)
+_VOICE_ASK = re.compile(r"\bwhat'?s\s+your\s+(?:volume|voice\s+(?:volume|level))\b|\bhow\s+loud\s+(?:are\s+you|is\s+your\s+voice)\b", re.I)
+
+
+def _plain_volume(text: str) -> tuple[str, dict] | None:
+    """Plain "volume to 50%" / "volume down": his voice while no music plays."""
+    if not _PLAIN_VOLUME.search(text) or music.playing_hint():
+        return None
+    found = list(_VOLUME_LEVEL.finditer(text))
+    if level := next((m[1] for m in found if m[1]), None):  # a number is what he asked for exactly
+        return "voice_setting", {"volume": max(1, min(100, int(level)))}
+    if word := next((m[2] for m in found if m[2]), None):
+        return "voice_setting", {"change": "louder" if word.lower() in ("up", "higher", "louder") else "quieter"}
+    return None
+
+
 def _voice_intent(text: str) -> tuple[str, dict] | None:
     """A clear request about his own voice, as (tool, args); None leaves it to the model."""
+    if _VOICE_ASK.search(text):
+        return "voice_setting", {"report": True}
+    if plain := _plain_volume(text):
+        return plain
     if m := _VOICE_NIGHT.search(text):
         return "voice_setting", {"night_whisper": not m[1]}
     if _VOICE_WHISPER_OFF.search(text):
