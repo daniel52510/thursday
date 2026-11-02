@@ -195,6 +195,9 @@ SCHEMAS = [
 
 # Review mode (improvements.code_review_start): read the code, change nothing, report findings.
 READ_ONLY = ("list_files", "read_file", "search")
+# A task in these words is a bug fix: it must come with a test (in code, not just the prompt: the
+# benchmark's t5 fix came back without one, 2026-11-01).
+BUG_TASK = re.compile(r"\b(?:bug|fix|broken|breaks?|wrong|crash(?:es)?|error|fails?|instead|doesn'?t|isn'?t|won'?t)\b", re.I)
 CRITIC = """You review one change to THURSDAY's code before it's committed. You see the task and the diff only.
 Reply JSON only: {"ok": true} if the diff does exactly what the task asks, no more; or {"ok": false, "problems": ["..."]}
 listing what's wrong: the task not (fully) done, a behavior it breaks, changes the task didn't ask for, a style that
@@ -341,7 +344,7 @@ def run(task: str, kind: str = "change") -> None:
     schemas = REVIEW_SCHEMAS if review else SCHEMAS
     messages = [{"role": "system", "content": _review_system() if review else _system()},
                 {"role": "user", "content": f"{'Review' if review else 'Task'}: {task}"}]
-    steps, started, nudges, work, rounds, critiqued = [], time.monotonic(), 0, 0.0, 0, False
+    steps, started, nudges, work, rounds, critiqued, tested_back = [], time.monotonic(), 0, 0.0, 0, False, False
     with httpx.Client(timeout=httpx.Timeout(600, connect=5)) as http:
         while True:
             over = len(steps) >= MAX_STEPS or work > MAX_WORK_S
@@ -370,8 +373,13 @@ def run(task: str, kind: str = "change") -> None:
                     back = None
                     if _git("status", "--porcelain").strip() and rounds < 2:
                         checks = run_checks()
+                        changed = [line[3:] for line in _git("status", "--porcelain").splitlines()]
                         if not checks["passed"]:
                             back = f"Checks failed:\n{checks['output'][-1500:]}\nFix it, then call finish again."
+                        elif BUG_TASK.search(task) and not any(f.startswith("tests/") for f in changed) and not tested_back:
+                            tested_back = True
+                            back = ("This is a bug fix, so it needs a test: add one to the matching file in tests/ that fails "
+                                    "without your fix and passes with it (run_tests to check), then call finish again.")
                         elif not critiqued:
                             critiqued = True
                             verdict, secs = _chat(http, [{"role": "system", "content": CRITIC}, {"role": "user", "content":
