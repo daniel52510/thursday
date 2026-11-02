@@ -46,3 +46,20 @@ def test_reviews_and_missions_are_not_read():
     conv = db.create_conversation("Self-review · Nov 1", "owner")
     db.log_message(role="assistant", content="Music, off.", conversation_id=conv["id"])
     assert g._evidence(_since()) == []
+
+
+def test_evidence_carries_its_time():
+    _conversation([("user", "Turn off the music."), ("assistant", "Music, off.")])
+    assert "(at 20" in g._evidence(_since())[0].splitlines()[0]
+
+
+def test_recent_commits_listed_with_files(tmp_path, monkeypatch):
+    import subprocess
+    r = tmp_path / "r"
+    r.mkdir()
+    run = lambda *a: subprocess.run(["git", *a], cwd=r, check=True, capture_output=True)
+    run("init", "-q"); run("config", "user.email", "t@t"); run("config", "user.name", "t")
+    (r / "music.py").write_text("x = 1\n"); run("add", "-A"); run("commit", "-qm", "Music requests run in code")
+    monkeypatch.setattr(g, "REPO", r)
+    out = g._recent_commits("2000-01-01")
+    assert "Music requests run in code" in out and "music.py" in out

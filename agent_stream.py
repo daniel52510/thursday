@@ -52,7 +52,7 @@ import lights
 import notes
 from accounts import FAMILY, FAMILY_ROLES, OWNER
 from episodic import recall_note
-from calendar_tool import CREATE_INTENT as _CALENDAR_ADD, DELETE_INTENT as _CALENDAR_DELETE, TURN as calendar_turn, confirms_pending
+from calendar_tool import CREATE_INTENT as _CALENDAR_ADD, DELETE_INTENT as _CALENDAR_DELETE, TURN as calendar_turn, confirms_pending, plain_yes
 from tools import ToolCall, ToolResult, execute_tool
 
 CHAT_URL = URL.rsplit("/api/", 1)[0] + "/api/chat"
@@ -664,6 +664,25 @@ def _self_code_intent(text: str) -> tuple[str, dict] | None:
     return None
 
 
+# His yes to something THURSDAY offered ("I keep it ready, question?" / "Yeah, sure.") has to do it: the model
+# answered "Music, playing." with no tool (2026-11-02), and the voice guard then dropped the claim, leaving
+# silence. Such a reply is held; if it claims an action with no tool, it's retried once with the offer named.
+_OFFER = re.compile(r"\b(?:I\s+(?:play|put|add|set|start|turn|keep|check|remind|send|book|make|find|search|look|open|save)|"
+                    r"(?:you\s+)?want\s+(?:me\s+to|music|it|that)|shall\s+I|should\s+I)\b", re.I)
+_CLAIMED = re.compile(r",\s*(?:playing|added|saved|set|done|booked|off|on|paused|stopped|started|sent)\s*[.!]|"
+                      r"\b(?:i\s+(?:added|set|saved|booked|started|played|paused|sent|turned)|now\s+playing|playing\s+now|"
+                      r"is\s+playing)\b", re.I)
+
+
+def _last_offer(db, conversation_id: str) -> str | None:
+    """THURSDAY's last line in this conversation, when it was an offer to do something."""
+    with db._connect() as conn:
+        row = conn.execute("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' AND content NOT "
+                           "LIKE 'TOOL_RESULT:%' ORDER BY id DESC LIMIT 1", (conversation_id,)).fetchone()
+    text = (row["content"] if row else "").strip()
+    return text if text.endswith("?") and _OFFER.search(text) else None
+
+
 _DELIBERATE = re.compile(r"\b(think\s+(it|this|that)\s+(over|through)|take\s+your\s+time|think\s+(hard|carefully)|"
                          r"really\s+think|give\s+it\s+(some\s+)?(real\s+)?thought)\b", re.I)
 _REQUEST = re.compile(
@@ -1077,6 +1096,14 @@ async def _stream_prompt(
         nudge = ("This follows up a question that needs current information. Call web_search with a query "
                  "for what the user is asking now (for example 'current CEO of Apple'); don't answer from memory.")
 
+    claims_only = False  # hold for a yes to an offer: retry only a reply that claims what no tool did
+    if (not hold_first and not executed and mode in ("voice", "chat") and plain_yes(user_prompt)
+            and (offer := _last_offer(db, cid))):
+        hold_first, claims_only = True, True
+        nudge = (f"He just said yes to what you offered: \"{offer[:200]}\". Do it now with the tool for it (music_play "
+                 "for music, list_add for a list, and so on), or if no tool can, say so plainly. Never say it's done, "
+                 "playing or set unless a tool ran this turn.")
+
     # The briefing must come from the tools (calendar, weather, news), never
     # from memory: hold its first round like weather questions.
     if mode == "briefing":
@@ -1141,8 +1168,9 @@ async def _stream_prompt(
                         # Counted per round, so a reply cut off mid-way still counts what it used.
                         accounts.shared().add_tokens(user["id"], chunk.get("prompt_eval_count", 0) + chunk.get("eval_count", 0))
                         break
-            if hold and not calls:
+            if hold and not calls and (not claims_only or _CLAIMED.search("".join(round_text))):
                 print(f"[agent] answered {user_prompt[:60]!r} without a tool; retrying with a nudge")
+                claims_only = False  # once: the retry's reply goes out whatever it says
                 messages.append({"role": "system", "content": nudge})
                 continue
             if lead:  # a short reply that never got past its first clause

@@ -342,28 +342,31 @@ def _evidence(since: str) -> list[str]:
     db = initalize_db()
     with db._connect() as conn:
         rows = conn.execute(
-            "SELECT m.role, m.content, m.conversation_id, c.title FROM messages m JOIN conversations c "
+            "SELECT m.role, m.content, m.conversation_id, m.created_at, c.title FROM messages m JOIN conversations c "
             "ON c.id = m.conversation_id WHERE c.user_id = ? AND m.created_at >= ? ORDER BY m.id", (OWNER, since)).fetchall()
     by_conv: dict[str, list] = {}
     for r in rows:
         if not str(r["title"]).startswith(_SKIP_TITLES):
-            by_conv.setdefault(r["conversation_id"], []).append((r["role"], " ".join(str(r["content"]).split())[:300]))
+            by_conv.setdefault(r["conversation_id"], []).append(
+                (r["role"], " ".join(str(r["content"]).split())[:300], str(r["created_at"])[:16].replace("T", " ")))
     out = []
-    for msgs in by_conv.values():
+    for convo in by_conv.values():
+        msgs = [(role, text) for role, text, _ in convo]
         tooled = False  # a tool result since his last message
         for i, (role, text) in enumerate(msgs):
+            when = f" (at {convo[i][2]} UTC)"
             if role == "user":
                 tooled = False
                 if i and _CORRECTION.search(text):
                     before = [f"{'Daniel' if r == 'user' else 'THURSDAY'}: {t}" for r, t in msgs[max(0, i - 3):i]
                               if not t.startswith("TOOL_RESULT:")]
                     after = next((t for r, t in msgs[i + 1:] if r == "assistant" and not t.startswith("TOOL_RESULT:")), "")
-                    out.append("CORRECTION\n" + "\n".join(before + [f"Daniel: {text}", f"THURSDAY: {after}"]))
+                    out.append(f"CORRECTION{when}\n" + "\n".join(before + [f"Daniel: {text}", f"THURSDAY: {after}"]))
             elif text.startswith("TOOL_RESULT:"):
                 tooled = True
             elif _CLAIM.search(text) and not tooled:
                 said = next((t for r, t in reversed(msgs[:i]) if r == "user"), "")
-                out.append(f"CLAIM WITHOUT A TOOL\nDaniel: {said}\nTHURSDAY: {text}")
+                out.append(f"CLAIM WITHOUT A TOOL{when}\nDaniel: {said}\nTHURSDAY: {text}")
     seen, kept, size = set(), [], 0
     for e in reversed(out):  # newest first: what's still going wrong gets the room
         if e not in seen and size + len(e) <= EVIDENCE_CHARS:
@@ -391,10 +394,44 @@ The evidence below is only the moments that looked wrong: his corrections, and r
 - something a careful engineer could do in an hour, with how to check it worked.
 Skip anything already working, anything vague ("be smarter"), and anything about the voice model choice or hardware.
 
+What's already done, so you don't propose it again:
+- The commits below are fixes made since the evidence began, each with its time (UTC) and files. Evidence from before a commit that fixed that kind of thing is already handled: skip it, unless the same thing happened again after the commit.
+- THURSDAY's current prompt is below. Don't propose a prompt rule it already has: if the model broke a rule that's there, the fix belongs in code (acting on the request in code, a guard, a retry), not in the prompt again.
+
 Reply with JSON only, no prose: {{"ideas": [{{"title": "...", "problem": "...", "evidence": "...", "fix": "...", "files": ["..."], "check": "..."}}]}}. If nothing is worth fixing, {{"ideas": []}}.
 
 The code (file: what it does):
-{code}"""
+{code}
+
+Commits since the evidence began (UTC time | message | files):
+{commits}
+
+THURSDAY's current prompt:
+{prompt}"""
+
+
+def _recent_commits(since: str) -> str:
+    """Fixes since the evidence began: UTC time, subject, files. Read from his checkout (read only)."""
+    try:
+        log = _git("log", f"--since={since}", "--date=iso-strict-local", "--format=@@%cd|%s", "--name-only",
+                   "--", ".", ":!runner-out")
+    except GateError:
+        return "(no git history available)"
+    rows = []
+    for block in log.split("@@")[1:]:
+        head, *files = [line for line in block.splitlines() if line.strip()]
+        stamp, _, subject = head.partition("|")
+        try:
+            stamp = datetime.fromisoformat(stamp).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            pass
+        rows.append(f"- {stamp} | {subject[:110]} | {', '.join(files[:6])}")
+    return "\n".join(rows[:40]) or "(none)"
+
+
+def _current_prompt() -> str:
+    import agent_stream  # on first use: agent_stream imports this module
+    return agent_stream.SYSTEM_PROMPT[:9000]
 
 
 def _parse_ideas(text: str) -> list[dict]:
@@ -436,7 +473,9 @@ async def self_review() -> str:
         REVIEW_STATE.write_text(json.dumps(state))
         logger.info("self-review: %s", "nothing to review" if not evidence else "no new evidence")
         return "nothing new"
-    messages = [{"role": "system", "content": _REVIEW_SYSTEM.format(days=REVIEW_DAYS, code=_code_map())},
+    system = _REVIEW_SYSTEM.format(days=REVIEW_DAYS, code=_code_map(), commits=await asyncio.to_thread(_recent_commits, since),
+                                   prompt=_current_prompt())
+    messages = [{"role": "system", "content": system},
                 {"role": "user", "content": "Evidence:\n\n" + "\n\n".join(evidence)}]
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(900, connect=5)) as http:

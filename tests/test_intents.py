@@ -63,3 +63,21 @@ def test_own_code_requests_reach_the_tools(said, tool):
 @pytest.mark.parametrize("said", NOT_SELF)
 def test_other_fix_requests_left_alone(said):
     assert a._self_code_intent(said) is None
+
+
+def test_an_offer_is_recognized_and_a_claim_is_caught():
+    from agent_loop import initalize_db
+    db = initalize_db()
+    conv = db.create_conversation("x", "owner")
+    db.log_message(role="assistant", content="Classical music is good logic. I keep it ready, question?", conversation_id=conv["id"])
+    assert a._last_offer(db, conv["id"]) and a.plain_yes("Yeah, sure.")
+    assert a._CLAIMED.search("Music, playing.") and a._CLAIMED.search("Okay, now playing jazz")
+    assert not a._CLAIMED.search("Okay. Later then.") and not a._CLAIMED.search("I like playing golf.")
+
+
+def test_a_statement_is_not_an_offer():
+    from agent_loop import initalize_db
+    db = initalize_db()
+    conv = db.create_conversation("x", "owner")
+    db.log_message(role="assistant", content="Jupiter is best planet.", conversation_id=conv["id"])
+    assert a._last_offer(db, conv["id"]) is None
