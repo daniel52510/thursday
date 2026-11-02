@@ -24,6 +24,14 @@ RUN mkdir -p /app/models \
      "https://raw.githubusercontent.com/snakers4/silero-vad/${SILERO_VAD_TAG}/src/silero_vad/data/silero_vad.onnx" \
   && echo "${SILERO_VAD_SHA256}  /app/models/silero_vad.onnx" | sha256sum -c -
 
+# Speaker recognition (speaker.py): WeSpeaker ResNet34-LM, VoxCeleb, CC-BY-4.0 (WeSpeaker, Wang et al.),
+# pinned to a commit and checksum like the VAD.
+ARG WESPEAKER_REV=f0c48c298fd835726c27956a5d617bad7115627e
+ARG WESPEAKER_SHA256=7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068
+RUN curl -fsSL -o /app/models/wespeaker_resnet34_lm.onnx \
+     "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/${WESPEAKER_REV}/voxceleb_resnet34_LM.onnx" \
+  && echo "${WESPEAKER_SHA256}  /app/models/wespeaker_resnet34_lm.onnx" | sha256sum -c -
+
 COPY . /app/
 
 ENV THURSDAY_BRAIN_DIR=/app/brain

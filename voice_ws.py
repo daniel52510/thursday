@@ -51,6 +51,7 @@ import mind
 import missions
 import music
 import rocky_voice
+import speaker
 from agent_stream import VOICE_TAG, record_cut_off, strip_voice_tags, stream_prompt
 from vad import FRAME_BYTES, FRAME_MS, SAMPLE_RATE, BargeIn, Endpointer, VADConfig
 
@@ -91,6 +92,9 @@ BC_TAIL_S = 0.1      # room echo after the clip
 # second model (interject.py, VOICE_EVALUATOR_MODEL) judges whether THURSDAY should cut in. Logged only:
 # nothing is said. Each call is ~0.4 s on the Mac's GPU while the user talks; replies never wait on it. 0 = off.
 EVALUATOR = os.getenv("VOICE_EVALUATOR", "0") != "0"
+# Who is talking (speaker.py): "shadow" logs each turn's verdict and changes nothing; "off" skips it.
+# It runs beside the reply, never before it, so it costs a turn nothing.
+SPEAKER_ID = os.getenv("SPEAKER_ID", "shadow")
 # Smart endpoint: the speculative transcript of a pause (STT_SPECULATE_MS) decides how long to wait.
 # A finished question ends the turn after QUICK ms; a trailing "and", "so", "um" or comma means they're
 # mid-thought, so wait HOLD ms; anything else keeps VAD_END_SILENCE_MS. 0 = off (always the fixed wait).
@@ -927,7 +931,19 @@ class Session:
         except Exception as exc:
             await self._fail(stage, f"{type(exc).__name__}: {exc}", input_desc, started)
             return
+        if SPEAKER_ID != "off" and self.role == "satellite":
+            self._speaker_task = asyncio.create_task(self._log_speaker(pcm, text))  # kept: unreferenced tasks can vanish
         await self._respond(text, timing)
+
+    async def _log_speaker(self, pcm: bytes, text: str) -> None:
+        """Shadow mode: who the voice sounds like, logged with the turn (no words: just the first few)."""
+        try:
+            started = time.monotonic()
+            who = await asyncio.to_thread(speaker.identify, pcm)
+            logger.info("speaker (shadow): %s %s score=%.2f (%d ms, %.1f s of audio) %r", who["verdict"], who["user"] or "-",
+                        who["score"], _ms(started), len(pcm) / 2 / SAMPLE_RATE, " ".join(text.split()[:3]))
+        except Exception as exc:  # recognition is a nicety until it decides anything
+            logger.info("speaker (shadow): failed: %s", type(exc).__name__)
 
     async def _respond(self, text: str, timing: dict, mode: str = "voice", context: dict | None = None) -> None:
         """LLM + TTS for one user message, or for a prompt the server writes
