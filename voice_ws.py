@@ -114,7 +114,8 @@ _INVENTED = re.compile(
     # Music (no music tool ran): "John Wick music, playing." / "Music, off." changed nothing.
     r"|,\s*playing\b|\bnow\s+playing\b|\bmusic,?\s+(?:off|paused|stopped|on)\b"
     # His own voice: "Voice at twenty." with no voice_setting run changed nothing; a tool call written out as text.
-    r"|\bvoice\s+(?:at|to|is\s+at)\s+\w+|\b\w+_\w+\s*[{(]", re.I)
+    r"|\bvoice\s+(?:at|to|is\s+at)\s+\w+|\b\w+_\w+\s*[{(]"
+    r"|\bwhispering\s+(?:now|on|sentence|mode)\b|\bwhisper\s+(?:is\s+)?on\b|\btalking\s+normally\s+now\b", re.I)
 
 
 def _end_frames_for(text: str) -> int | None:

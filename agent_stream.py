@@ -516,13 +516,23 @@ _PLAYLIST_WORDS = re.compile(r"\b(?:music|songs|playlist|beats|mix|vibes|radio|h
 
 
 # His own voice (mind.voice_setting), checked before music: "talk louder" is him, "turn it up" is music.
-_VOICE_WHISPER_ON = re.compile(rf"{_LEAD}(?:whisper(?:\s+(?:to\s+me|please|mode(?:\s+on)?))?|start\s+whispering|"
-                               rf"speak\s+(?:in\s+a\s+whisper|softly)|use\s+your\s+(?:whisper|quiet)\s+voice)\W*$", re.I)
+# Any way he asks for it: "Sorry, can you also whisper for me?" and "Now, can you whisper?" were missed by a
+# strict pattern, and "can you whisper to me a sentence" got a claimed "Whispering now" with no switch (2026-11-02).
+_VOICE_WHISPER_ON = re.compile(
+    r"\b(?:can|could|would|will)\s+you\s+(?:\w+\s+){0,2}?whisper\b"
+    r"|^\W*(?:(?:ok(?:ay)?|now|so|and|uh|um|hey\s+thursday|please|just|sorry)\W+)*whisper\b"
+    r"(?!\s+(?:is|was|ai|model|app|transcri\w*)\b)"
+    r"|\bwhisper\s+(?:to\s+me|for\s+me|please|instead)\b|\bstart\s+whispering\b|\bwhisper\s+mode(?:\s+on)?\b"
+    r"|\buse\s+your\s+(?:whisper|quiet|low|soft)\s+voice\b"
+    r"|\b(?:speak|talk)\s+(?:to\s+me\s+)?(?:quietly|softly|low|lower|in\s+a\s+(?:whisper|low\s+voice|quiet\s+voice|soft\s+voice)"
+    r"|under\s+your\s+breath)\b", re.I)
+# Asking about it isn't asking for it ("What can you whisper?", "Does your whisper turn on at ten?").
+_VOICE_WHISPER_QUESTION = re.compile(r"^\W*(?:(?:uh|um|so|and)\W+)*(?:what|how|why|does|do|is|are|when)\b", re.I)
 _VOICE_WHISPER_OFF = re.compile(r"\b(?:stop\s+whispering|(?:speak|talk)\s+normally|(?:your\s+)?normal\s+voice|"
                                 r"whisper\s+mode\s+off|regular\s+voice|no\s+more\s+whispering)\b", re.I)
 _VOICE_LOUDER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:louder|up)\b|\byour\s+voice\s+(?:louder|up)\b"
                            r"|\bcan'?t\s+hear\s+you\b", re.I)
-_VOICE_QUIETER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:quieter|softer|lower|more\s+quietly)\b"
+_VOICE_QUIETER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:quieter|softer|more\s+quietly)\b"
                             r"|\byour\s+voice\s+(?:quieter|down|softer|lower)\b|\byou'?re\s+(?:too\s+|so\s+)?loud\b", re.I)
 _VOICE_SET = re.compile(r"\b(?:your\s+voice|your\s+volume|voice\s+volume|(?:talk|speak)\s+at)\b.*?\b(?:to|at)?\s*(\d{1,3})\s*"
                         r"(?:%|percent)?", re.I)
@@ -586,7 +596,7 @@ def _voice_intent(text: str) -> tuple[str, dict] | None:
         return "voice_setting", {"night_whisper": not m[1]}
     if _VOICE_WHISPER_OFF.search(text):
         return "voice_setting", {"whisper": False}
-    if _VOICE_WHISPER_ON.search(text):
+    if _VOICE_WHISPER_ON.search(text) and not _VOICE_WHISPER_QUESTION.search(text):
         return "voice_setting", {"whisper": True}
     if m := _VOICE_SET.search(text):
         return "voice_setting", {"volume": int(m[1])}

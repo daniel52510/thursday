@@ -163,3 +163,30 @@ def test_pause_and_play_keep_the_playing_hint(monkeypatch):
     assert music.playing_hint()
     music.music_control({"action": "pause"})
     assert not music.playing_hint()
+
+
+WHISPER_ASKS = ["Sorry, can you also whisper for me?", "Now, can you whisper?", "Uh, can you whisper?",
+                "Can you whisper to me a sentence just so I can hear it?", "Can you whisper to me?", "whisper please",
+                "speak quietly", "talk to me quietly", "can you talk low", "talk lower", "speak in a low voice",
+                "talk under your breath", "use your quiet voice"]
+
+
+@pytest.mark.parametrize("said", WHISPER_ASKS)
+def test_every_way_he_asks_for_a_whisper(said):
+    assert a._voice_intent(said) == ("voice_setting", {"whisper": True})
+
+
+@pytest.mark.parametrize("said", ["What uh what can you whisper?", "Does your whisper turn on automatically between 10 and 7?",
+                                  "How does whisper work?"])
+def test_asking_about_whisper_doesnt_switch_it(said):
+    assert a._voice_intent(said) is None or a._voice_intent(said)[1] != {"whisper": True}
+
+
+def test_quieter_is_still_volume_not_whisper():
+    assert a._voice_intent("Can you talk quieter?") == ("voice_setting", {"change": "quieter"})
+
+
+@pytest.mark.parametrize("said", ["Whispering sentence now. Soft, soft, soft.", "Whispering now."])
+def test_claimed_whisper_without_a_tool_dropped(said):
+    import voice_ws
+    assert "Whispering" not in voice_ws._drop_invented(said)
