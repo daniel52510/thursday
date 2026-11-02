@@ -116,6 +116,7 @@ Facts and tools:
 - A mission on a schedule (every Sunday evening, every weekday at 7): routine_start, read back first like a mission; routine_list, routine_stop. It reports every time, unlike a watch.
 - "Send that to my phone" (a mission write-up, an address, a list): send_to_phone.
 - Music (YouTube Music, on his satellite speaker by default): music_play for a song, artist, album, or a playlist for a mood or activity; music_control to pause, resume, skip, go back or change the volume; music_now for what's playing; music_recommend for songs like it; music_output to move it between the satellite and the Mac. Music plays only when music_play ran this turn. Confirm in a few words ("Daft Punk, playing."). If the music app is off, say so in one line.
+- Your own voice's volume (separate from music) and whisper are voice_setting: never say you have no volume control.
 - You can read and change your own code (Python, in a sandbox, with his review): never say you can't reach, see or fix it. He asks you to improve or fix yourself (how you answer something, a habit he dislikes, a bug): improve_start, read back first like a mission. He asks you to review your code or find bugs in it: code_review_start (reads only, findings come to the chat). It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
 - A "Self-review" conversation holds your own ideas for improving yourself (you review the last days every night; self_review_now when he asks). There, talk them through with him: what goes wrong, the fix, what it might break, answer his questions honestly. When he settles on one, improve_start with the change as you agreed it, read back first.
 - Things your missions proposed wait for his OK (approval_list). When he answers, approval_decide: approve only on his plain yes to that thing, never on your own; no or not now declines. Say what happened in a few words.
@@ -530,6 +531,32 @@ _VOICE_SET = re.compile(r"\b(?:your\s+voice|your\s+volume|voice\s+volume|(?:talk
 _VOICE_NIGHT = re.compile(r"\b(?:(don'?t|do\s+not|stop|no)\s+)?whisper(?:ing)?\s+(?:at|during\s+the)\s+night\b", re.I)
 
 
+# A bare level right after a volume change goes where that one went: "go to 20", "what about 1%", "a
+# hundred" (he said these after "talk at 50%", and the model claimed changes it never made, 2026-11-01).
+_WORD_LEVELS = {"one": 1, "five": 5, "ten": 10, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+                "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100, "a hundred": 100, "one hundred": 100, "max": 100}
+_BARE_LEVEL = re.compile(r"^\W*(?:(?:ok(?:ay)?|alright|all\s+right|now|and|or|so|then|yeah|try)\W+)*(?:(?:go|set\s+it|put\s+it|"
+                         r"make\s+it|turn\s+it|bring\s+it|try\s+to\s+go)\s+(?:down\s+|up\s+)?(?:to\s+|at\s+)?|(?:what|how)\s+about\s+|"
+                         r"try\s+)?(\d{1,3}|" + "|".join(sorted(map(re.escape, _WORD_LEVELS), key=len, reverse=True)) +
+                         r")\s*(?:%|percent)?\W*$", re.I)
+VOLUME_CONTEXT_S = 300
+_volume_target: dict[str, tuple[str, float]] = {}  # conversation -> ("voice" | "music", when its volume last changed)
+
+
+def _bare_level(cid: str, text: str) -> tuple[str, dict] | None:
+    """A level on its own, in a conversation whose volume just changed: (tool, args) for the same target."""
+    target = _volume_target.get(cid)
+    m = _BARE_LEVEL.search(text)
+    if not m or not target or time.monotonic() - target[1] > VOLUME_CONTEXT_S:
+        return None
+    level = int(m[1]) if m[1].isdigit() else _WORD_LEVELS[m[1].lower()]
+    if not 0 <= level <= 100:
+        return None
+    if target[0] == "voice":
+        return "voice_setting", {"volume": max(1, level)}
+    return "music_control", {"action": "set_volume", "level": level}
+
+
 def _voice_intent(text: str) -> tuple[str, dict] | None:
     """A clear request about his own voice, as (tool, args); None leaves it to the model."""
     if m := _VOICE_NIGHT.search(text):
@@ -919,6 +946,9 @@ async def _stream_prompt(
         t = time.monotonic()
         result = await _run_tool(db, name, args, cid)
         timing["tool_ms"] = timing.get("tool_ms", 0) + _ms(t)
+        if result.ok and (name == "voice_setting" and ("volume" in args or "change" in args)
+                          or name == "music_control" and str(args.get("action", "")).startswith(("volume", "set_volume"))):
+            _volume_target[cid] = ("voice" if name == "voice_setting" else "music", time.monotonic())
         tool_results.append(result.model_dump())
         messages.append({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": name, "arguments": args}}]})
         messages.append({"role": "tool", "tool_name": name, "content": json.dumps(result.model_dump(), ensure_ascii=False)})
@@ -959,7 +989,7 @@ async def _stream_prompt(
         result = await run_and_record(held, {"confirmed": True})
         yield {"type": "tool_result", "name": held, "ok": result.ok, "started": _started(held, result)}
         executed.add(f"{held}:{json.dumps({'confirmed': True})}")
-    elif voice_call := (_voice_intent(user_prompt) if mode in ("voice", "chat") else None):
+    elif voice_call := (_voice_intent(user_prompt) or _bare_level(cid, user_prompt) if mode in ("voice", "chat") else None):
         name, args = voice_call
         yield {"type": "tool", "name": name, "args": args}
         result = await run_and_record(name, args)

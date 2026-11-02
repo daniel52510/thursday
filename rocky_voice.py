@@ -38,6 +38,12 @@ GRANITE = float(os.getenv("ROCKY_GRANITE", "0"))
 # Whisper (style["whisper"], his "whisper" / "speak normally"): the vocoder puts his formants on breath
 # noise instead of a voice, so the words come with no voiced pitch; no chord layer; this much of the level.
 WHISPER_LEVEL = 0.55
+# "clean": breath only. "soft": the clean whisper with some of his real voice under it, a breathy murmur.
+# Breath is kept to WHISPER_BAND (a whisper has no low rumble: full-band noise sounded like a chain
+# smoker, 2026-11-01), and the shape ignores his pitch harmonics (wide bins, smoothed over time).
+WHISPER_MODE = os.getenv("ROCKY_WHISPER_MODE", "soft")
+WHISPER_BAND = (300.0, 6500.0)
+WHISPER_VOICE = 0.3  # of his voice under the breath, in "soft"
 LAYER_GAIN = 0.85         # the ocarina layer, before CHORD_MIX: about the voice's own level
 DEVICE_GAIN = 1.4         # the band-limited translator voice loses its lows; this gives them back
 STREAM_MARGIN_S = 0.08    # streaming holds back this much: the filters' look-ahead (~50 ms) and some
@@ -146,11 +152,24 @@ def _vocode(voice: np.ndarray, carrier: np.ndarray) -> np.ndarray:
     return _istft(out * gain[:, None], win, 256, len(voice))
 
 
-def _whisper(voice: np.ndarray) -> np.ndarray:
-    """His words on breath: the voice's spectral envelope on seeded noise (same noise every pass, so
-    it streams: see Stream)."""
-    noise = np.random.default_rng(11).standard_normal(len(voice)).astype(np.float32)
-    return _vocode(voice, noise)
+def _whisper(voice: np.ndarray, sr: int) -> np.ndarray:
+    """His words on breath: his spectral envelope (wide enough to drop the pitch harmonics, smoothed
+    causally over time) on seeded noise kept to WHISPER_BAND; in "soft" mode, some of his band-limited
+    voice under it. Same noise every pass and only past frames shape a frame, so it streams (Stream)."""
+    sv, win = _stft(voice)
+    sc, _ = _stft(np.random.default_rng(11).standard_normal(len(voice)).astype(np.float32))
+    f = np.fft.rfftfreq(len(win), 1 / sr)
+    lo, hi = WHISPER_BAND
+    band = np.clip((f - lo * 0.6) / (lo * 0.4), 0, 1) / (1 + (f / hi) ** 4)  # soft edges, no ringing
+    ev, ec = _smooth_bins(np.abs(sv), 19), _smooth_bins(np.abs(sc), 19)
+    for i in range(1, len(ev)):  # a breath doesn't flicker: each frame leans on the one before
+        ev[i] = 0.65 * ev[i] + 0.35 * ev[i - 1]
+    out = sc * band * ev / (ec + 1e-3 * ec.max(axis=1, keepdims=True) + 1e-9)
+    if WHISPER_MODE == "soft":
+        out = out + WHISPER_VOICE * sv * band
+    target = (np.abs(sv * band) ** 2).sum(axis=1)  # each frame at his own in-band level
+    gain = np.sqrt(target / np.maximum((np.abs(out) ** 2).sum(axis=1), 1e-12))
+    return _istft(out * gain[:, None], win, 256, len(voice))
 
 
 def _saw(freq: np.ndarray, sr: int) -> np.ndarray:
@@ -230,7 +249,7 @@ def process(x: np.ndarray, sr: int, text: str = "", final: bool = True, style: d
     whisper, volume = bool((style or {}).get("whisper")), float((style or {}).get("volume", 1.0))
     voice = _shift(x, PITCH_SEMITONES)
     if len(voice) < sr // 20:  # a click of audio: nothing to sing under
-        return _limit(_granite(_whisper(voice) * WHISPER_LEVEL if whisper else voice, sr)) * volume
+        return _limit(_granite(_whisper(voice, sr) * WHISPER_LEVEL if whisper else voice, sr)) * volume
     hop = int(sr * HOP_S)
     frames = _frames(voice, hop)
     env = _envelope(frames)
@@ -272,7 +291,7 @@ def process(x: np.ndarray, sr: int, text: str = "", final: bool = True, style: d
         if final:
             layer[-edge:] *= ramp[::-1]
     if whisper:  # breath only: no chords under a whisper
-        return _limit(WHISPER_LEVEL * _granite(_whisper(voice), sr)) * volume
+        return _limit(WHISPER_LEVEL * _granite(_whisper(voice, sr), sr)) * volume
     return _limit((1 - CHORD_MIX) * speech + CHORD_MIX * layer) * volume
 
 

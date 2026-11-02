@@ -95,7 +95,9 @@ def voice_style(user_id: str, now: datetime | None = None) -> dict:
     s = VOICE | {k: v for k, v in initalize_db().get_settings(user_id).items() if k in VOICE}
     now = now or datetime.now(VOICE_TZ)
     night = bool(s["night_whisper"]) and _night_ends(now) is not None and now.timestamp() >= s["normal_until"]
-    return {"volume": max(10, min(100, s["voice_volume"])) / 100, "whisper": bool(s["whisper"]) or night}
+    # Ears hear level in decibels: percent squared, so 50% is ~-12 dB, 20% ~-28 dB, 10% -40 dB (linear made
+    # 50% sound nearly full, 2026-11-01). 1% is near silence.
+    return {"volume": (max(1, min(100, s["voice_volume"])) / 100) ** 2, "whisper": bool(s["whisper"]) or night}
 
 
 def voice_setting(args: Dict[str, Any]) -> ToolResult:
@@ -108,11 +110,11 @@ def voice_setting(args: Dict[str, Any]) -> ToolResult:
     changed = {}
     try:
         if args.get("volume") not in (None, ""):
-            changed["voice_volume"] = max(10, min(100, round(float(args["volume"]))))
+            changed["voice_volume"] = max(1, min(100, round(float(args["volume"]))))
         elif args.get("change") in ("louder", "quieter"):
-            changed["voice_volume"] = max(10, min(100, now["voice_volume"] + (VOICE_STEP if args["change"] == "louder" else -VOICE_STEP)))
+            changed["voice_volume"] = max(1, min(100, now["voice_volume"] + (VOICE_STEP if args["change"] == "louder" else -VOICE_STEP)))
     except (TypeError, ValueError):
-        return ToolResult(ok=False, tool_name="voice_setting", error="volume must be a number 10-100")
+        return ToolResult(ok=False, tool_name="voice_setting", error="volume must be a number 1-100")
     if isinstance(args.get("whisper"), bool):
         changed["whisper"] = int(args["whisper"])
         if not args["whisper"] and (ends := _night_ends(datetime.now(VOICE_TZ))):
@@ -135,7 +137,7 @@ VOICE_SCHEMA = {"type": "function", "function": {
     "description": "Your own voice: its volume (separate from music) and whisper mode. 'talk louder', 'your voice to 40', "
     "'whisper', 'speak normally'.",
     "parameters": {"type": "object", "properties": {
-        "volume": {"type": "integer", "description": "10-100 percent"},
+        "volume": {"type": "integer", "description": "1-100 percent"},
         "change": {"type": "string", "enum": ["louder", "quieter"]},
         "whisper": {"type": "boolean"},
         "night_whisper": {"type": "boolean", "description": "Whisper on your own at night (22-7), on by default"}}}}}

@@ -41,9 +41,43 @@ def test_settings_persist_and_clamp(owner_turn):
     assert mind.voice_setting({"change": "louder"}).data["voice_volume"] == 100  # already at the top
     for _ in range(6):
         mind.voice_setting({"change": "quieter"})
-    assert mind.voice_style("owner", NOON)["volume"] == 0.1  # never silent
+    assert mind.voice_style("owner", NOON)["volume"] == 0.01 ** 2  # 1%: near silence, not none
     mind.voice_setting({"volume": 60, "whisper": True})
-    assert mind.voice_style("owner", NOON) == {"volume": 0.6, "whisper": True}
+    assert mind.voice_style("owner", NOON) == {"volume": pytest.approx(0.36), "whisper": True}
+
+
+def test_volume_curve_is_perceptual(owner_turn):
+    """Percent squared: 50% is about -12 dB (linear 50% sounded nearly full)."""
+    owner_turn("")
+    mind.voice_setting({"volume": 50})
+    assert 20 * np.log10(mind.voice_style("owner", NOON)["volume"]) == pytest.approx(-12.04, abs=0.1)
+
+
+FOLLOW_UPS = [("Try to go to 20%.", 20), ("Alright, go to five.", 5), ("What about 1%?", 1), ("Go a hundred.", 100),
+              ("50", 50), ("how about 30 percent", 30)]
+
+
+@pytest.mark.parametrize("said,level", FOLLOW_UPS)
+def test_a_bare_level_follows_the_last_voice_change(said, level):
+    a._volume_target["cv"] = ("voice", a.time.monotonic())
+    assert a._bare_level("cv", said) == ("voice_setting", {"volume": level})
+
+
+def test_a_bare_level_follows_music_when_music_changed_last():
+    a._volume_target["cm"] = ("music", a.time.monotonic())
+    assert a._bare_level("cm", "go to 20") == ("music_control", {"action": "set_volume", "level": 20})
+
+
+def test_no_recent_volume_change_no_bare_level():
+    assert a._bare_level("fresh", "go to 20") is None
+    a._volume_target["old"] = ("voice", a.time.monotonic() - a.VOLUME_CONTEXT_S - 1)
+    assert a._bare_level("old", "what about 1%") is None
+
+
+@pytest.mark.parametrize("said", ["Voice at twenty. Very quiet now.", "Voice_setting{volume:1}Voice"])
+def test_invented_voice_changes_dropped(said):
+    import voice_ws
+    assert voice_ws._drop_invented(said) == "" or "twenty" not in voice_ws._drop_invented(said)
     assert not mind.voice_setting({}).ok
 
 
