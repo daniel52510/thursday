@@ -45,7 +45,9 @@ WHISPER_LEVEL = 0.55
 # smoker, 2026-11-01), and the shape ignores his pitch harmonics (wide bins, smoothed over time).
 WHISPER_MODE = os.getenv("ROCKY_WHISPER_MODE", "soft")
 WHISPER_BAND = (300.0, 6500.0)
-WHISPER_VOICE = 0.65   # his voice vs. breath, in "soft"
+# His voice vs. breath, in "soft". 0.65 measured 82-98% voiced, as voiced as normal speech: it sounded like
+# quiet talking, not a whisper (2026-11-02). 0.35: 25% voiced (39% at most), STT exact; 0.25 got eerie.
+WHISPER_VOICE = 0.35
 WHISPER_CHORDS = 0.4   # of CHORD_MIX under a soft whisper (none under a clean one)
 WHISPER_SOFT_LEVEL = 0.35  # ~-9 dB: a hush, not a mumble
 LAYER_GAIN = 0.85         # the ocarina layer, before CHORD_MIX: about the voice's own level
