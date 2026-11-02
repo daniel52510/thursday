@@ -9,7 +9,7 @@ import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "improve_start", "improve_status", "self_review_now", "code_review_start", "music_play", "music_control", "music_now", "music_recommend", "music_output", "light_set", "light_status"]
+    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "improve_start", "improve_status", "self_review_now", "code_review_start", "music_play", "music_control", "music_now", "music_recommend", "music_output", "voice_setting", "light_set", "light_status"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -585,6 +585,10 @@ def launch_schedule(args: Dict[str, Any]) -> ToolResult:
     from live_data import launch_schedule as _launch_schedule
     return _launch_schedule(args)
 
+def voice_setting(args: Dict[str, Any]) -> ToolResult:
+    import mind  # imported on first use: mind imports this module
+    return mind.voice_setting(args)
+
 def thursday_setting(args: Dict[str, Any]) -> ToolResult:
     import mind  # imported on first use: mind imports this module
     return mind.thursday_setting(args)
@@ -656,6 +660,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "alarm_snooze": _alarm("alarm_snooze"),
     "alarm_dismiss": _alarm("alarm_dismiss"),
     "thursday_setting": thursday_setting,
+    "voice_setting": voice_setting,
     "mission_start": _mission("mission_start"),
     "mission_status": _mission("mission_status"),
     "mission_abort": _mission("mission_abort"),

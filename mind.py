@@ -72,6 +72,54 @@ Think for yourself. Return ONLY JSON:
 
 # --- settings -----------------------------------------------------------------
 
+# How his voice sounds for this user (rocky_voice style): volume and whisper. Not in SETTINGS: they
+# change the audio, not what he says, so they stay out of the prompt.
+VOICE = {"voice_volume": 100, "whisper": 0}
+VOICE_STEP = 20  # "louder" / "quieter"
+
+
+def voice_style(user_id: str) -> dict:
+    s = VOICE | {k: v for k, v in initalize_db().get_settings(user_id).items() if k in VOICE}
+    return {"volume": max(10, min(100, s["voice_volume"])) / 100, "whisper": bool(s["whisper"])}
+
+
+def voice_setting(args: Dict[str, Any]) -> ToolResult:
+    """His voice for the speaking user: volume (percent, or louder/quieter) and whisper on/off."""
+    user_id = (TURN.get() or {}).get("user")
+    if not user_id:
+        return ToolResult(ok=False, tool_name="voice_setting", error="no speaking user")
+    db = initalize_db()
+    now = VOICE | {k: v for k, v in db.get_settings(user_id).items() if k in VOICE}
+    changed = {}
+    try:
+        if args.get("volume") not in (None, ""):
+            changed["voice_volume"] = max(10, min(100, round(float(args["volume"]))))
+        elif args.get("change") in ("louder", "quieter"):
+            changed["voice_volume"] = max(10, min(100, now["voice_volume"] + (VOICE_STEP if args["change"] == "louder" else -VOICE_STEP)))
+    except (TypeError, ValueError):
+        return ToolResult(ok=False, tool_name="voice_setting", error="volume must be a number 10-100")
+    if isinstance(args.get("whisper"), bool):
+        changed["whisper"] = int(args["whisper"])
+    if not changed:
+        return ToolResult(ok=False, tool_name="voice_setting", error="say a volume, louder/quieter, or whisper on/off")
+    for name, value in changed.items():
+        db.set_setting(user_id, name, value)
+    after = now | changed
+    return ToolResult(ok=True, tool_name="voice_setting", data={
+        "voice_volume": after["voice_volume"], "whisper": bool(after["whisper"]),
+        "note": "It applies to this reply already. Confirm in a few words" + (", softly." if after["whisper"] else ".")})
+
+
+VOICE_SCHEMA = {"type": "function", "function": {
+    "name": "voice_setting",
+    "description": "Your own voice: its volume (separate from music) and whisper mode. 'talk louder', 'your voice to 40', "
+    "'whisper', 'speak normally'.",
+    "parameters": {"type": "object", "properties": {
+        "volume": {"type": "integer", "description": "10-100 percent"},
+        "change": {"type": "string", "enum": ["louder", "quieter"]},
+        "whisper": {"type": "boolean"}}}}}
+
+
 def settings(db: MemoryDB, user_id: str) -> Dict[str, int]:
     return SETTINGS | db.get_settings(user_id)
 

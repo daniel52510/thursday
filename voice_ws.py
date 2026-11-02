@@ -47,6 +47,7 @@ from fastapi import APIRouter, WebSocket, status
 
 import accounts
 import interject
+import mind
 import missions
 import music
 import rocky_voice
@@ -477,7 +478,7 @@ def _speakable(text: str) -> str:
     return _TIME.sub(_say_time, text)
 
 
-async def _tts(http: httpx.AsyncClient, text: str) -> bytes | None:
+async def _tts(http: httpx.AsyncClient, text: str, style: dict | None = None) -> bytes | None:
     text = _speakable(text)
     if not text:
         return None
@@ -488,7 +489,7 @@ async def _tts(http: httpx.AsyncClient, text: str) -> bytes | None:
         return None
     # Every word he says is Rocky's (rocky_voice.py): replies, fillers, briefings, announcements, calls.
     # ~18 ms of NumPy per 2.5 s sentence, off the event loop.
-    return await asyncio.to_thread(rocky_voice.process_wav, resp.content, text)
+    return await asyncio.to_thread(rocky_voice.process_wav, resp.content, text, style)
 
 
 # The first words of every business call (Twilio, when it lands): Florida needs every party's
@@ -564,7 +565,8 @@ async def _tts_streams(http: httpx.AsyncClient) -> bool:
     return _tts_caps["stream"]
 
 
-async def _tts_stream(http: httpx.AsyncClient, text: str, first_bytes: int = STREAM_FIRST_BYTES):
+async def _tts_stream(http: httpx.AsyncClient, text: str, first_bytes: int = STREAM_FIRST_BYTES,
+                      style: dict | None = None):
     """Yield one piece as WAVs while the server is still generating it, in Rocky's voice:
     rocky_voice.Stream processes as audio arrives (bit-identical to processing the whole piece)
     and holds back only its filters' look-ahead. The first WAV goes out at STREAM_FIRST_BYTES,
@@ -572,7 +574,7 @@ async def _tts_stream(http: httpx.AsyncClient, text: str, first_bytes: int = STR
     server's generation."""
     text = _speakable(text)
     rate = _tts_caps["rate"]
-    rocky = rocky_voice.Stream(rate, text)
+    rocky = rocky_voice.Stream(rate, text, style)  # style: his voice volume / whisper (mind.voice_style)
     async with http.stream("POST", f"{TTS_BASE_URL}/speak/stream", json={"text": text}, timeout=TTS_TIMEOUT) as resp:
         if resp.status_code == 204:  # nothing speakable after cleanup
             return
@@ -1114,7 +1116,7 @@ class Session:
                         # The reply's first audio waits for PREROLL_MS of it: see PREROLL_MS.
                         first_bytes = max(STREAM_FIRST_BYTES, _tts_caps["rate"] * 2 * PREROLL_MS // 1000) \
                             if sent == 0 else STREAM_FIRST_BYTES
-                        async for audio in _tts_stream(self.http, text, first_bytes):
+                        async for audio in _tts_stream(self.http, text, first_bytes, self._style()):
                             audio_s += _wav_seconds(audio)
                             await send(audio, started, seg)
                         seg["done"] = True
@@ -1161,6 +1163,11 @@ class Session:
         chunked clients queue it ahead of the reply, back to back."""
         if self.state != "thinking" or (filler := pick_filler(kind)) is None:
             return
+        style = self._style()
+        if style.get("whisper"):
+            return  # a full-voice "let me see" would break the whisper
+        if style.get("volume", 1.0) < 1.0:
+            filler = rocky_voice.scale_wav(filler, style["volume"])
         self._timing = timing  # before sending: playback_started may arrive first
         timing["filler"] = kind
         timing["filler_ms"] = _ms(self._speech_end)
@@ -1168,7 +1175,15 @@ class Session:
         await self._send_audio(filler)
 
     async def _synthesize(self, text: str) -> bytes | None:
-        return await _tts(self.http, text)
+        return await _tts(self.http, text, self._style())
+
+    def _style(self) -> dict:
+        """His voice for whoever is talking: volume and whisper (mind.voice_setting). Read per piece, so a
+        change made this turn is already in the reply that confirms it."""
+        try:
+            return mind.voice_style(self.user["id"])
+        except Exception:  # settings are a nicety: never let them stop a reply
+            return {}
 
     async def _fail(self, stage: str, message: str, input_desc: str, started: float) -> None:
         logger.error(

@@ -461,7 +461,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS)
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + [mind.VOICE_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -512,6 +512,34 @@ _MUSIC_NOW = re.compile(r"\bwho\s+(?:sings|is\s+singing|'?s\s+singing|sang|is\s+
                         r"|\bsong\s+name\b", re.I)
 _MUSIC_PLAY = re.compile(rf"{_LEAD}(?:play|put\s+on|throw\s+on)\s+(?!a\s+game|games?\b|with\b|along\b|it\s+cool\b)(.+)", re.I)
 _PLAYLIST_WORDS = re.compile(r"\b(?:music|songs|playlist|beats|mix|vibes|radio|hits|tunes|soundtrack|ost|jams)\b|\bfor\s+\w+", re.I)
+
+
+# His own voice (mind.voice_setting), checked before music: "talk louder" is him, "turn it up" is music.
+_VOICE_WHISPER_ON = re.compile(rf"{_LEAD}(?:whisper(?:\s+(?:to\s+me|please|mode(?:\s+on)?))?|start\s+whispering|"
+                               rf"speak\s+(?:in\s+a\s+whisper|softly)|use\s+your\s+(?:whisper|quiet)\s+voice)\W*$", re.I)
+_VOICE_WHISPER_OFF = re.compile(r"\b(?:stop\s+whispering|(?:speak|talk)\s+normally|(?:your\s+)?normal\s+voice|"
+                                r"whisper\s+mode\s+off|regular\s+voice|no\s+more\s+whispering)\b", re.I)
+_VOICE_LOUDER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:louder|up)\b|\byour\s+voice\s+(?:louder|up)\b"
+                           r"|\bcan'?t\s+hear\s+you\b", re.I)
+_VOICE_QUIETER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:quieter|softer|lower|more\s+quietly)\b"
+                            r"|\byour\s+voice\s+(?:quieter|down|softer|lower)\b|\byou'?re\s+(?:too\s+|so\s+)?loud\b", re.I)
+_VOICE_SET = re.compile(r"\b(?:your\s+voice|your\s+volume|voice\s+volume|(?:talk|speak)\s+at)\b.*?\b(?:to|at)?\s*(\d{1,3})\s*"
+                        r"(?:%|percent)?", re.I)
+
+
+def _voice_intent(text: str) -> tuple[str, dict] | None:
+    """A clear request about his own voice, as (tool, args); None leaves it to the model."""
+    if _VOICE_WHISPER_OFF.search(text):
+        return "voice_setting", {"whisper": False}
+    if _VOICE_WHISPER_ON.search(text):
+        return "voice_setting", {"whisper": True}
+    if m := _VOICE_SET.search(text):
+        return "voice_setting", {"volume": int(m[1])}
+    if _VOICE_LOUDER.search(text):
+        return "voice_setting", {"change": "louder"}
+    if _VOICE_QUIETER.search(text):
+        return "voice_setting", {"change": "quieter"}
+    return None
 
 
 def _music_intent(text: str) -> tuple[str, dict] | None:
@@ -926,6 +954,14 @@ async def _stream_prompt(
         result = await run_and_record(held, {"confirmed": True})
         yield {"type": "tool_result", "name": held, "ok": result.ok, "started": _started(held, result)}
         executed.add(f"{held}:{json.dumps({'confirmed': True})}")
+    elif voice_call := (_voice_intent(user_prompt) if mode in ("voice", "chat") else None):
+        name, args = voice_call
+        yield {"type": "tool", "name": name, "args": args}
+        result = await run_and_record(name, args)
+        yield {"type": "tool_result", "name": name, "ok": result.ok}
+        executed.add(f"{name}:{json.dumps(args, sort_keys=True)}")
+        messages.append({"role": "system", "content": f"{name} already ran for what he just said: follow its note, "
+                         "and don't call it again this turn." if result.ok else f"{name} failed ({result.error}). Say so."})
     elif music_call := (_music_intent(user_prompt) if mode in ("voice", "chat") else None):
         name, args = music_call
         yield {"type": "tool", "name": name, "args": args}

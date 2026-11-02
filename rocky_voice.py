@@ -35,6 +35,9 @@ ALIEN = float(os.getenv("ROCKY_ALIEN", "0"))  # 0 = off; above 0, vocoded chords
 # The stone-chamber comb and reflections, 0..1. Off since 2026-11-01: heard as reverb on the satellite,
 # whose room adds its own; 1 is the original chamber.
 GRANITE = float(os.getenv("ROCKY_GRANITE", "0"))
+# Whisper (style["whisper"], his "whisper" / "speak normally"): the vocoder puts his formants on breath
+# noise instead of a voice, so the words come with no voiced pitch; no chord layer; this much of the level.
+WHISPER_LEVEL = 0.55
 LAYER_GAIN = 0.85         # the ocarina layer, before CHORD_MIX: about the voice's own level
 DEVICE_GAIN = 1.4         # the band-limited translator voice loses its lows; this gives them back
 STREAM_MARGIN_S = 0.08    # streaming holds back this much: the filters' look-ahead (~50 ms) and some
@@ -143,6 +146,13 @@ def _vocode(voice: np.ndarray, carrier: np.ndarray) -> np.ndarray:
     return _istft(out * gain[:, None], win, 256, len(voice))
 
 
+def _whisper(voice: np.ndarray) -> np.ndarray:
+    """His words on breath: the voice's spectral envelope on seeded noise (same noise every pass, so
+    it streams: see Stream)."""
+    noise = np.random.default_rng(11).standard_normal(len(voice)).astype(np.float32)
+    return _vocode(voice, noise)
+
+
 def _saw(freq: np.ndarray, sr: int) -> np.ndarray:
     return 2 * ((np.cumsum(freq) / sr) % 1.0) - 1
 
@@ -210,16 +220,17 @@ _REED = {1: 1.0, 3: 1 / 3, 5: 1 / 5, 7: 1 / 7, 9: 1 / 9}  # clarinet: odd harmon
 
 # --- the processor -----------------------------------------------------------------------------
 
-def process(x: np.ndarray, sr: int, text: str = "", final: bool = True) -> np.ndarray:
+def process(x: np.ndarray, sr: int, text: str = "", final: bool = True, style: dict | None = None) -> np.ndarray:
     """One chunk of speech (float, -1..1) in Rocky's voice.
 
     Prefix-stable: every stage is causal or looks ahead under STREAM_MARGIN_S, so processing
     more of the same chunk never changes the start of the output. That's what lets Stream send
     audio while the TTS is still generating. `final` adds what needs the end in sight: the
-    question chime and the closing fade."""
+    question chime and the closing fade. style: his voice settings ({"whisper": bool, "volume": 0-1})."""
+    whisper, volume = bool((style or {}).get("whisper")), float((style or {}).get("volume", 1.0))
     voice = _shift(x, PITCH_SEMITONES)
     if len(voice) < sr // 20:  # a click of audio: nothing to sing under
-        return _limit(_granite(voice, sr))
+        return _limit(_granite(_whisper(voice) * WHISPER_LEVEL if whisper else voice, sr)) * volume
     hop = int(sr * HOP_S)
     frames = _frames(voice, hop)
     env = _envelope(frames)
@@ -260,7 +271,9 @@ def process(x: np.ndarray, sr: int, text: str = "", final: bool = True) -> np.nd
         layer[:edge] *= ramp
         if final:
             layer[-edge:] *= ramp[::-1]
-    return _limit((1 - CHORD_MIX) * speech + CHORD_MIX * layer)
+    if whisper:  # breath only: no chords under a whisper
+        return _limit(WHISPER_LEVEL * _granite(_whisper(voice), sr)) * volume
+    return _limit((1 - CHORD_MIX) * speech + CHORD_MIX * layer) * volume
 
 
 def _limit(x: np.ndarray) -> np.ndarray:
@@ -320,8 +333,8 @@ class Stream:
     grown 40%, but never more than STREAM_PASS_MAX_S of new audio between passes: bigger batches
     starved the satellite between them. ~75 ms of CPU per second of audio."""
 
-    def __init__(self, sr: int, text: str) -> None:
-        self.sr, self.text = sr, text
+    def __init__(self, sr: int, text: str, style: dict | None = None) -> None:
+        self.sr, self.text, self.style = sr, text, style
         self.x = np.zeros(0, np.float32)
         self.sent = 0
         self.next = sr // 10        # samples needed before the next pass
@@ -334,11 +347,11 @@ class Stream:
             return b""
         n = len(self.x)
         self.next = n + max(int(self.sr * 0.08), min(int(n * 0.4), int(self.sr * STREAM_PASS_MAX_S)))
-        y = process(self.x, self.sr, self.text, final=False)
+        y = process(self.x, self.sr, self.text, final=False, style=self.style)
         return self._take(y, len(y) - self.margin)
 
     def finish(self) -> bytes:
-        return self._take(process(self.x, self.sr, self.text, final=True), None) if len(self.x) else b""
+        return self._take(process(self.x, self.sr, self.text, final=True, style=self.style), None) if len(self.x) else b""
 
     def _take(self, y: np.ndarray, upto: int | None) -> bytes:
         upto = len(y) if upto is None else upto
@@ -348,10 +361,16 @@ class Stream:
         return (np.clip(out, -1, 1) * 32767).astype("<i2").tobytes()
 
 
-def process_wav(wav: bytes, text: str = "") -> bytes:
+def process_wav(wav: bytes, text: str = "", style: dict | None = None) -> bytes:
     """voice_ws._tts output in, the same WAV format out."""
     x, sr = _read(wav)
-    return _write(process(x, sr, text), sr)
+    return _write(process(x, sr, text, style=style), sr)
+
+
+def scale_wav(wav: bytes, gain: float) -> bytes:
+    """A ready WAV (a filler) at his voice volume."""
+    x, sr = _read(wav)
+    return _write(x * gain, sr)
 
 
 # --- phone audio (Twilio media streams: 8 kHz G.711 mu-law) ---------------------------------------
