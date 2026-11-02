@@ -662,6 +662,9 @@ class Session:
         was, self.state = self.state, state
         if state != "idle":
             missions.touch()  # keep the GPU for the voice while anyone's mid-conversation
+        if state == "thinking" and self.role == "satellite":
+            # Its own cues and clips follow his voice volume too (replies already have it, from rocky_voice).
+            await self.ws.send_json({"type": "voice", "volume": self._style().get("volume", 1.0)})
         # Music down while anyone talks to him, back after (music.py); off the event loop: it's HTTP.
         if was == "idle" and state != "idle":
             self._music_task = asyncio.create_task(asyncio.to_thread(music.duck))  # kept: unreferenced tasks can vanish

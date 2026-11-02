@@ -527,8 +527,13 @@ _VOICE_SET = re.compile(r"\b(?:your\s+voice|your\s+volume|voice\s+volume|(?:talk
                         r"(?:%|percent)?", re.I)
 
 
+_VOICE_NIGHT = re.compile(r"\b(?:(don'?t|do\s+not|stop|no)\s+)?whisper(?:ing)?\s+(?:at|during\s+the)\s+night\b", re.I)
+
+
 def _voice_intent(text: str) -> tuple[str, dict] | None:
     """A clear request about his own voice, as (tool, args); None leaves it to the model."""
+    if m := _VOICE_NIGHT.search(text):
+        return "voice_setting", {"night_whisper": not m[1]}
     if _VOICE_WHISPER_OFF.search(text):
         return "voice_setting", {"whisper": False}
     if _VOICE_WHISPER_ON.search(text):

@@ -74,13 +74,28 @@ Think for yourself. Return ONLY JSON:
 
 # How his voice sounds for this user (rocky_voice style): volume and whisper. Not in SETTINGS: they
 # change the audio, not what he says, so they stay out of the prompt.
-VOICE = {"voice_volume": 100, "whisper": 0}
+VOICE = {"voice_volume": 100, "whisper": 0, "night_whisper": 1, "normal_until": 0}
 VOICE_STEP = 20  # "louder" / "quieter"
+# Night: he whispers on his own, the same hours the satellite plays quieter (satellite NIGHT, 22-7).
+# "speak normally" at night holds until the night ends (normal_until, unix time); the next night he whispers again.
+NIGHT_HOURS = tuple(int(h) for h in os.getenv("THURSDAY_NIGHT", "22-7").split("-"))
+VOICE_TZ = ZoneInfo(os.getenv("THURSDAY_TZ", "America/New_York"))
 
 
-def voice_style(user_id: str) -> dict:
+def _night_ends(now: datetime) -> datetime | None:
+    """When this night ends (local), or None in the daytime."""
+    start, end = NIGHT_HOURS
+    if not (now.hour >= start or now.hour < end):
+        return None
+    day = now if now.hour < end else now + timedelta(days=1)
+    return day.replace(hour=end, minute=0, second=0, microsecond=0)
+
+
+def voice_style(user_id: str, now: datetime | None = None) -> dict:
     s = VOICE | {k: v for k, v in initalize_db().get_settings(user_id).items() if k in VOICE}
-    return {"volume": max(10, min(100, s["voice_volume"])) / 100, "whisper": bool(s["whisper"])}
+    now = now or datetime.now(VOICE_TZ)
+    night = bool(s["night_whisper"]) and _night_ends(now) is not None and now.timestamp() >= s["normal_until"]
+    return {"volume": max(10, min(100, s["voice_volume"])) / 100, "whisper": bool(s["whisper"]) or night}
 
 
 def voice_setting(args: Dict[str, Any]) -> ToolResult:
@@ -100,14 +115,19 @@ def voice_setting(args: Dict[str, Any]) -> ToolResult:
         return ToolResult(ok=False, tool_name="voice_setting", error="volume must be a number 10-100")
     if isinstance(args.get("whisper"), bool):
         changed["whisper"] = int(args["whisper"])
+        if not args["whisper"] and (ends := _night_ends(datetime.now(VOICE_TZ))):
+            changed["normal_until"] = int(ends.timestamp())  # "speak normally" at night: until morning
+    if isinstance(args.get("night_whisper"), bool):
+        changed["night_whisper"] = int(args["night_whisper"])
     if not changed:
         return ToolResult(ok=False, tool_name="voice_setting", error="say a volume, louder/quieter, or whisper on/off")
     for name, value in changed.items():
         db.set_setting(user_id, name, value)
     after = now | changed
+    whispering = voice_style(user_id)["whisper"]
     return ToolResult(ok=True, tool_name="voice_setting", data={
-        "voice_volume": after["voice_volume"], "whisper": bool(after["whisper"]),
-        "note": "It applies to this reply already. Confirm in a few words" + (", softly." if after["whisper"] else ".")})
+        "voice_volume": after["voice_volume"], "whisper_now": whispering, "night_whisper": bool(after["night_whisper"]),
+        "note": "It applies to this reply already. Confirm in a few words" + (", softly." if whispering else ".")})
 
 
 VOICE_SCHEMA = {"type": "function", "function": {
@@ -117,7 +137,8 @@ VOICE_SCHEMA = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {
         "volume": {"type": "integer", "description": "10-100 percent"},
         "change": {"type": "string", "enum": ["louder", "quieter"]},
-        "whisper": {"type": "boolean"}}}}}
+        "whisper": {"type": "boolean"},
+        "night_whisper": {"type": "boolean", "description": "Whisper on your own at night (22-7), on by default"}}}}}
 
 
 def settings(db: MemoryDB, user_id: str) -> Dict[str, int]:

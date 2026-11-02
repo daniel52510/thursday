@@ -260,6 +260,7 @@ class Player:
         self._music_live = False      # past the pre-roll: mixing
         self._mgain = 0.0             # music gain now, ramped toward its target block by block
         self.ducking = lambda: False  # set by the satellite: is anyone talking to him?
+        self.voice_gain = 1.0         # his voice volume for the cues and clips (server "voice"); replies have it already
         self._ref_base: int | None = None  # mic sample index where this aplay's sample 0 plays
         self.gain = 1.0  # for the current reply stream
         self.rate = self.RATE  # of the current reply stream
@@ -424,7 +425,7 @@ class Player:
 
     async def play_file(self, path: Path, gain: float | None = None) -> None:
         """Start a sound without waiting for it to finish."""
-        self._replace(_scaled(self._load(path), night_gain() if gain is None else gain))
+        self._replace(_scaled(self._load(path), night_gain() * self.voice_gain if gain is None else gain))
 
     async def play_file_and_wait(self, path: Path, gain: float | None = None) -> None:
         await self.play_file(path, gain)
@@ -432,7 +433,7 @@ class Player:
 
     async def loop_file(self, path: Path) -> None:
         """The sound over and over, joined sample to sample: no gap at the loop point."""
-        pcm = _scaled(self._load(path), night_gain())
+        pcm = _scaled(self._load(path), night_gain() * self.voice_gain)
         self._replace(pcm, loop=pcm)
 
     async def start_stream(self, rate: int) -> None:
@@ -804,6 +805,8 @@ class Satellite:
             kind = ev.get("type")
             if kind == "state":
                 await self._on_state(ev["state"])
+            elif kind == "voice":  # his voice volume, for the cues and clips (alarms stay at full volume)
+                self.player.voice_gain = max(0.1, min(1.0, float(ev.get("volume", 1.0))))
             elif kind == "alarm":
                 # The server is about to speak unprompted: a cue first, speech waits for it.
                 # Alarms ring at full volume, night or not; announcements get the soft ping.
@@ -820,7 +823,7 @@ class Satellite:
                 clip = ev.get("clip")
                 if self.state == "listening" and clip in BACKCHANNEL_CLIPS and not self.player.is_playing():
                     self._overlay = asyncio.create_task(self._play_overlay(
-                        SOUNDS / f"thursday-bc-{clip}.wav", float(ev.get("gain", 0.7))))
+                        SOUNDS / f"thursday-bc-{clip}.wav", float(ev.get("gain", 0.7)) * self.player.voice_gain))
                 else:
                     await self._send({"type": "overlay_ended"})
             elif kind == "audio_end":
