@@ -66,8 +66,8 @@ def main() -> None:
     him, him_wake, other, tvs = score(test_half), score(wake), score(others), score(tv)
     print(f"his held-out talking: median {np.median(him):.2f} min {him.min():.2f} | his wake phrase: median "
           f"{np.median(him_wake):.2f} 5th pct {np.percentile(him_wake, 5):.2f}")
-    him = np.concatenate([him, him_wake])
-    mine = talk + wake
+    # Thresholds from his held-out talking only: the wake phrase alone is too short to decide on (it overlaps
+    # other voices), so it isn't part of the verdict.
     print(f"other voices median {np.median(other):.2f} (max {other.max():.2f})"
           + (f" | TV median {np.median(tvs):.2f} (max {tvs.max():.2f})" if len(tvs) else " | TV: no speech in those clips"))
     impostors = np.concatenate([other, tvs])
