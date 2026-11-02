@@ -40,6 +40,7 @@ import random
 import re
 import time
 import wave
+from datetime import datetime, timezone
 
 import httpx
 import numpy as np
@@ -942,6 +943,10 @@ class Session:
             who = await asyncio.to_thread(speaker.identify, pcm)
             logger.info("speaker (shadow): %s %s score=%.2f (%d ms, %.1f s of audio) %r", who["verdict"], who["user"] or "-",
                         who["score"], _ms(started), len(pcm) / 2 / SAMPLE_RATE, " ".join(text.split()[:3]))
+            # Kept across rebuilds (docker logs aren't): verdict, score, length, time. Never his words.
+            with open(os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "brain"), "speaker_shadow.log"), "a") as f:
+                f.write(f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} {who['verdict']} {who['user'] or '-'} "
+                        f"{who['score']:.2f} {len(pcm) / 2 / SAMPLE_RATE:.1f}s\n")
         except Exception as exc:  # recognition is a nicety until it decides anything
             logger.info("speaker (shadow): failed: %s", type(exc).__name__)
 

@@ -1,16 +1,18 @@
 # thursday-core direct dependencies (pip resolves the rest).
 # STT and TTS have their own: requirements-stt.txt, requirements-tts.txt.
-fastapi==0.129.0
+fastapi==0.142.1
+# starlette 0.52.1 had 5 advisories (pip-audit, 2026-11-02), fixed by 1.3.1; fastapi 0.129 capped it under 1.0.
+starlette==1.8.0
 uvicorn==0.41.0
 websockets==17.1
 pydantic==2.12.5
 httpx==0.28.1
-requests==2.32.5
+requests==2.34.2
 # YouTube Music search and radio, signed out (music.py)
 ytmusicapi==1.12.3
 numpy==2.4.2
 onnxruntime==1.31.0
 tzdata==2025.3
 caldav==2.2.6
-cryptography==49.0.0
+cryptography==50.0.2
 trafilatura==2.0.0

@@ -186,7 +186,7 @@ class Accounts:
             updates["updated_at"] = _now()
             sets = ", ".join(f"{k} = :{k}" for k in updates)
             with self._connect() as conn:
-                conn.execute(f"UPDATE users SET {sets} WHERE id = :id", {**updates, "id": user_id})
+                conn.execute(f"UPDATE users SET {sets} WHERE id = :id", {**updates, "id": user_id})  # nosec B608: column names from the allowlist above, values bound
                 if "password_hash" in updates or updates.get("disabled"):
                     conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))  # log out everywhere
                 if updates.get("disabled"):

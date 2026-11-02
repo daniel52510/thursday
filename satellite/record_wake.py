@@ -16,7 +16,7 @@ negative: one long recording of anything that is NOT the wake word (talking,
 A double beep means the round is done.
 
 Clips land in ~/wake-data/<kind>/<label>/. Pull them to the Mac with:
-    rsync -a -e "ssh -i ~/.ssh/thursday_pi" blazd1@<pi>:wake-data/ wake-data/
+    rsync -a -e "ssh -i ~/.ssh/thursday_pi" <user>@<pi>:wake-data/ wake-data/
 """
 import argparse
 import subprocess

@@ -494,7 +494,7 @@ class MemoryDB:
         if updates:
             assignments = ", ".join(f"{k} = :{k}" for k in updates)
             with self._connect() as conn:
-                conn.execute(f"UPDATE approvals SET {assignments} WHERE id = :id", {**updates, "id": approval_id})
+                conn.execute(f"UPDATE approvals SET {assignments} WHERE id = :id", {**updates, "id": approval_id})  # nosec B608: column names from the allowlist above, values bound
 
     def create_watch(self, user_id: str, what: str, notify_when: str, every_hours: int, timezone: Optional[str],
                      expires_at: str) -> dict:
@@ -523,7 +523,7 @@ class MemoryDB:
         if updates:
             assignments = ", ".join(f"{k} = :{k}" for k in updates)
             with self._connect() as conn:
-                conn.execute(f"UPDATE watches SET {assignments} WHERE id = :id", {**updates, "id": watch_id})
+                conn.execute(f"UPDATE watches SET {assignments} WHERE id = :id", {**updates, "id": watch_id})  # nosec B608: column names from the allowlist above, values bound
 
     @staticmethod
     def _routine_row(row: sqlite3.Row) -> dict:
@@ -557,7 +557,7 @@ class MemoryDB:
         if updates:
             assignments = ", ".join(f"{k} = :{k}" for k in updates)
             with self._connect() as conn:
-                conn.execute(f"UPDATE routines SET {assignments} WHERE id = :id", {**updates, "id": routine_id})
+                conn.execute(f"UPDATE routines SET {assignments} WHERE id = :id", {**updates, "id": routine_id})  # nosec B608: column names from the allowlist above, values bound
 
     def get_mission(self, mission_id: str, user_id: Optional[str] = None) -> Optional[dict]:
         with self._connect() as conn:
@@ -582,7 +582,7 @@ class MemoryDB:
         if updates:
             assignments = ", ".join(f"{k} = :{k}" for k in updates)
             with self._connect() as conn:
-                conn.execute(f"UPDATE missions SET {assignments} WHERE id = :id", {**updates, "id": mission_id})
+                conn.execute(f"UPDATE missions SET {assignments} WHERE id = :id", {**updates, "id": mission_id})  # nosec B608: column names from the allowlist above, values bound
 
     # --- lists and notes -------------------------------------------------------
 
@@ -669,7 +669,7 @@ class MemoryDB:
             updates["updated_at"] = now_iso()
             assignments = ", ".join(f"{k} = :{k}" for k in updates)
             with self._connect() as conn:
-                conn.execute(f"UPDATE alarms SET {assignments} WHERE id = :id", {**updates, "id": alarm_id})
+                conn.execute(f"UPDATE alarms SET {assignments} WHERE id = :id", {**updates, "id": alarm_id})  # nosec B608: column names from the allowlist above, values bound
         return self.get_alarm(alarm_id)
 
     def delete_alarm(self, alarm_id: str, user_id: Optional[str] = None) -> bool:
@@ -770,7 +770,7 @@ class MemoryDB:
                              (content, now_iso(), conversation_id))
 
     def recent_messages(self, limit: int = 30, conversation_id: Optional[str] = None) -> List[dict]:
-        where, args = ("WHERE conversation_id = ?", (conversation_id, limit)) if conversation_id else ("", (limit,))
+        where, args = ("WHERE conversation_id = ?", (conversation_id, limit)) if conversation_id else ("", (limit,))  # constant SQL text
         with self._connect() as conn:
             rows = conn.execute(f"""
                 SELECT role, content, tool_name, tool_args_json, tool_result_json, created_at
