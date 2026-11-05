@@ -95,9 +95,10 @@ WARM_EVERY_S = 60.0  # Ollama cache warm-ups at most this often per session (ann
 # second model (interject.py, VOICE_EVALUATOR_MODEL) judges whether THURSDAY should cut in. Logged only:
 # nothing is said. Each call is ~0.4 s on the Mac's GPU while the user talks; replies never wait on it. 0 = off.
 EVALUATOR = os.getenv("VOICE_EVALUATOR", "0") != "0"
-# Who is talking (speaker.py): "shadow" logs each turn's verdict and changes nothing; "off" skips it.
+# Who is talking (speaker.py), on the satellite: "enforce" logs each turn's verdict and sensitive tools (calendar,
+# approvals, code jobs...) need his voice; "shadow" only logs; "off" skips it.
 # It runs beside the reply, never before it, so it costs a turn nothing.
-SPEAKER_ID = os.getenv("SPEAKER_ID", "shadow")
+SPEAKER_ID = os.getenv("SPEAKER_ID", "enforce")  # "enforce": sensitive tools need his voice (speaker.gate)
 SPEAKER_CARRY_S = 90.0  # a short clip keeps the session's last match this long ("carried")
 # Smart endpoint: the speculative transcript of a pause (STT_SPECULATE_MS) decides how long to wait.
 # A finished question ends the turn after QUICK ms; a trailing "and", "so", "um" or comma means they're
@@ -1124,10 +1125,13 @@ class Session:
             return
         if SPEAKER_ID != "off" and self.role == "satellite":
             self._speaker_task = asyncio.create_task(self._log_speaker(pcm, text))  # kept: unreferenced tasks can vanish
+            if SPEAKER_ID == "enforce":  # sensitive tools this turn wait for the verdict (speaker.gate)
+                speaker.CURRENT.set(self._speaker_task)
         await self._respond(text, timing)
 
-    async def _log_speaker(self, pcm: bytes, text: str) -> None:
-        """Shadow mode: who the voice sounds like, logged with the turn (no words: just the first few)."""
+    async def _log_speaker(self, pcm: bytes, text: str) -> dict | None:
+        """Who the voice sounds like, logged with the turn (no words: just the first few); the verdict is
+        what speaker.gate checks in enforce mode."""
         try:
             started = time.monotonic()
             who = await asyncio.to_thread(speaker.identify, pcm)
@@ -1140,14 +1144,16 @@ class Session:
                 who = {**who, "verdict": "carried", "user": last_user}
             elif not who.get("short"):
                 self._speaker_last = (None, 0.0)
-            logger.info("speaker (shadow): %s %s score=%.2f (%d ms, %.1f s of audio) %r", who["verdict"], who["user"] or "-",
+            logger.info("speaker (%s): %s %s score=%.2f (%d ms, %.1f s of audio) %r", SPEAKER_ID, who["verdict"], who["user"] or "-",
                         who["score"], _ms(started), len(pcm) / 2 / SAMPLE_RATE, " ".join(text.split()[:3]))
             # Kept across rebuilds (docker logs aren't): verdict, score, length, time. Never his words.
             with open(os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "brain"), "speaker_shadow.log"), "a") as f:
                 f.write(f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} {who['verdict']} {who['user'] or '-'} "
                         f"{who['score']:.2f} {len(pcm) / 2 / SAMPLE_RATE:.1f}s\n")
-        except Exception as exc:  # recognition is a nicety until it decides anything
-            logger.info("speaker (shadow): failed: %s", type(exc).__name__)
+            return who
+        except Exception as exc:  # unrecognised then: sensitive tools say no, chat goes on
+            logger.info("speaker: failed: %s", type(exc).__name__)
+            return None
 
     async def _respond(self, text: str, timing: dict, mode: str = "voice", context: dict | None = None) -> None:
         """LLM + TTS for one user message, or for a prompt the server writes

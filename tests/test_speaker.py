@@ -68,3 +68,27 @@ def test_enroll_drops_clips_that_dont_match(monkeypatch):
     monkeypatch.setattr(speaker, "embed", lambda x: odd if x[0] == 9 else mine)
     v, used = speaker.enroll(clips)
     assert used == 9 and float(v @ mine) > 0.99
+
+
+@pytest.mark.parametrize("who,tool,allowed", [
+    ({"verdict": "match", "user": "owner"}, "calendar_events", True),
+    ({"verdict": "carried", "user": "owner"}, "approval_decide", True),
+    ({"verdict": "unknown", "user": None}, "calendar_events", False),
+    ({"verdict": "unsure", "user": None, "short": True}, "send_to_phone", False),
+    ({"verdict": "unknown", "user": None}, "get_weather", True),   # chat and harmless tools stay open
+    (None, "improve_start", False),                                 # recognition failed: no
+])
+def test_sensitive_tools_need_his_voice(who, tool, allowed):
+    import asyncio
+
+    async def run():
+        async def check():
+            return who
+        speaker.CURRENT.set(asyncio.ensure_future(check()))
+        return await speaker.gate(tool)
+    assert (asyncio.run(run()) is None) == allowed
+
+
+def test_no_check_means_no_gate():  # the web page: it already knows who's logged in
+    import asyncio
+    assert asyncio.run(speaker.gate("calendar_events")) is None

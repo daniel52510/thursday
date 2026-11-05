@@ -43,6 +43,7 @@ from agent_loop import (
 )
 import accounts
 import mind
+import speaker
 import approvals
 import eridian
 import improvements
@@ -1248,7 +1249,10 @@ async def _stream_prompt(
 
     async def run_and_record(name: str, args: dict):
         t = time.monotonic()
-        result = await _run_tool(db, name, args, cid)
+        if refused := await speaker.gate(name):  # a sensitive tool, and the voice isn't his (satellite only)
+            result = ToolResult(ok=False, tool_name=name, error=refused)
+        else:
+            result = await _run_tool(db, name, args, cid)
         timing["tool_ms"] = timing.get("tool_ms", 0) + _ms(t)
         if result.ok and (name == "voice_setting" and ("volume" in args or "change" in args)
                           or name == "music_control" and str(args.get("action", "")).startswith(("volume", "set_volume"))):

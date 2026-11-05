@@ -13,6 +13,8 @@ runs on the CPU in ~20 ms for a 2 s utterance. Features are Kaldi-style 80-bin l
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import logging
 import os
 import threading
@@ -146,3 +148,31 @@ def identify(pcm16: bytes, prints: dict[str, np.ndarray] | None = None) -> dict:
     user, score = max(((u, float(p @ v)) for u, p in prints.items()), key=lambda t: t[1])
     verdict = "match" if score >= THRESHOLD else "unknown" if score < LOW else "unsure"
     return {"user": user if verdict == "match" else None, "score": round(score, 3), "verdict": verdict}
+
+
+# --- enforcement (voice_ws SPEAKER_ID=enforce) ----------------------------------------------------------------
+# Chat stays open to anyone in the room; these need his voice. On the satellite only: the logged-in web page
+# already knows who it is. 189 shadow turns (to 2026-11-05): 99 match, 72 unsure (short clips, now carried in a
+# session), 18 unknown, the ones checked all leftover audio from a since-fixed self-interrupt, not people.
+SENSITIVE = {"calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "approval_list",
+             "approval_decide", "send_to_phone", "improve_start", "code_review_start", "engineer_pass_now",
+             "mission_start", "routine_start", "watch_start", "note_find", "note_delete", "alarm_cancel"}
+CURRENT: contextvars.ContextVar = contextvars.ContextVar("speaker_check", default=None)  # this turn's identify task
+
+
+async def gate(tool: str) -> str | None:
+    """None when the tool may run for this turn's voice; else the error the model explains."""
+    task = CURRENT.get()
+    if task is None or tool not in SENSITIVE:
+        return None
+    try:
+        who = await asyncio.wait_for(asyncio.shield(task), timeout=3)
+    except (asyncio.TimeoutError, Exception):
+        who = None
+    if who and who.get("verdict") in ("match", "carried"):
+        return None
+    if who and who.get("verdict") == "unsure":  # too short or too quiet to tell: him, most likely (shadow data)
+        return ("voice_unsure: you couldn't tell it's him from that; ask him to say the whole request again, a bit "
+                "closer to the speaker. Friendly, one line.")
+    return ("voice_not_recognized: that voice isn't his, so this stays private; say so kindly in one line, no "
+            "details about his calendar or affairs")
