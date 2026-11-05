@@ -128,6 +128,7 @@ def test_code_ask_finds_the_code_a_plain_question_means(monkeypatch):
     import improvements
     monkeypatch.setattr(improvements, "TURN", type("T", (), {"get": staticmethod(lambda: {"user": improvements.OWNER})}))
     monkeypatch.setattr(improvements, "REPO", Path(__file__).resolve().parent.parent)
+    monkeypatch.setattr(improvements, "_meaning", lambda *a, **k: {})  # words only: no embedding model in tests
     names = lambda q: [c["name"] for c in improvements.code_ask({"question": q}).data["code"]]  # noqa: E731
     assert any("Endpointer" in n or "end_silence" in n for n in names("how do you decide when I stopped talking?"))
     assert any("barge" in n.lower() for n in names("how does barge-in work?"))
