@@ -126,9 +126,12 @@ def initalize_db() -> MemoryDB:
 
 
 def preload_model() -> None:
-    """Load the model into Ollama now (a request with no prompt only loads it)."""
+    """Load the model into Ollama now (a request with no prompt only loads it). With THURSDAY's num_ctx: without
+    it Ollama loaded the model's maximum (262k context, 19 GB), and MLX doesn't shrink a loaded model when the
+    chat calls ask for 8k later (2026-11-05)."""
     try:
-        requests.post(URL, json={"model": MODEL, "keep_alive": OLLAMA_KEEP_ALIVE}, timeout=OLLAMA_TIMEOUT)
+        requests.post(URL, json={"model": MODEL, "keep_alive": OLLAMA_KEEP_ALIVE, "options": OLLAMA_OPTIONS},
+                      timeout=OLLAMA_TIMEOUT)
     except requests.exceptions.RequestException as exc:
         print(f"[ollama] preload of {MODEL} failed: {exc}")
 
