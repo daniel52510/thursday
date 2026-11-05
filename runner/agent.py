@@ -248,7 +248,10 @@ def _brief() -> str:
         from brief import refresh
         text = refresh(WORK, log=lambda m: print(m, flush=True))
         head, _, _FILE_MAP = text.partition("\n\nThe files:\n")
-        return head + "\n\n(project_map lists every file with one line on what it does.)"
+        # Only the verified facts: the model-written overview didn't make jobs faster either (t2 14 steps,
+        # t4 26 vs 12 and 21 without it, 2026-11-05). It stays cached for answering questions about the code.
+        facts = head.partition("\n\nHow it fits together:")[0]
+        return facts + "\n\n(project_map lists every file with one line on what it does.)"
     except Exception as exc:  # Ollama busy or down: a job still runs on the plain map
         print(f"brief unavailable ({type(exc).__name__}): using the code map", flush=True)
         _FILE_MAP = _code_map()
