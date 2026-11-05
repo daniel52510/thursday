@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -353,7 +354,67 @@ def _flag(name: str, on: bool = True) -> None:
         pass
 
 
+# Memory: on 2026-11-05 the 31b (~30 GB) loaded next to the 26b chat model pushed the Mac's swap to 99%,
+# Ollama hung for everyone (THURSDAY's voice too) and a job waited 47 min on a dead call. Now a call
+# waits until the Mac has room for the 31b (scripts/host_mem.sh writes /out/host-mem.json; swap "used"
+# is ignored: macOS keeps it allocated long after), and no call may run longer than CALL_LIMIT_S.
+NEED_GB = float(os.getenv("RUNNER_NEED_GB", "34"))   # the 31b at 16k context (~30 GB) plus headroom
+CALL_LIMIT_S = 300
+CALL_TRIES = 3
+
+
+class CallTimeout(Exception):
+    pass
+
+
+def _model_loaded() -> bool:
+    try:
+        ps = httpx.get(CHAT_URL.rsplit("/api/", 1)[0] + "/api/ps", timeout=5).json()
+        return any(m.get("name", "").startswith(MODEL) for m in ps.get("models", []))
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
+def _wait_for_memory() -> None:
+    """Until the Mac has room for the model (skipped when it's already loaded, or the host file is stale)."""
+    said = False
+    while not _model_loaded():
+        try:
+            mem = json.loads((FLAGS / "host-mem.json").read_text())
+        except (OSError, ValueError):
+            return  # no helper running: the call limit still protects us
+        if time.time() - mem.get("at", 0) > 60:
+            return
+        if mem.get("available_gb", 0) >= NEED_GB and mem.get("pressure", 1) == 1:
+            return
+        if not said:
+            print(f"waiting for memory: {mem.get('available_gb')} GB free, need {NEED_GB:.0f}", flush=True)
+            said = True
+        time.sleep(15)
+
+
+def _alarm(*_):
+    raise CallTimeout(f"model call over {CALL_LIMIT_S} s")
+
+
 def _chat(http: httpx.Client, messages: list[dict], tools: list[dict]) -> tuple[dict, float]:
+    """_chat_once with a memory wait before it and a hard time limit on it, retried CALL_TRIES times."""
+    for attempt in range(1, CALL_TRIES + 1):
+        _wait_for_memory()
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.alarm(CALL_LIMIT_S)
+        try:
+            return _chat_once(http, messages, tools)
+        except (CallTimeout, httpx.HTTPError) as exc:
+            print(f"model call failed ({exc}); try {attempt} of {CALL_TRIES}", flush=True)
+            if attempt == CALL_TRIES:
+                raise
+        finally:
+            signal.alarm(0)
+    raise CallTimeout("unreachable")
+
+
+def _chat_once(http: httpx.Client, messages: list[dict], tools: list[dict]) -> tuple[dict, float]:
     """One model call: after a quiet spell, streamed, and dropped (then retried) the moment anyone
     talks, the way missions do. Returns the message and the seconds of actual work."""
     body = {"model": MODEL, "messages": messages, "tools": tools, "stream": True, "think": True,
