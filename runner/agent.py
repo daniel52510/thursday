@@ -25,6 +25,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -110,6 +111,59 @@ def edit_file(args: dict) -> dict:
     return {"ok": True, "path": _rel(p)}
 
 
+def _node_span(tree: ast.AST, qualified: str) -> tuple[int, int, int] | None:
+    """(first line incl. decorators, last line, indent column) of the def/class/constant named qualified."""
+    def walk(body, prefix):
+        for node in body:
+            names = []
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names = [node.name]
+            elif isinstance(node, ast.Assign):
+                names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names = [node.target.id]
+            for n in names:
+                if f"{prefix}{n}" == qualified:
+                    first = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+                    return first, node.end_lineno or node.lineno, node.col_offset
+            if isinstance(node, ast.ClassDef) and (hit := walk(node.body, f"{prefix}{node.name}.")):
+                return hit
+        return None
+    return walk(tree.body, "")
+
+
+def replace_symbol(args: dict) -> dict:
+    """Replace a whole definition by name: its current lines come from the syntax tree, so earlier edits
+    never leave it pointing at the wrong place (benchmark t4: 9 line edits for 3 changes, 2026-11-05)."""
+    from codeindex import CodeIndex
+    hits = [h for h in CodeIndex.build(WORK).find(str(args["name"])) ]
+    exact = [h for h in hits if h["name"] == args["name"]] or [h for h in hits if h["name"].endswith("." + str(args["name"]))]
+    exact = exact or [h for h in hits if h["name"].rsplit(".", 1)[-1] == args["name"]]
+    if len(exact) != 1:
+        return {"ok": False, "error": f"{len(exact)} definitions match; use the qualified name (Class.method) or the file",
+                "matches": [f"{h['name']} at {h['at']}" for h in hits[:10]]}
+    hit = exact[0]
+    rel = hit["at"].split(":")[0]
+    if args.get("path") and _rel(_path(args["path"])) != rel:
+        return {"ok": False, "error": f"{hit['name']} is in {rel}, not {args['path']}"}
+    p = _writable(rel)
+    text = p.read_text()
+    span = _node_span(ast.parse(text), hit["name"])
+    if span is None:
+        return {"ok": False, "error": f"couldn't locate {hit['name']} in {rel}"}
+    first, last, col = span
+    new = textwrap.dedent(str(args["new"]).strip("\n"))
+    new = "\n".join((" " * col + line) if line.strip() else "" for line in new.splitlines())
+    lines = text.splitlines(keepends=True)
+    out = "".join(lines[:first - 1]) + new + "\n" + "".join(lines[last:])
+    try:
+        ast.parse(out)
+    except SyntaxError as exc:
+        return {"ok": False, "error": f"not applied, the file wouldn't parse: {exc.msg} at line {exc.lineno}"}
+    p.write_text(out)
+    return {"ok": True, "path": rel, "replaced": f"{hit['name']} (was lines {first}-{last})"}
+
+
 def edit_lines(args: dict) -> dict:
     """Replace lines start..end (inclusive, as read_file numbers them): for when old text won't match."""
     p = _writable(args["path"])
@@ -180,7 +234,7 @@ def outline(args: dict) -> dict:
     return {"outline": _index().outline(rel)[:150]}
 
 
-TOOLS = {"project_map": lambda a: project_map(a), "find_symbol": find_symbol, "who_calls": who_calls, "outline": outline, "list_files": list_files, "read_file": read_file, "search": search, "edit_file": edit_file,
+TOOLS = {"project_map": lambda a: project_map(a), "replace_symbol": replace_symbol, "find_symbol": find_symbol, "who_calls": who_calls, "outline": outline, "list_files": list_files, "read_file": read_file, "search": search, "edit_file": edit_file,
          "edit_lines": edit_lines, "show_diff": show_diff, "undo_file": undo_file, "run_tests": run_tests,
          "create_file": create_file, "run_checks": run_checks}
 
@@ -205,6 +259,11 @@ SCHEMAS = [
             {"path": _S, "start": {"type": "integer"}}, ["path"]),
     _schema("search", "git grep -E across the repo (or a folder): find where something is.",
             {"pattern": _S, "dir": _S, "context": {"type": "integer", "description": "Lines around each hit, 0-5"}}, ["pattern"]),
+    _schema("replace_symbol", "Replace a whole function, method, class or constant by name with new code (the full "
+            "definition, decorators included). Best for changing a function or a regex/schema: no line numbers or exact "
+            "matching needed, it finds the current lines itself and keeps the indentation.",
+            {"name": {"type": "string", "description": "e.g. _music_intent, Session._warm, _MUSIC_PLAY"},
+             "new": _S, "path": {"type": "string", "description": "optional: the file, to be sure"}}, ["name", "new"]),
     _schema("edit_lines", "Replace lines start..end (inclusive, numbered as read_file shows) with new text. Use it when "
             "edit_file's old text won't match; read the lines first.",
             {"path": _S, "start": {"type": "integer"}, "end": {"type": "integer"}, "new": _S}, ["path", "start", "end", "new"]),
@@ -319,7 +378,7 @@ def _system() -> str:
 
 How to work:
 - Start with a short plan in your first reply's text (2-4 lines: which files, what change, how you'll check it), then use the tools.
-- Find the code first: find_symbol for a name, outline for a file's layout, then read_file just those lines (search for text that isn't a name). Before changing a function, who_calls shows everything it affects. Read before you edit; edit_file needs the exact current text (edit_lines when it won't match).
+- Find the code first: find_symbol for a name, outline for a file's layout, then read_file just those lines (search for text that isn't a name). Before changing a function, who_calls shows everything it affects. Read before you edit. To change a function or constant, replace_symbol with its whole new definition; edit_file for a small change inside one (exact text); edit_lines only as a last resort.
 - Make the smallest change that does the task. Match the surrounding style, comments and naming. Don't refactor or touch unrelated code.
 - Protected files (runner/, approvals.py, vault.py, docker-compose, Dockerfiles, .env, .gitignore, .dockerignore, infra/, deploy scripts) can't be changed. If the task needs one, say so in finish without changing it.
 - A bug fix comes with a test in tests/ that fails without your fix (run_tests to see it pass). Match the tests already there.
