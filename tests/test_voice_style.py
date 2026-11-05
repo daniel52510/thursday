@@ -39,13 +39,13 @@ def test_turn_it_up_is_still_music():
 
 def test_settings_persist_and_clamp(owner_turn):
     owner_turn("talk louder")
-    assert mind.voice_style("owner", NOON) == {"volume": 1.0, "whisper": False}
+    assert mind.voice_style("owner", NOON) == {"volume": 1.0, "whisper": False, "voice": "leo"}
     assert mind.voice_setting({"change": "louder"}).data["voice_volume"] == 100  # already at the top
     for _ in range(6):
         mind.voice_setting({"change": "quieter"})
     assert mind.voice_style("owner", NOON)["volume"] == 0.01 ** 2  # 1%: near silence, not none
     mind.voice_setting({"volume": 60, "whisper": True})
-    assert mind.voice_style("owner", NOON) == {"volume": pytest.approx(0.36), "whisper": True}
+    assert mind.voice_style("owner", NOON) == {"volume": pytest.approx(0.36), "whisper": True, "voice": "leo"}
 
 
 def test_volume_curve_is_perceptual(owner_turn):
@@ -204,3 +204,10 @@ def test_voice_speed_intents_and_style(owner_turn):
     mind.voice_setting({"change": "normal_speed"})
     assert "tempo" not in mind.voice_style("owner", NOON)
 
+
+
+def test_voice_switch_between_rocky_and_tara(owner_turn):
+    assert mind.voice_setting({"voice": "tara"}).data["voice"] == "tara"
+    assert mind.voice_style("owner", NOON)["voice"] == "tara"
+    assert mind.voice_setting({"voice": "rocky"}).data["voice"] == "rocky"
+    assert mind.voice_style("owner", NOON)["voice"] == "leo"

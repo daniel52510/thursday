@@ -160,7 +160,26 @@ def run_checks(_: dict | None = None) -> dict:
     return {"passed": res.returncode == 0, "output": (res.stdout + res.stderr)[-3000:]}
 
 
-TOOLS = {"list_files": list_files, "read_file": read_file, "search": search, "edit_file": edit_file,
+def _index():
+    # Rebuilt per call (~0.1 s for this repo): it always reflects the edits made so far.
+    from codeindex import CodeIndex
+    return CodeIndex.build(WORK)
+
+
+def find_symbol(args: dict) -> dict:
+    return {"definitions": _index().find(str(args["name"]))}
+
+
+def who_calls(args: dict) -> dict:
+    return {"callers": _index().callers(str(args["name"]))}
+
+
+def outline(args: dict) -> dict:
+    rel = _rel(_path(args["path"]))
+    return {"outline": _index().outline(rel)[:150]}
+
+
+TOOLS = {"find_symbol": find_symbol, "who_calls": who_calls, "outline": outline, "list_files": list_files, "read_file": read_file, "search": search, "edit_file": edit_file,
          "edit_lines": edit_lines, "show_diff": show_diff, "undo_file": undo_file, "run_tests": run_tests,
          "create_file": create_file, "run_checks": run_checks}
 
@@ -172,6 +191,12 @@ def _schema(name: str, desc: str, props: dict, required: list[str]) -> dict:
 
 _S = {"type": "string"}
 SCHEMAS = [
+    _schema("find_symbol", "Where a function, class or method is defined: file:lines, signature, what it does. "
+            "Faster than search for a name.", {"name": {"type": "string", "description": "e.g. warm_cache or Session._warm"}}, ["name"]),
+    _schema("who_calls", "Every function that calls this name, with the line of each call: what a change would affect.",
+            {"name": _S}, ["name"]),
+    _schema("outline", "A file's classes and functions with their line ranges and one-line docs, without reading it all.",
+            {"path": _S}, ["path"]),
     _schema("list_files", "Tracked files under a folder.", {"dir": _S}, []),
     _schema("read_file", f"Read {READ_LINES} lines of a file, numbered, from start (default 1).",
             {"path": _S, "start": {"type": "integer"}}, ["path"]),
@@ -194,7 +219,7 @@ SCHEMAS = [
 
 
 # Review mode (improvements.code_review_start): read the code, change nothing, report findings.
-READ_ONLY = ("list_files", "read_file", "search")
+READ_ONLY = ("find_symbol", "who_calls", "outline", "list_files", "read_file", "search")
 # A task in these words is a bug fix: it must come with a test (in code, not just the prompt: the
 # benchmark's t5 fix came back without one, 2026-11-01).
 BUG_TASK = re.compile(r"\b(?:bug|fix|broken|breaks?|wrong|crash(?:es)?|error|fails?|instead|doesn'?t|isn'?t|won'?t)\b", re.I)
@@ -245,7 +270,7 @@ def _review_system() -> str:
 
 How to work:
 - Focus on what the task names; otherwise on the code that handles his requests (agent_stream.py, voice_ws.py, the tools).
-- Read the actual code (search, then read_file around the hits). Only report what you saw in the code: a file and line, and a concrete situation where it goes wrong.
+- Read the actual code (find_symbol / outline / search, then read_file around the hits; who_calls to follow a value to where it's used). Only report what you saw in the code: a file and line, and a concrete situation where it goes wrong.
 - Real bugs over style: wrong behavior, crashes, races, a request that can silently do nothing, a claim made without the action, security holes, latency costs. Skip naming, formatting and taste.
 - At most 6 findings, most serious first. Fewer good findings beat many weak ones; none is fine if you found none.
 - Quote the exact code line(s) for each finding. Don't guess what a library returns: if a finding depends on that, leave it out.
@@ -261,7 +286,7 @@ def _system() -> str:
 
 How to work:
 - Start with a short plan in your first reply's text (2-4 lines: which files, what change, how you'll check it), then use the tools.
-- Find the code first (the map below says what each file does; search, then read_file around the hits). Read before you edit; edit_file needs the exact current text (edit_lines when it won't match).
+- Find the code first: find_symbol for a name, outline for a file's layout, then read_file just those lines (search for text that isn't a name). Before changing a function, who_calls shows everything it affects. Read before you edit; edit_file needs the exact current text (edit_lines when it won't match).
 - Make the smallest change that does the task. Match the surrounding style, comments and naming. Don't refactor or touch unrelated code.
 - Protected files (runner/, approvals.py, vault.py, docker-compose, Dockerfiles, .env, .gitignore, .dockerignore, infra/, deploy scripts) can't be changed. If the task needs one, say so in finish without changing it.
 - A bug fix comes with a test in tests/ that fails without your fix (run_tests to see it pass). Match the tests already there.

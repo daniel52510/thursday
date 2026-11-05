@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 COPY requirements.txt requirements-test.txt /tmp/
 RUN pip install --no-cache-dir -r /tmp/requirements.txt -r /tmp/requirements-test.txt \
     && useradd -m -u 1000 runner && mkdir /work /out && chown runner /work /out
-COPY runner/agent.py runner/checks.py /runner/
+COPY runner/agent.py runner/checks.py runner/codeindex.py /runner/
 USER runner
 # /repo.git is the host repo's .git, mounted read-only and owned by someone else.
 RUN git config --global --add safe.directory '*'
