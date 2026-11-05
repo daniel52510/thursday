@@ -5,3 +5,4 @@
 !runner/agent.py
 !runner/checks.py
 !runner/codeindex.py
+!runner/brief.py

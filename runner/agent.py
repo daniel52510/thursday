@@ -233,6 +233,16 @@ Drop anything that depends on a guess about what a library returns, or that the 
 Reply JSON only: {"keep": [indexes of the findings that are real]}."""
 
 
+def _brief() -> str:
+    """The project brief (brief.py), refreshed for this checkout; the plain code map if that fails."""
+    try:
+        from brief import refresh
+        return refresh(WORK, log=lambda m: print(m, flush=True))
+    except Exception as exc:  # Ollama busy or down: a job still runs on the plain map
+        print(f"brief unavailable ({type(exc).__name__}): using the code map", flush=True)
+        return "The code (file: what it does):\n" + _code_map()
+
+
 def _code_map() -> str:
     """Each Python file and the first line of what it says it does: where to look first."""
     rows = []
@@ -276,6 +286,8 @@ How to work:
 - Quote the exact code line(s) for each finding. Don't guess what a library returns: if a finding depends on that, leave it out.
 - You have {MAX_STEPS} tool calls. Then call report_review once.
 
+{_brief()}
+
 The project's guide (CLAUDE.md):
 {guide}"""
 
@@ -294,8 +306,7 @@ How to work:
 - If the task is unclear or can't be done safely, change nothing and call finish explaining why.
 - You have {MAX_STEPS} tool calls and about {MAX_WORK_S // 60} minutes.
 
-The code (file: what it does):
-{_code_map()}
+{_brief()}
 
 The project's guide (CLAUDE.md):
 {guide}"""
