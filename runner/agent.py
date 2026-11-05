@@ -660,12 +660,24 @@ def _task_context(task: str) -> str:
 
     ranked = sorted((x for x in idx.symbols if not x.path.startswith(("tests/", "runner/")) and score(x) > 0),
                     key=score, reverse=True)
+    # Constants in the same file that name a picked definition (TOOL_SCHEMAS for a tool function, a table of
+    # handlers): a change to the function often needs them too. Benchmark t3 left the schema out: the model
+    # never saw it (2026-11-05).
+    top = ranked[:6]
+    for sym in list(top):
+        short = sym.name.rsplit(".", 1)[-1]
+        for c in idx.symbols:
+            if c.kind == "constant" and c.path == sym.path and c not in top and len(top) < 9:
+                src = "\n".join((WORK / c.path).read_text().splitlines()[c.line - 1:c.end])
+                if re.search(rf"\b{re.escape(short)}\b", src):
+                    top.append(c)
+    ranked = top + [x for x in ranked if x not in top]
     out, used = [], 0
     for name in files:
         outline = "\n".join(idx.outline(name)[:60])
         out.append(f"Outline of {name}:\n{outline}")
         used += len(outline)
-    for sym in ranked[:8]:
+    for sym in ranked[:9]:
         src = "\n".join((WORK / sym.path).read_text().splitlines()[sym.line - 1:sym.end][:150])
         if used + len(src) > CONTEXT_CHARS:
             break
@@ -740,7 +752,7 @@ def _edit_first(http: httpx.Client, task: str, steps: list) -> tuple[dict | None
     context, work = _task_context(task), 0.0
     messages = [{"role": "system", "content": EDIT_SYSTEM},
                 {"role": "user", "content": f"Task: {task}\n\nThe code it's about:\n\n{context}"}]
-    critiqued = False
+    critiqued = 0  # the critic sees every attempt after it sends one back (t3's second try went unchecked)
     for attempt in range(1, EDIT_TRIES + 1):
         msg, secs = _chat(http, messages, [])
         work += secs
@@ -758,8 +770,8 @@ def _edit_first(http: httpx.Client, task: str, steps: list) -> tuple[dict | None
                 back = f"Checks failed:\n{checks['output'][-1500:]}"
             elif BUG_TASK.search(task) and not any(c.startswith("tests/") for c in changed):
                 back = "This is a bug fix: add a TEST section that fails without the fix."
-            elif not critiqued:
-                critiqued = True
+            elif critiqued < EDIT_TRIES:
+                critiqued += 1
                 verdict, secs = _chat(http, [{"role": "system", "content": CRITIC}, {"role": "user", "content":
                                       f"Task: {task}\n\nDiff:\n{_git('diff')[:8000]}"}], [])
                 work += secs
