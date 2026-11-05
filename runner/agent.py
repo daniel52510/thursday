@@ -136,7 +136,10 @@ def replace_symbol(args: dict) -> dict:
     """Replace a whole definition by name: its current lines come from the syntax tree, so earlier edits
     never leave it pointing at the wrong place (benchmark t4: 9 line edits for 3 changes, 2026-11-05)."""
     from codeindex import CodeIndex
-    hits = [h for h in CodeIndex.build(WORK).find(str(args["name"])) ]
+    hits = CodeIndex.build(WORK).find(str(args["name"]), limit=200)
+    if args.get("path"):  # a named file narrows first: TOOL_SCHEMAS is in 5 files (benchmark t3, 2026-11-05)
+        want = _rel(_path(args["path"]))
+        hits = [h for h in hits if h["at"].split(":")[0] == want]
     exact = [h for h in hits if h["name"] == args["name"]] or [h for h in hits if h["name"].endswith("." + str(args["name"]))]
     exact = exact or [h for h in hits if h["name"].rsplit(".", 1)[-1] == args["name"]]
     if len(exact) != 1:
@@ -144,8 +147,6 @@ def replace_symbol(args: dict) -> dict:
                 "matches": [f"{h['name']} at {h['at']}" for h in hits[:10]]}
     hit = exact[0]
     rel = hit["at"].split(":")[0]
-    if args.get("path") and _rel(_path(args["path"])) != rel:
-        return {"ok": False, "error": f"{hit['name']} is in {rel}, not {args['path']}"}
     p = _writable(rel)
     text = p.read_text()
     span = _node_span(ast.parse(text), hit["name"])

@@ -43,3 +43,10 @@ def test_edit_first_sections_apply_and_bad_names_are_reported(work):
     text = (work / "m.py").read_text()
     assert "    def go(self):\n        return 5" in text and text.endswith("def extra():\n    return 1\n")
     assert meta["title"] == "t" and len(errors) == 1 and "missing" in errors[0]
+
+
+def test_a_named_file_settles_a_name_defined_in_several(work):
+    (work / "n.py").write_text("TOOLS = [1]\n")
+    (work / "o.py").write_text("TOOLS = [2]\n")
+    assert agent.replace_symbol({"name": "TOOLS", "path": "o.py", "new": "TOOLS = [3]"})["ok"]
+    assert (work / "o.py").read_text() == "TOOLS = [3]\n" and (work / "n.py").read_text() == "TOOLS = [1]\n"
