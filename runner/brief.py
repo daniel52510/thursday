@@ -31,11 +31,28 @@ ROLLUP_WORDS = 300
 FILE_PROMPT = """You write one line of a code map for an engineer about to change this codebase.
 In ONE sentence (at most 30 words), say what this file does and its main entry points or data, concretely
 (name the functions or tools that matter). No preamble, no "This file". Plain text."""
+# Checked against the code by hand (2026-11-05): the model's first overview got exactly these wrong.
+# They go into the overview prompt as ground truth and sit at the top of the brief. Update them when
+# the architecture changes.
+FACTS = """- Live speech: voice_ws.py streams each reply sentence by sentence from the Orpheus TTS server (port 9001,
+  ~/thursday-voice, outside this repo) through _tts_stream. voice_out.py is the old Qwen TTS server (port 9000),
+  a fallback only. STT is voice_in.py / stt_native.py (faster-whisper).
+- A new tool needs both: its function registered in tools.py's TOOLS dict (or a domain module's tool list),
+  and its JSON schema in agent_stream.py's TOOLS list (which also adds missions/notes/approvals/lights schemas).
+  Clear requests can be routed in code before the model (agent_stream._voice_intent, _music_intent, ...).
+- Persona: agent_stream.py holds both personalities: SYSTEM_PROMPT (Rocky) and TARA_PROMPT (Tara), plus STYLE /
+  STYLE_TARA and the example banks. mind.py holds settings (honesty/humor/discretion, voice) and stances.
+  The voice setting picks the persona (mind.voice_style "voice": leo = Rocky, tara = Tara).
+- eridian.py (Rocky's grammar) and rocky_voice.py (Rocky's sound) apply only when Rocky is the voice.
+- runner/ (this agent's own code) is protected: changes there are refused."""
+
 ROLLUP_PROMPT = f"""You write the architecture overview an engineer reads before changing this codebase.
 From the one-line file summaries below, in at most {ROLLUP_WORDS} words of plain text: the main parts and
 what each owns; how one spoken request flows through them, step by step, naming files; and where the
 usual changes go (a new tool, the persona, voice timing, the satellite, tests). Only what the summaries
-support. No Markdown headings; short paragraphs."""
+support. No Markdown headings; short paragraphs. These facts are verified and override anything the
+summaries suggest; never contradict them:
+{FACTS}"""
 
 
 def _ask(http: httpx.Client, system: str, user: str) -> str:
@@ -54,7 +71,12 @@ def _load() -> dict:
         return {}
 
 
-def refresh(root: Path, log=print) -> str:
+def _save(cache: dict) -> None:
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    CACHE.write_text(json.dumps(cache, indent=1))
+
+
+def refresh(root: Path, log=lambda m: print(m, flush=True)) -> str:
     """Bring the brief up to date with the code in root; returns it as text for a prompt."""
     cache = _load()
     files, idx = cache.get("files", {}), CodeIndex.build(root)
@@ -73,22 +95,23 @@ def refresh(root: Path, log=print) -> str:
                     outline = "\n".join(idx.outline(rel)[:80])
                     summary = _ask(http, FILE_PROMPT, f"File: {rel}\n\nOutline:\n{outline}\n\nSource (start):\n{text[:FILE_CHARS]}")
                 files[rel] = {"sha": sha, "summary": summary}
+                cache["files"] = files
+                _save(cache)  # after every file: a crash halfway keeps what's done
                 changed += 1
                 log(f"brief: {rel} ({time.monotonic() - started:.1f} s)")
             rows.append(f"- {rel}: {files[rel]['summary']}")
         files = {k: v for k, v in files.items() if k in paths}  # deleted files drop out
         listing = "\n".join(rows)
-        key = hashlib.sha1(listing.encode()).hexdigest()
+        key = hashlib.sha1((FACTS + listing).encode()).hexdigest()  # new facts redo the overview
         if cache.get("rollup_key") != key:
             started = time.monotonic()
             cache["rollup"] = _ask(http, ROLLUP_PROMPT, listing)
             cache["rollup_key"] = key
             log(f"brief: architecture overview ({time.monotonic() - started:.1f} s)")
     cache["files"] = files
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE.write_text(json.dumps(cache, indent=1))
+    _save(cache)
     log(f"brief: {len(paths)} files, {changed} refreshed")
-    return f"How it fits together:\n{cache['rollup']}\n\nThe files:\n{listing}"
+    return f"Verified facts:\n{FACTS}\n\nHow it fits together:\n{cache['rollup']}\n\nThe files:\n{listing}"
 
 
 if __name__ == "__main__":  # a full build from the base branch, outside any job
