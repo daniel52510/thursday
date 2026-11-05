@@ -32,6 +32,7 @@ Protocol
                             after the last (once audio_end has arrived).
 """
 import asyncio
+import collections
 import io
 import json
 import logging
@@ -257,6 +258,7 @@ for _name in ("uvicorn.error", "uvicorn.access"):
 
 router = APIRouter()
 SATELLITES: set["Session"] = set()  # connected satellites, for server-initiated speech (alarms)
+RECENT_TURNS: collections.deque = collections.deque(maxlen=50)  # numeric turn timings, for diagnostics.system_status
 
 
 def same_origin(origin: str | None, host: str | None) -> bool:
@@ -1432,6 +1434,7 @@ class Session:
 
     def _log_timing(self) -> None:
         logger.info("turn timing: %s", " ".join(f"{k}={v}" for k, v in self._timing.items()))
+        RECENT_TURNS.append({"at": time.time(), **{k: v for k, v in self._timing.items() if isinstance(v, (int, float))}})
         self._timing = None
 
     async def announce(self, *, audio: list[bytes] | None = None, prompt: str = "",

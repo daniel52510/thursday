@@ -9,7 +9,7 @@ import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "improve_start", "improve_status", "self_review_now", "code_review_start", "code_ask", "music_play", "music_control", "music_now", "music_recommend", "music_output", "voice_setting", "light_set", "light_status"]
+    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "improve_start", "improve_status", "self_review_now", "code_review_start", "code_ask", "project_list", "system_status", "music_play", "music_control", "music_now", "music_recommend", "music_output", "voice_setting", "light_set", "light_status"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -628,6 +628,11 @@ def _music(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
         return getattr(music, name)(args)
     return run
 
+def _diagnostics(args: Dict[str, Any]) -> ToolResult:
+    import diagnostics  # imported on first use: it imports voice_ws, which imports this module
+    return diagnostics.system_status(args)
+
+
 def _improvement(name: str) -> Callable[[Dict[str, Any]], ToolResult]:
     # Imported on first use: improvements imports this module.
     def run(args: Dict[str, Any]) -> ToolResult:
@@ -670,7 +675,8 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "approval_list": _approval("approval_list"),
     "approval_decide": _approval("approval_decide"),
     "send_to_phone": _approval("send_to_phone"),
-    **{name: _improvement(name) for name in ("improve_start", "improve_status", "self_review_now", "code_review_start", "code_ask")},
+    **{name: _improvement(name) for name in ("improve_start", "improve_status", "self_review_now", "code_review_start", "code_ask", "project_list")},
+    "system_status": _diagnostics,
     **{name: _music(name) for name in ("music_play", "music_control", "music_now", "music_recommend", "music_output")},
     "routine_start": _mission("routine_start"),
     "routine_list": _mission("routine_list"),

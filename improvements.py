@@ -48,6 +48,16 @@ from tools import ToolResult
 
 REPO = Path(os.getenv("REPO_DIR", "/repo"))
 OUT = REPO / "runner-out"
+PROJECTS = Path(os.getenv("PROJECTS_DIR", "/projects"))  # his GitHub Projects folder, mounted read-only
+
+
+def _project_root(name: str | None) -> tuple[Path | None, str]:
+    """(root, name) for a project in GitHub Projects; THURSDAY's own repo for none or "thursday"."""
+    name = (name or "").strip().strip("/")
+    if not name or name.lower() == "thursday":
+        return REPO, "thursday"
+    match = [p for p in PROJECTS.iterdir() if p.is_dir() and p.name.lower() == name.lower()] if PROJECTS.exists() else []
+    return (match[0], match[0].name) if match else (None, name)
 GIT_ID = ["-c", "user.name=THURSDAY (approved by Daniel)", "-c", "user.email=runner@thursday.local",
           "-c", "safe.directory=*"]
 # Same list as the runner's (runner/agent.py PROTECTED), checked again here on the real diff.
@@ -205,14 +215,14 @@ def improve_start(args: Dict[str, Any]) -> ToolResult:
     return result
 
 
-def _queue(task: str, kind: str = "change") -> str:
+def _queue(task: str, kind: str = "change", project: str | None = None) -> str:
     queue = OUT / "queue"
     queue.mkdir(parents=True, exist_ok=True)
     job = datetime.now().strftime("%Y%m%d-%H%M%S")
     while (queue / f"{job}.json").exists() or (OUT / f"{job}.json").exists():
         time.sleep(1)
         job = datetime.now().strftime("%Y%m%d-%H%M%S")
-    (queue / f"{job}.json").write_text(json.dumps({"job": job, "task": task, "kind": kind,
+    (queue / f"{job}.json").write_text(json.dumps({"job": job, "task": task, "kind": kind, "project": project,
                                                    "queued_at": datetime.now(timezone.utc).isoformat()}))
     logger.info("%s %s queued: %s", "code review" if kind == "review" else "improvement", job, task[:120])
     return job
@@ -225,7 +235,10 @@ def code_review_start(args: Dict[str, Any]) -> ToolResult:
     if len(list((OUT / "queue").glob("*.json"))) >= MAX_QUEUED:
         return ToolResult(ok=False, tool_name="code_review_start", error=f"already_{MAX_QUEUED}_jobs_queued")
     focus = " ".join(str(args.get("focus") or "").split())[:500] or "the code that handles his requests"
-    job = _queue(focus, "review")
+    root, project = _project_root(args.get("project"))
+    if root is None:
+        return ToolResult(ok=False, tool_name="code_review_start", error=f"no_project_named_{project}: project_list shows them")
+    job = _queue(focus, "review", None if project == "thursday" else project)
     return ToolResult(ok=True, tool_name="code_review_start", data={"job": job, "status": "STARTED", "focus": focus, "note":
         "Confirm in one short statement, no question: you read your own code when the house is quiet, change "
         "nothing, and post what you find in the chat (and his phone) to talk through."})
@@ -329,7 +342,7 @@ def _stem(w: str) -> str:
 
 
 def _terms(text: str) -> set[str]:
-    text = text.lower()
+    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text).lower()  # CodeIndex -> code index
     extra = " ".join(add for pat, add in _SAYS if re.search(pat, text))
     words = re.findall(r"[a-z][a-z0-9]+", f"{text} {extra}".replace("_", " "))
     return {_stem(w) for w in words if len(w) > 2 and w not in _STOP}
@@ -345,9 +358,12 @@ def code_ask(args: Dict[str, Any]) -> ToolResult:
     terms = _terms(question)
     if not terms:
         return ToolResult(ok=False, tool_name="code_ask", error="ask_what_part_of_the_code")
+    root, project = _project_root(args.get("project"))
+    if root is None:
+        return ToolResult(ok=False, tool_name="code_ask", error=f"no_project_named_{project}: project_list shows them")
     sys.path.insert(0, str(REPO / "runner"))
     from codeindex import CodeIndex
-    idx = CodeIndex.build(REPO)
+    idx = CodeIndex.build(root)
     tests = "test" in terms
 
     def score(sym) -> float:
@@ -361,11 +377,13 @@ def code_ask(args: Dict[str, Any]) -> ToolResult:
     ranked = sorted((s for s in idx.symbols if score(s) >= 3), key=score, reverse=True)
     code, used = [], 0
     for sym in ranked[:3]:
-        lines = (REPO / sym.path).read_text(errors="replace").splitlines()[sym.line - 1:min(sym.end, sym.line + 39)]
+        lines = (root / sym.path).read_text(errors="replace").splitlines()[sym.line - 1:min(sym.end, sym.line + 39)]
         snippet = "\n".join(lines)[:1600]
         code.append({"at": f"{sym.path}:{sym.line}", "name": sym.name, "source": snippet})
         used += len(snippet)
     try:
+        if project != "thursday":
+            raise OSError("the brief is THURSDAY's own")
         cache = json.loads((OUT / "brief" / "cache.json").read_text())
         files = sorted(((len(terms & _terms(v["summary"] + " " + k)), k, v["summary"]) for k, v in cache.get("files", {}).items()),
                        reverse=True)
@@ -375,11 +393,35 @@ def code_ask(args: Dict[str, Any]) -> ToolResult:
     if not code and not about:
         return ToolResult(ok=True, tool_name="code_ask", data={"found": False, "note":
             "Nothing in your code matches that. Say so in one line and ask which part he means."})
-    return ToolResult(ok=True, tool_name="code_ask", data={"found": True, "files": about, "code": code, "note":
-        "This is your own code. Explain how it works in your own voice from what's here only: 2-4 plain sentences, "
+    return ToolResult(ok=True, tool_name="code_ask", data={"found": True, "project": project, "files": about, "code": code, "note":
+        ("This is your own code." if project == "thursday" else f"This is his {project} project, not your code.") + " Explain how it works in your own voice from what's here only: 2-4 plain sentences, "
         "the mechanism and the numbers that matter, naming a file or two in plain words (no backticks or code formatting, "
         "no line numbers out loud). If it doesn't "
         "answer the question, say what you can see and that you'd need to look further."})
+
+
+def project_list(args: Dict[str, Any]) -> ToolResult:
+    """The projects in his GitHub Projects folder: language, size, last commit. Read-only."""
+    if (TURN.get() or {}).get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="project_list", error="projects_are_daniels_only")
+    rows = []
+    for p in sorted(PROJECTS.iterdir()) if PROJECTS.exists() else []:
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        res = subprocess.run(["git", "-C", str(p), "ls-files"], capture_output=True, text=True)
+        files = res.stdout.splitlines() if res.returncode == 0 else []
+        exts: Dict[str, int] = {}
+        for name in files:
+            if "." in name.rsplit("/", 1)[-1]:
+                ext = name.rsplit(".", 1)[-1].lower()
+                exts[ext] = exts.get(ext, 0) + 1
+        last = subprocess.run(["git", "-C", str(p), "log", "-1", "--format=%cr: %s"], capture_output=True, text=True)
+        rows.append({"name": p.name, "git": res.returncode == 0, "files": len(files),
+                     "languages": [e for e, _ in sorted(exts.items(), key=lambda kv: -kv[1])[:3]],
+                     "last_commit": last.stdout.strip()[:100] if last.returncode == 0 else None})
+    return ToolResult(ok=True, tool_name="project_list", data={"projects": rows, "note":
+        "His GitHub Projects folder. Say the names (and what they look like) in a sentence. You can explain any of "
+        "them (code_ask with project) or review one for bugs (code_review_start with project); you never change them."})
 
 
 TOOL_SCHEMAS = [
@@ -619,17 +661,25 @@ async def start_self_review() -> None:
 
 TOOL_SCHEMAS.append({"type": "function", "function": {
     "name": "code_ask",
-    "description": "Look at your own code to answer how part of you works ('how does barge-in work?', 'where do you "
-    "decide when I've stopped talking?', 'what happens when a mission finishes?'). Read-only and instant.",
+    "description": "Look at code to answer how something works: your own ('how does barge-in work?', 'where do you "
+    "decide when I've stopped talking?') or one of his projects (project). Read-only and instant.",
     "parameters": {"type": "object", "properties": {
-        "question": {"type": "string", "description": "His question, with the part of the system it's about"}},
+        "question": {"type": "string", "description": "His question, with the part of the system it's about"},
+        "project": {"type": "string", "description": "One of his projects (project_list); leave out for your own code"}},
         "required": ["question"]}}})
+TOOL_SCHEMAS.append({"type": "function", "function": {
+    "name": "project_list",
+    "description": "The projects in his GitHub Projects folder (names, languages, last commit): when he asks what "
+    "projects he has, or names one you don't know.",
+    "parameters": {"type": "object", "properties": {}}}})
 TOOL_SCHEMAS.append({"type": "function", "function": {
     "name": "code_review_start",
     "description": "Read through your own code for bugs and report them (changes nothing): when he asks you to review, "
-    "audit or find bugs in your code. Findings arrive as a Code review conversation in the chat.",
+    "audit or find bugs in your code, or in one of his projects (project). Findings arrive as a Code review "
+    "conversation in the chat. His projects are only ever reviewed, never changed.",
     "parameters": {"type": "object", "properties": {
-        "focus": {"type": "string", "description": "What to look at, if he named it: 'the music code', 'alarms'"}}}}})
+        "focus": {"type": "string", "description": "What to look at, if he named it: 'the music code', 'alarms'"},
+        "project": {"type": "string", "description": "One of his projects (project_list); leave out for your own code"}}}}})
 TOOL_SCHEMAS.append({"type": "function", "function": {
     "name": "self_review_now",
     "description": "Review your recent conversations with him for where you fell short, and propose fixes to yourself "

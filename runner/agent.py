@@ -41,6 +41,8 @@ MAX_WORK_S = 20 * 60
 READ_LINES = 200
 RESULT_CHARS = 6000
 WORK, SRC = Path("/work"), "/repo.git"
+PROJECTS = Path("/projects")  # his GitHub Projects folder, read-only: other projects are reviewed, never changed
+PROJECT: str | None = None    # this job's other project, or None for THURSDAY's own code
 FLAGS = Path("/out")                             # activity, busy flags, the queue: shared with core
 OUT = Path(os.getenv("RUNNER_OUT", "/out"))      # reports and bundles (the benchmark keeps its own)
 BRANCH = f"thursday/improve-{JOB}"
@@ -355,19 +357,34 @@ REVIEW_SCHEMAS = [t for t in SCHEMAS if t["function"]["name"] in READ_ONLY] + [_
     ["summary", "findings"])]
 
 
+def _other_map() -> str:
+    """Another project's files (tracked ones in a git repo), for its review: no brief, it's not THURSDAY's."""
+    res = subprocess.run(["git", "ls-files"], cwd=WORK, capture_output=True, text=True)
+    files = res.stdout.splitlines() if res.returncode == 0 else [_rel(p) for p in WORK.rglob("*") if p.is_file()]
+    files = [f for f in files if not any(x in f for x in ("node_modules/", ".venv/", "__pycache__/"))]
+    return f"The project's files ({len(files)}):\n" + "\n".join(files[:200])
+
+
 def _review_system() -> str:
     guide = (WORK / "CLAUDE.md").read_text()[:3000] if (WORK / "CLAUDE.md").exists() else ""
-    return f"""You are THURSDAY's engineer, reviewing THURSDAY's own code for real bugs. You can only read; nothing you do changes the code. Daniel reads your report and decides what to fix.
+    if PROJECT:
+        guide = guide or ((WORK / "README.md").read_text()[:3000] if (WORK / "README.md").exists() else "")
+        what, focus, context = (f"the {PROJECT} project in Daniel's GitHub Projects folder", "the code the task names, "
+                                "otherwise its main entry points", _other_map())
+    else:
+        what, focus, context = ("THURSDAY's own code", "the code that handles his requests (agent_stream.py, "
+                                "voice_ws.py, the tools)", _brief())
+    return f"""You are THURSDAY's engineer, reviewing {what} for real bugs. You can only read; nothing you do changes the code. Daniel reads your report and decides what to fix.
 
 How to work:
-- Focus on what the task names; otherwise on the code that handles his requests (agent_stream.py, voice_ws.py, the tools).
+- Focus on what the task names; otherwise on {focus}.
 - Read the actual code (find_symbol / outline / search, then read_file around the hits; who_calls to follow a value to where it's used). Only report what you saw in the code: a file and line, and a concrete situation where it goes wrong.
 - Real bugs over style: wrong behavior, crashes, races, a request that can silently do nothing, a claim made without the action, security holes, latency costs. Skip naming, formatting and taste.
 - At most 6 findings, most serious first. Fewer good findings beat many weak ones; none is fine if you found none.
 - Quote the exact code line(s) for each finding. Don't guess what a library returns: if a finding depends on that, leave it out.
 - You have {MAX_STEPS} tool calls. Then call report_review once.
 
-{_brief()}
+{context}
 
 The project's guide (CLAUDE.md):
 {guide}"""
@@ -517,7 +534,18 @@ def _report(**fields) -> None:
 
 
 def run(task: str, kind: str = "change") -> None:
-    subprocess.run(["git", "clone", "-q", "--branch", BASE, SRC, str(WORK)], check=True)
+    if PROJECT:  # another project: a read-only review of a copy, never a change
+        if kind != "review":
+            return _report(status="failed", error="other projects are review-only", task=task, project=PROJECT)
+        src = PROJECTS / PROJECT
+        if (src / ".git").exists():
+            subprocess.run(["git", "clone", "-q", str(src), str(WORK)], check=True)
+        else:
+            shutil.copytree(src, WORK, ignore=shutil.ignore_patterns(".venv", "node_modules", "__pycache__", ".env*"))
+            for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.email=r@t", "-c", "user.name=r", "commit", "-qm", "snapshot"]):
+                _git(*cmd)
+    else:
+        subprocess.run(["git", "clone", "-q", "--branch", BASE, SRC, str(WORK)], check=True)
     _git("checkout", "-q", "-b", BRANCH)
     base_sha = _git("rev-parse", "HEAD").strip()
     review = kind == "review"
@@ -588,7 +616,8 @@ def run(task: str, kind: str = "change") -> None:
                     findings = [f for f in (args.get("findings") or []) if isinstance(f, dict) and f.get("problem")][:6]
                     findings, secs = _verify_findings(http, findings)
                     work += secs
-                    return _report(status="review_ready", kind="review", task=task, summary=str(args.get("summary") or ""),
+                    return _report(status="review_ready", kind="review", task=task, project=PROJECT or "thursday",
+                                   summary=str(args.get("summary") or ""),
                                    findings=findings, steps=steps, minutes=round((time.monotonic() - started) / 60, 1))
                 if review and name not in READ_ONLY:
                     result = {"ok": False, "error": "review mode: read only. Call report_review when done."}
@@ -847,7 +876,7 @@ def _fresh_work() -> None:
 
 def worker() -> None:
     """The runner service: one queued job at a time, oldest first, never alongside a mission."""
-    global JOB, BRANCH
+    global JOB, BRANCH, PROJECT
     queue = FLAGS / "queue"
     queue.mkdir(parents=True, exist_ok=True)
     print(f"runner worker: {MODEL}, base {BASE}", flush=True)
@@ -860,6 +889,7 @@ def worker() -> None:
         try:
             job = json.loads(path.read_text())
             JOB, BRANCH = job["job"], f"thursday/improve-{job['job']}"
+            PROJECT = job.get("project") if job.get("project") not in (None, "", "thursday") else None
             path.unlink()
             _fresh_work()
             print(f"job {JOB}: {job['task'][:120]}", flush=True)

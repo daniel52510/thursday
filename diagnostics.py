@@ -1,0 +1,106 @@
+"""THURSDAY's health check (system_status): is every part up, how much room is left, how fast the last turns were.
+
+One read-only snapshot, gathered in about a second: Ollama (loaded models, context, size), the Mac's memory
+(scripts/host_mem.sh, mounted at /hostmem), the voice and speech-to-text servers, connected satellites, the
+self-improvement runner, the brain disk, and recent turn latency. "How are you doing?" in engineer terms.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import statistics
+import time
+from pathlib import Path
+from typing import Any, Dict
+
+import httpx
+
+from accounts import OWNER
+from agent_loop import URL as OLLAMA_URL
+from calendar_tool import TURN
+from tools import ToolResult
+OLLAMA_BASE = OLLAMA_URL.split("/api/")[0]
+HOSTMEM = Path(os.getenv("HOSTMEM_FILE", "/hostmem/host-mem.json"))
+RUNNER_OUT = Path(os.getenv("REPO_DIR", "/repo")) / "runner-out"
+BRAIN = Path(os.getenv("THURSDAY_BRAIN_DIR", "brain"))
+
+
+def _get(url: str) -> tuple[bool, Any]:
+    try:
+        r = httpx.get(url, timeout=3)
+        return r.status_code < 400, (r.json() if "json" in r.headers.get("content-type", "") else r.status_code)
+    except (httpx.HTTPError, ValueError) as exc:
+        return False, type(exc).__name__
+
+
+def _age_s(path: Path) -> float | None:
+    try:
+        return round(time.time() - path.stat().st_mtime)
+    except OSError:
+        return None
+
+
+def _p50(rows: list[dict], key: str) -> int | None:
+    vals = [r[key] for r in rows if isinstance(r.get(key), (int, float))]
+    return round(statistics.median(vals)) if vals else None
+
+
+def system_status(args: Dict[str, Any]) -> ToolResult:
+    if (TURN.get() or {}).get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="system_status", error="diagnostics_are_daniels_only")
+    import voice_ws  # here: voice_ws imports the tools
+    problems: list[str] = []
+
+    ok, ps = _get(f"{OLLAMA_BASE}/api/ps")
+    models = [{"name": m.get("name"), "gb": round(m.get("size", 0) / 1e9, 1), "context": m.get("context_length")}
+              for m in (ps.get("models", []) if ok and isinstance(ps, dict) else [])]
+    if not ok:
+        problems.append(f"Ollama isn't answering ({ps})")
+
+    try:
+        mem = json.loads(HOSTMEM.read_text())
+        mem_age = round(time.time() - mem.get("at", 0))
+        memory = {"available_gb": mem.get("available_gb"), "pressure": {1: "normal", 2: "warning", 4: "critical"}.get(
+            mem.get("pressure"), mem.get("pressure")), "reading_age_s": mem_age}
+        if mem.get("pressure", 1) != 1:
+            problems.append(f"memory pressure is {memory['pressure']}")
+        if mem_age > 120:
+            problems.append("the memory reading is stale (com.thursday.hostmem not running?)")
+    except (OSError, ValueError):
+        memory = None
+
+    tts_ok, tts = _get(f"{voice_ws.TTS_BASE_URL}/health")
+    stt_ok, _ = _get(f"{voice_ws.STT_BASE_URL}/health")
+    if not tts_ok:
+        problems.append("the voice server (TTS) is down")
+    if not stt_ok:
+        problems.append("speech-to-text is down")
+
+    sats = [{"state": s.state} for s in voice_ws.SATELLITES]
+    if not sats:
+        problems.append("no satellite is connected (it can't hear the wake word)")
+    queue = len(list((RUNNER_OUT / "queue").glob("*.json"))) if (RUNNER_OUT / "queue").exists() else 0
+    busy = _age_s(RUNNER_OUT / "runner-busy")
+    disk = shutil.disk_usage(BRAIN if BRAIN.exists() else "/")
+
+    recent = [r for r in voice_ws.RECENT_TURNS if time.time() - r["at"] < 6 * 3600]
+    turns = {"count_6h": len(recent), "p50_to_first_audio_ms": _p50(recent, "speech_end_to_playback_ms"),
+             "p50_first_token_ms": _p50(recent, "llm_ttft_ms"), "p50_stt_ms": _p50(recent, "stt_ms")}
+    if (turns["p50_to_first_audio_ms"] or 0) > 2500:
+        problems.append(f"replies are slow: {turns['p50_to_first_audio_ms']} ms to first audio (median)")
+
+    return ToolResult(ok=True, tool_name="system_status", data={
+        "problems": problems,
+        "ollama": {"up": ok, "loaded": models},
+        "mac_memory": memory,
+        "voice_server": {"up": tts_ok, "engine": tts.get("engine") if isinstance(tts, dict) else None,
+                         "voice": tts.get("voice") if isinstance(tts, dict) else None},
+        "speech_to_text": {"up": stt_ok},
+        "satellites": {"connected": len(sats), "states": [s["state"] for s in sats]},
+        "runner": {"queued_jobs": queue, "busy": busy is not None and busy < 120},
+        "brain_disk_free_gb": round(disk.free / 1e9, 1),
+        "recent_turns": turns,
+        "note": "Your own health check. Say what's wrong first (problems), then the one or two numbers that matter, "
+                "in 2-3 sentences. If nothing's wrong, say so and give the reply speed. No lists out loud."})
+

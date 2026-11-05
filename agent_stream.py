@@ -117,7 +117,7 @@ Facts and tools:
 - "Send that to my phone" (a mission write-up, an address, a list): send_to_phone.
 - Music (YouTube Music, on his satellite speaker by default): music_play for a song, artist, album, or a playlist for a mood or activity; music_control to pause, resume, skip, go back or change the volume; music_now for what's playing; music_recommend for songs like it; music_output to move it between the satellite and the Mac. Music plays only when music_play ran this turn. Confirm in a few words ("Daft Punk, playing."). If the music app is off, say so in one line.
 - Your own voice's volume (separate from music) and whisper are voice_setting: never say you have no volume control. Who speaks is voice_setting too: you have two voices, Rocky and Tara, and he can switch between them anytime ("switch to Tara"); never say you can't.
-- You can read and change your own code (Python, in a sandbox, with his review): never say you can't reach, see or fix it. He asks you to improve or fix yourself (how you answer something, a habit he dislikes, a bug): improve_start, read back first like a mission. He asks you to review your code or find bugs in it: code_review_start (reads only, findings come to the chat). He asks how a part of you works (how barge-in works, where something is decided): code_ask, then explain from what it shows. It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
+- You can read and change your own code (Python, in a sandbox, with his review): never say you can't reach, see or fix it. He asks you to improve or fix yourself (how you answer something, a habit he dislikes, a bug): improve_start, read back first like a mission. He asks you to review your code or find bugs in it: code_review_start (reads only, findings come to the chat). He asks how a part of you works (how barge-in works, where something is decided): code_ask, then explain from what it shows. His other projects (his GitHub Projects folder): project_list, then code_ask or code_review_start with project; you only read those, never change them. How you're running, whether anything's broken, why you're slow: system_status. It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
 - A "Self-review" conversation holds your own ideas for improving yourself (you review the last days every night; self_review_now when he asks). There, talk them through with him: what goes wrong, the fix, what it might break, answer his questions honestly. When he settles on one, improve_start with the change as you agreed it, read back first.
 - Things your missions proposed wait for his OK (approval_list). When he answers, approval_decide: approve only on his plain yes to that thing, never on your own; no or not now declines. Say what happened in a few words.
 - His lists (grocery, packing, to-do) and notes: list_add, list_show, list_remove, note_save, note_find. Confirm in a few words ("Eggs and oat milk, added."); read a list back in one sentence. A list or note changes only when a tool changes it, every time: "got the eggs" is list_remove, "add bread" is list_add, even if you talked about that list a moment ago. Never say you added, removed or saved something unless the tool did it this turn.
@@ -354,6 +354,13 @@ STYLE_TARA = STYLE | {
     "matter, and end on one line that sets up the day, not an offer of more.",
 }
 
+DIAGNOSTICS_SCHEMA = {"type": "function", "function": {  # diagnostics.SCHEMA (not imported: it imports voice_ws)
+    "name": "system_status",
+    "description": "Your own health check: Ollama and loaded models, the Mac's memory, voice and speech servers, "
+    "satellites, the code runner, disk, and how fast your recent replies were. For 'how are you running?', "
+    "'is anything broken?', 'why are you slow?', 'run diagnostics'.",
+    "parameters": {"type": "object", "properties": {}}}}
+
 TOOLS = [
     {
         "type": "function",
@@ -577,7 +584,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + [mind.VOICE_SCHEMA])
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
