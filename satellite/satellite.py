@@ -20,6 +20,7 @@ interrupt, hold to mute the mic.
     THURSDAY_WS=ws://<mac-ip>:8000/ws/voice venv/bin/python satellite.py
 """
 import asyncio
+import ctypes
 import fcntl
 import io
 import math
@@ -52,6 +53,41 @@ sys.modules["openwakeword.custom_verifier_model"] = _stub
 from openwakeword.model import Model  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
+
+
+def _load_core() -> ctypes.CDLL | None:
+    so = HERE / "_sat_core.so"
+    if not so.exists():
+        return None
+    try:
+        c = ctypes.CDLL(str(so))
+        vp, i32, f32, f64 = ctypes.c_void_p, ctypes.c_int, ctypes.c_float, ctypes.c_double
+        c.sat_boost_pcm.argtypes = [vp, vp, i32, f32, vp]
+        c.sat_dbfs.argtypes = [vp, i32]
+        c.sat_dbfs.restype = f64
+        c.sat_resample_scale.argtypes = [vp, i32, i32, vp, i32, i32, f32]
+        c.sat_resample_scale.restype = i32
+        c.sat_soften_block.argtypes = [vp, i32, i32, i32, i32]
+        c.sat_mix_music_block.argtypes = [vp, vp, i32, vp, i32, i32, f32, f32]
+        c.sat_mix_music_block.restype = f32
+        c.sat_wake_create.argtypes = [i32]
+        c.sat_wake_create.restype = vp
+        c.sat_wake_destroy.argtypes = [vp]
+        c.sat_wake_set_init_features.argtypes = [vp, vp]
+        c.sat_wake_reset.argtypes = [vp]
+        c.sat_wake_prepare_melspec.argtypes = [vp, vp]
+        c.sat_wake_prepare_melspec.restype = ctypes.POINTER(f32)
+        c.sat_wake_push_mels.argtypes = [vp, vp, i32]
+        c.sat_wake_push_mels.restype = ctypes.POINTER(f32)
+        c.sat_wake_push_emb.argtypes = [vp, vp, vp]
+        c.sat_wake_push_emb.restype = ctypes.POINTER(f32)
+        return c
+    except OSError:
+        return None
+
+
+_CORE = _load_core()
+_HP_STATE = (ctypes.c_float * 2)(0.0, 0.0)
 SAMPLE_RATE = 16000
 CHUNK_SAMPLES = 1280
 CHUNK_BYTES = CHUNK_SAMPLES * 2
@@ -87,7 +123,7 @@ BARGE_THRESHOLD = float(os.getenv("THURSDAY_BARGE_THRESHOLD", "0.7"))
 # listens to the echo-cancelled mic for sound well above the echo the canceller leaves behind.
 BARGE_SPEECH = os.getenv("THURSDAY_BARGE_SPEECH", "0") == "1"
 # Above the loud parts of the echo left after cancelling: those sit ~-61 dBFS, his voice at the mic -43 to -46.
-BARGE_SPEECH_DB = float(os.getenv("THURSDAY_BARGE_SPEECH_DB", "9"))
+BARGE_SPEECH_DB = float(os.getenv("THURSDAY_BARGE_SPEECH_DB", "8"))
 BARGE_FLOOR_DBFS = float(os.getenv("THURSDAY_BARGE_FLOOR_DBFS", "-58"))  # and never below room noise
 BARGE_SETTLE_S = 0.5  # the start of each reply: the canceller re-settles, nothing counts
 NEAR_MISS = 0.2  # wake scores logged below the threshold, to tune it from data
@@ -116,7 +152,14 @@ OFFLINE_WAV = SOUNDS / "thursday-offline.wav"  # woken while the Mac is unreacha
 ERROR_WAV = SOUNDS / "thursday-error.wav"      # a turn failed on the server
 MIC_OFF_WAV = SOUNDS / "thursday-mic-off.wav"
 MIC_ON_WAV = SOUNDS / "thursday-mic-on.wav"
-BACKCHANNEL_CLIPS = {"mm", "right", "go-on", "copy"}  # sounds/thursday-bc-<clip>.wav, the server's "overlay"
+BACKCHANNEL_CLIPS = {"mm", "right", "go-on", "copy"}
+
+
+def voice_clip(path: Path, voice: str) -> Path:
+    """Tara's take of a spoken clip (sounds/thursday-tara-*.wav) when she's the voice, else Rocky's."""
+    if voice == "tara" and (tara := path.with_name(path.name.replace("thursday-", "thursday-tara-", 1))).exists():
+        return tara
+    return path  # sounds/thursday-bc-<clip>.wav, the server's "overlay"
 RECONNECT_S = 3.0
 STATUS_EVERY_S = 30.0
 MIC_STALL_S = 10.0  # no audio from arecord this long: exit, and systemd restarts us
@@ -147,17 +190,53 @@ def night_gain() -> float:
 
 
 def _scaled(pcm: bytes, gain: float) -> bytes:
-    if gain == 1.0:
+    if gain == 1.0 or not pcm:
         return pcm
+    if _CORE:
+        n = len(pcm) // 2
+        out = ctypes.create_string_buffer(n * 2)
+        _CORE.sat_resample_scale(pcm, n, 24000, out, n, 24000, ctypes.c_float(gain))
+        return out.raw
     return (np.frombuffer(pcm, dtype=np.int16) * gain).astype(np.int16).tobytes()
 
 
 def _boosted(pcm: bytes) -> bytes:
-    """Mic audio with MIC_GAIN applied, clipped so loud speech can't wrap around."""
+    """Mic audio with 80 Hz rumble cut and soft-knee MIC_GAIN applied."""
+    if _CORE and pcm:
+        n = len(pcm) // 2
+        out = ctypes.create_string_buffer(n * 2)
+        _CORE.sat_boost_pcm(pcm, out, n, ctypes.c_float(MIC_GAIN), ctypes.byref(_HP_STATE))
+        return out.raw
     if MIC_GAIN == 1.0:
         return pcm
     boosted = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) * MIC_GAIN
     return np.clip(boosted, -32768, 32767).astype(np.int16).tobytes()
+
+
+def _configure_alsa_mic() -> None:
+    """Raise the WM8960 hardware capture gain and ADC gain on startup (+10.25 dB total over default)
+    so far-field speech across the room has clean analog/ADC SNR without clipping on speaker playback."""
+    card = "wm8960soundcard"
+    capture = os.getenv("THURSDAY_ALSA_CAPTURE", "46")   # 0-63 (39=+12dB, 46=+17.25dB)
+    adc = os.getenv("THURSDAY_ALSA_ADC", "205")          # 0-255 (195=0dB, 205=+5.0dB)
+    boost = os.getenv("THURSDAY_ALSA_BOOST", "0")        # 0-3 (0=0dB: keeps speaker echo linear for AEC)
+    controls = [
+        ("Capture", f"{capture},{capture}"),
+        ("ADC PCM", f"{adc},{adc}"),
+        ("Left Input Boost Mixer LINPUT1", boost),
+        ("Right Input Boost Mixer RINPUT1", boost),
+    ]
+    applied = []
+    for name, val in controls:
+        try:
+            res = subprocess.run(["amixer", "-q", "-c", card, "sset", name, val],
+                                 capture_output=True, timeout=2)
+            if res.returncode == 0:
+                applied.append(f"{name}={val}")
+        except (OSError, subprocess.SubprocessError):
+            return
+    if applied:
+        log.info("alsa mic gain configured: %s", ", ".join(applied))
 
 
 def _wifi_dbm() -> int | None:
@@ -265,6 +344,14 @@ class Player:
         self.gain = 1.0  # for the current reply stream
         self.rate = self.RATE  # of the current reply stream
         self.ref = None  # aec.Reference: everything played, for echo cancellation
+        # Dropouts inside a reply (start_stream to finish_stream): each time the reply's audio ran out
+        # and came back (a fade-out/fade-in dip, _soften), and how long it was silent. Logged per turn.
+        self.streaming = False
+        self._draining = False
+        self._stream_heard = False
+        self._silent_run = 0
+        self.underruns = 0
+        self.underrun_ms = 0
         threading.Thread(target=self._feed, name="player", daemon=True).start()
 
     # ---- the feeder thread ----
@@ -284,6 +371,7 @@ class Player:
         return proc
 
     def _feed(self) -> None:
+        rebuffer = 5 * self.BLOCK * 2  # 100 ms cushion after an underrun so late chunks don't stutter-chain
         while True:
             if self._proc is None or self._proc.poll() is not None:
                 try:
@@ -295,10 +383,16 @@ class Player:
             with self._lock:
                 if not self._pending and self._loop:
                     self._pending += self._loop
-                block = bytes(self._pending[:self.BLOCK * 2])
-                del self._pending[:self.BLOCK * 2]
-                runs_dry = not self._pending  # nothing after this block (yet): it's the edge of a gap
+                if (self.streaming and self._stream_heard and self._dry and not self._draining
+                        and len(self._pending) < rebuffer):
+                    block, runs_dry = b"", True
+                else:
+                    block = bytes(self._pending[:self.BLOCK * 2])
+                    del self._pending[:self.BLOCK * 2]
+                    runs_dry = not self._pending  # nothing after this block (yet): it's the edge of a gap
             real = bool(block)
+            if self.streaming:
+                self._count_underrun(real)
             if real:
                 block = self._soften(block, runs_dry)
             else:
@@ -347,21 +441,46 @@ class Player:
             del self._music[:n]
             if len(self._music) < n:  # ran dry: fade out what's here, then pre-roll again
                 self._music_live = False
+        target = self.MUSIC_GAIN * night_gain() * (self.MUSIC_DUCK if voice or self.ducking() else 1.0)
+        if _CORE:
+            out = ctypes.create_string_buffer(n)
+            self._mgain = float(_CORE.sat_mix_music_block(
+                block, m, len(m) // 2, out, self.BLOCK, 0 if self._music_live else 1,
+                ctypes.c_float(self._mgain), ctypes.c_float(target)))
+            return out.raw
         x = np.frombuffer(m.ljust(n, b"\0"), dtype=np.int16).astype(np.float32)
         if not self._music_live:
             x[:len(m) // 2] *= np.linspace(1.0, 0.0, len(m) // 2, dtype=np.float32)
-        target = self.MUSIC_GAIN * night_gain() * (self.MUSIC_DUCK if voice or self.ducking() else 1.0)
         new = self._mgain + max(-0.1, min(0.1, target - self._mgain))  # ~100 ms to duck or fade in: no clicks
         ramp = np.linspace(self._mgain, new, len(x), dtype=np.float32)
         self._mgain = new
         out = np.frombuffer(block, dtype=np.int16).astype(np.float32) + x * ramp
         return np.clip(out, -32768, 32767).astype(np.int16).tobytes()
 
+    def _count_underrun(self, real: bool) -> None:
+        """Called per block while a reply streams. A real block after a dry edge (self._dry, before
+        _soften clears it) is a dropout the listener heard: a 4 ms dip, plus any silent blocks between."""
+        if not real:
+            if self._stream_heard:
+                self._silent_run += 1
+            return
+        if self._stream_heard and self._dry:
+            self.underruns += 1
+            self.underrun_ms += self._silent_run * self.BLOCK * 1000 // self.RATE
+        self._stream_heard, self._silent_run = True, 0
+
     def _soften(self, block: bytes, runs_dry: bool) -> bytes:
         """No hard edges at a gap. The voice's stream can arrive late (its start and sentence breaks run
         slower than real time), and the speaker then went from mid-waveform to zeros and back: a click
         each time. Now the last 4 ms before a gap fade out and the first 4 ms after one fade in. A gap
         that closes within the same 20 ms only dips for 4 ms."""
+        if _CORE and (self._dry or runs_dry):
+            out = ctypes.create_string_buffer(block, len(block))
+            _CORE.sat_soften_block(out, len(block) // 2, self.FADE, 1 if self._dry else 0, 1 if runs_dry else 0)
+            self._dry = runs_dry
+            return out.raw
+        if not self._dry and not runs_dry:
+            return block
         x = np.frombuffer(block, dtype=np.int16).astype(np.float32)
         n = min(self.FADE, len(x))
         if self._dry:
@@ -389,9 +508,15 @@ class Player:
     # ---- the event loop's side ----
 
     def _to_rate(self, pcm: bytes, rate: int) -> bytes:
-        x = np.frombuffer(pcm, dtype=np.int16)
-        if rate == self.RATE or not len(x):
+        if rate == self.RATE or not pcm:
             return pcm
+        if _CORE:
+            in_n = len(pcm) // 2
+            out_n = int(in_n * self.RATE / rate)
+            out = ctypes.create_string_buffer(out_n * 2)
+            got = _CORE.sat_resample_scale(pcm, in_n, rate, out, out_n, self.RATE, ctypes.c_float(1.0))
+            return out.raw[:got * 2]
+        x = np.frombuffer(pcm, dtype=np.int16)
         n = int(len(x) * self.RATE / rate)
         return np.interp(np.arange(n) * (rate / self.RATE), np.arange(len(x)), x).astype(np.int16).tobytes()
 
@@ -417,6 +542,7 @@ class Player:
         with self._lock:
             self._pending.clear()
             self._loop = None
+        self.streaming = False
         if time.monotonic() < self._audible_until and self._proc and self._proc.poll() is None:
             if self.ref:
                 self.ref.cut(time.monotonic())
@@ -441,6 +567,15 @@ class Player:
         self._replace()
         self.gain = night_gain()
         self.rate = rate
+        self._stream_heard, self._silent_run = False, 0
+        self.underruns = self.underrun_ms = 0
+        self._draining = False
+        self.streaming = True
+
+    def mark(self) -> None:
+        """The reply's own audio starts here: the wait after a filler (a tool running) isn't a dropout."""
+        self._stream_heard, self._silent_run = False, 0
+        self.underruns = self.underrun_ms = 0
 
     async def write(self, pcm: bytes) -> None:
         with self._lock:
@@ -450,7 +585,9 @@ class Player:
 
     async def finish_stream(self) -> None:
         """No more audio: return once what's queued has played."""
+        self._draining = True
         await self._drained()
+        self.streaming = False
 
     async def _drained(self) -> None:
         while self._pending or self._loop or time.monotonic() < self._audible_until:
@@ -460,15 +597,94 @@ class Player:
         return bool(self._pending or self._loop) or time.monotonic() < self._audible_until
 
 
-def _wake_model() -> Model:
+class FastWakeModel:
+    """C++-accelerated openWakeWord pipeline (_sat_core.so + direct ONNX Runtime sessions).
+    Eliminates Python list/deque copies on every 80 ms chunk and replaces openWakeWord's
+    1,500 ms random-audio reset() with a <0.01 ms C++ buffer restore."""
+
+    fast_reset = True
+
+    def __init__(self, wake_model_path: str, speex: bool = True) -> None:
+        import onnxruntime as ort
+        import openwakeword
+        res_dir = Path(openwakeword.__file__).resolve().parent / "resources" / "models"
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        prov = ["CPUExecutionProvider"]
+        self._mel_sess = ort.InferenceSession(str(res_dir / "melspectrogram.onnx"), sess_options=opts, providers=prov)
+        self._emb_sess = ort.InferenceSession(str(res_dir / "embedding_model.onnx"), sess_options=opts, providers=prov)
+        self._wake_sess = ort.InferenceSession(wake_model_path, sess_options=opts, providers=prov)
+        self._mel_in = self._mel_sess.get_inputs()[0].name
+        self._emb_in = self._emb_sess.get_inputs()[0].name
+        self._wake_in = self._wake_sess.get_inputs()[0].name
+        self.name = Path(wake_model_path).stem
+        self.models = {self.name: self._wake_sess}
+        self._c = _CORE.sat_wake_create(1 if speex else 0)
+        # Compute baseline 16x96 features once at startup so every reset() is a 6 KB memcpy (<0.01 ms).
+        rng = np.random.default_rng(0)
+        noise = rng.integers(-1000, 1000, size=(1, 16000 * 2), dtype=np.int16).astype(np.float32)
+        mels = np.squeeze(self._mel_sess.run(None, {self._mel_in: noise})[0]) * 0.1 + 2.0
+        wins = np.array([mels[i:i + 76] for i in range(0, mels.shape[0] - 76 + 1, 8)][-16:], dtype=np.float32)[:, :, :, None]
+        init_feats = np.ascontiguousarray(np.squeeze(self._emb_sess.run(None, {self._emb_in: wins})[0]), dtype=np.float32)
+        _CORE.sat_wake_set_init_features(self._c, init_feats.ctypes.data)
+
+    def __del__(self) -> None:
+        if getattr(self, "_c", None) and _CORE:
+            _CORE.sat_wake_destroy(self._c)
+            self._c = None
+
+    def reset(self) -> None:
+        _CORE.sat_wake_reset(self._c)
+
+    def predict(self, x: np.ndarray) -> dict[str, float]:
+        pcm = np.ascontiguousarray(x, dtype=np.int16)
+        mel_in_ptr = _CORE.sat_wake_prepare_melspec(self._c, pcm.ctypes.data)
+        mel_in = np.ctypeslib.as_array(mel_in_ptr, shape=(1, 1760))
+        mels = np.ascontiguousarray(np.squeeze(self._mel_sess.run(None, {self._mel_in: mel_in})[0]), dtype=np.float32)
+        mel_win_ptr = _CORE.sat_wake_push_mels(self._c, mels.ctypes.data, mels.shape[0])
+        mel_win = np.ctypeslib.as_array(mel_win_ptr, shape=(1, 76, 32, 1))
+        emb = np.ascontiguousarray(np.squeeze(self._emb_sess.run(None, {self._emb_in: mel_win})[0]), dtype=np.float32)
+        ready = ctypes.c_int(0)
+        feat_win_ptr = _CORE.sat_wake_push_emb(self._c, emb.ctypes.data, ctypes.byref(ready))
+        if not ready.value:
+            return {self.name: 0.0}
+        feat_win = np.ctypeslib.as_array(feat_win_ptr, shape=(1, 16, 96))
+        out = self._wake_sess.run(None, {self._wake_in: feat_win})[0]
+        return {self.name: float(np.squeeze(out))}
+
+
+def _wake_model():
     """The wake-word model with the VAD gate and noise suppression where the Pi has
     what they need (Silero's model file, the speexdsp_ns package); each one that
     can't load is turned off with a log line instead of stopping the satellite."""
     vad, speex = WAKE_VAD, WAKE_SPEEX
+    if _CORE and not vad:
+        try:
+            model = FastWakeModel(WAKE_MODEL, speex=speex)
+            log.info("wake word: C++ core (_sat_core.so), threshold %.2f, noise suppression %s, mic gain %.1f",
+                     WAKE_THRESHOLD, "on" if speex else "off", MIC_GAIN)
+            return model
+        except Exception as exc:
+            log.warning("C++ wake model init failed (%s); falling back to Python openWakeWord", exc)
     while True:
         try:
             model = Model(wakeword_models=[WAKE_MODEL], inference_framework="onnx",
                           vad_threshold=vad, enable_speex_noise_suppression=speex)
+            # Cache initial feature_buffer so Python fallback reset() doesn't re-run 4 s of random audio
+            init_fb = model.preprocessor.feature_buffer.copy()
+            orig_reset = model.reset
+
+            def _fast_py_reset() -> None:
+                model.prediction_buffer.clear()
+                model.preprocessor.raw_data_buffer.clear()
+                model.preprocessor.melspectrogram_buffer = np.ones((76, 32))
+                model.preprocessor.accumulated_samples = 0
+                model.preprocessor.raw_data_remainder = np.empty(0)
+                model.preprocessor.feature_buffer = init_fb.copy()
+
+            model.reset = _fast_py_reset
+            model.fast_reset = True
             log.info("wake word: threshold %.2f, VAD gate %s, noise suppression %s, mic gain %.1f",
                      WAKE_THRESHOLD, vad or "off", "on" if speex else "off", MIC_GAIN)
             return model
@@ -503,6 +719,7 @@ class Satellite:
         self.ws = None
         self.state = "wake"  # wake | listening | thinking | speaking | interrupting | alarm
         self.muted = False
+        self.voice = "leo"  # whose voice the server speaks in ("voice" events): picks the spoken clips
         self._woke_at = 0.0
         self._thinking_at = 0.0
         self._follow_up = False  # this listening window opened by itself after a reply
@@ -510,6 +727,7 @@ class Satellite:
         self._chunks: asyncio.Queue = asyncio.Queue()  # reply WAVs, then None at audio_end
         self._playback: asyncio.Task | None = None
         self._chime: asyncio.Task | None = None  # alarm chime; the reply waits for it
+        self._captioned = False  # this turn's first caption seen (Player.mark)
         self._overlay: asyncio.Task | None = None  # a backchannel clip; the thinking cue waits for it
         # How far behind real time the mic is being read (arecord's pipe backs up when we fall behind):
         # the mic's sample count against the clock, worst per state, logged at each turn.
@@ -526,7 +744,7 @@ class Satellite:
         self._speaking_at = 0.0
         self._residual: deque = deque(maxlen=25)  # quiet chunks of the last ~2 s: the echo that's left
         self._loud: deque = deque(maxlen=5)       # the last 5 chunks: above the bar or not
-        self._preroll: deque = deque(maxlen=10)   # the last 0.8 s sent on after a speech barge-in
+        self._preroll: deque = deque(maxlen=16)   # the last ~1.3 s sent on after a speech barge-in
         self._barge_speech = False                # the current barge-in was speech, not the wake word
         self.stats = {"started": time.time(), "wakes": 0, "near_misses": 0, "barge_ins": 0,
                       "reconnects": 0, "last_wake": None, "last_turn_ms": None}
@@ -535,6 +753,7 @@ class Satellite:
         self._near_scores: deque = deque(maxlen=20)
 
     async def run(self) -> None:
+        _configure_alsa_mic()
         mic = await asyncio.create_subprocess_exec(
             "arecord", "-q", "-D", DEVICE, "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw",
             stdout=asyncio.subprocess.PIPE,
@@ -624,9 +843,13 @@ class Satellite:
         self.state = "wake"
 
     def _reset_wake(self) -> None:
-        """Clear openWakeWord's buffers off the event loop. reset() costs ~1.5 s of CPU on the Pi Zero;
-        run inline at "thinking" it stalled everything: replies played ~0.8 s late, and the mic fell
-        ~1.4 s behind, so the follow-up window sent his own voice to the server as the user's."""
+        """Clear openWakeWord's buffers. With C++ FastWakeModel (or cached feature_buffer) reset() takes
+        <0.01 ms inline instead of burning 1.5 s of CPU on 4 s of random noise."""
+        if getattr(self.wake, "fast_reset", False):
+            with self._wake_lock:
+                self.wake.reset()
+            return
+
         def reset() -> None:
             with self._wake_lock:
                 self.wake.reset()
@@ -697,7 +920,7 @@ class Satellite:
             if time.monotonic() - self._last_offline_note > 60:
                 self._last_offline_note = time.monotonic()
                 log.warning("woken while offline")
-                await self.player.play_file(OFFLINE_WAV)
+                await self.player.play_file(voice_clip(OFFLINE_WAV, self.voice))
             return
         await self._start_listening(follow_up=False)
 
@@ -709,17 +932,23 @@ class Satellite:
         if not follow_up:
             await self.player.play_file(PING_WAV)
         # chunked: one WAV per sentence, so the first sentence plays while the rest is synthesized.
-        await self._send({"type": "start", "chunked": True, "context": CONTEXT})
+        await self._send({"type": "start", "chunked": True, "context": CONTEXT,
+                          "follow_up": follow_up, "barge_speech": bool(preroll)})
         for chunk in preroll or ():  # what they'd already said when they cut in
             await self._send(chunk)
 
     def _heard_over_reply(self, pcm: bytes) -> bool:
-        """Someone talking over the reply: 4 of the last 5 chunks (~320 ms) of the cancelled mic
+        """Someone talking over the reply: 3 of the last 5 chunks (~240 ms) of the cancelled mic
         BARGE_SPEECH_DB above the loud parts of the echo the canceller leaves."""
         if not (BARGE_SPEECH and self.aec and AEC_MODE == "on"):
             return False
-        x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-        db = 10 * math.log10(float(np.mean(x * x)) / 32768 ** 2 + 1e-12)
+        if self._chime:
+            return False  # the alarm chime / announce ping is still playing: nothing counts yet
+        if _CORE:
+            db = float(_CORE.sat_dbfs(pcm, len(pcm) // 2))
+        else:
+            x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+            db = 10 * math.log10(float(np.mean(x * x)) / 32768 ** 2 + 1e-12)
         if time.monotonic() - self._speaking_at < BARGE_SETTLE_S:
             self._residual.append(db)
             return False
@@ -728,7 +957,7 @@ class Satellite:
         self._loud.append(db > bar)
         if db <= bar:
             self._residual.append(db)
-        if sum(self._loud) >= 4:
+        if sum(self._loud) >= 3:
             log.info("barge-in (speech, %.0f dBFS over a %.0f dBFS bar)", db, bar)
             return True
         return False
@@ -788,7 +1017,7 @@ class Satellite:
             self._enter_wake()
         else:
             self._reset_wake()
-        await self.player.play_file(MIC_OFF_WAV if self.muted else MIC_ON_WAV)
+        await self.player.play_file(voice_clip(MIC_OFF_WAV if self.muted else MIC_ON_WAV, self.voice))
         await self._send_status()
 
     # ---- server events ----
@@ -807,6 +1036,7 @@ class Satellite:
                 await self._on_state(ev["state"])
             elif kind == "voice":  # his voice volume, for the cues and clips (alarms stay at full volume)
                 self.player.voice_gain = max(0.1, min(1.0, float(ev.get("volume", 1.0))))
+                self.voice = str(ev.get("name") or self.voice)
             elif kind == "alarm":
                 # The server is about to speak unprompted: a cue first, speech waits for it.
                 # Alarms ring at full volume, night or not; announcements get the soft ping.
@@ -823,9 +1053,14 @@ class Satellite:
                 clip = ev.get("clip")
                 if self.state == "listening" and clip in BACKCHANNEL_CLIPS and not self.player.is_playing():
                     self._overlay = asyncio.create_task(self._play_overlay(
-                        SOUNDS / f"thursday-bc-{clip}.wav", float(ev.get("gain", 0.7)) * self.player.voice_gain))
+                        voice_clip(SOUNDS / f"thursday-bc-{clip}.wav", self.voice), float(ev.get("gain", 0.7)) * self.player.voice_gain))
                 else:
                     await self._send({"type": "overlay_ended"})
+            elif kind == "caption" and not self._captioned:
+                # The first caption comes just before the reply's first WAV (after any filler), as in the
+                # web client: underruns count from here, not across the tool's wait (logged as 2-7 s "dry").
+                self._captioned = True
+                self.player.mark()
             elif kind == "audio_end":
                 self._chunks.put_nowait(None)
             elif kind == "transcript":
@@ -839,6 +1074,7 @@ class Satellite:
     async def _on_state(self, state: str) -> None:
         if state == "thinking":
             self._thinking_at = time.monotonic()
+            self._captioned = False
             # Barge-in scoring starts now. The wake model wasn't fed while listening, so its
             # buffers still end with the "Hey THURSDAY" that woke us: cancelling every turn.
             self._reset_wake()
@@ -862,7 +1098,7 @@ class Satellite:
             await self.stop_playback()
             self._enter_wake()
             if self._failed:
-                await self.player.play_file(ERROR_WAV)
+                await self.player.play_file(voice_clip(ERROR_WAV, self.voice))
             # From "thinking" with no reply and no error: the server heard "nevermind" / "I'm good"
             # and ended the conversation (voice_ws._CLOSER). Same sound either way.
             elif was in ("listening", "thinking") and not self.muted:
@@ -902,6 +1138,11 @@ class Satellite:
             if played == 0 and self._chime:
                 await self._chime  # let the alarm chime finish before THURSDAY speaks
                 self._chime = None
+                # The settle window and echo floor start with her voice, not with the chime:
+                # learned during the chime, the first loud syllable read as someone cutting in.
+                self._speaking_at = time.monotonic()
+                self._residual.clear()
+                self._loud.clear()
             chunk_rate, pcm = _wav_pcm(wav)
             if chunk_rate != rate:  # first chunk (or a format change): (re)start the player
                 if rate is not None:
@@ -920,15 +1161,16 @@ class Satellite:
             played += 1
             audio_s += len(pcm) / 2 / chunk_rate
         await self.player.finish_stream()
-        log.info("turn: listened %d ms, first audio %s ms, %d chunks, %.1f s of speech, barge score max %.2f, "
-                 "mic read lag max %s",
+        log.info("turn: listened %d ms, first audio %s ms, %d chunks, %.1f s of speech, underruns %d (%d ms silent), "
+                 "barge score max %.2f, mic read lag max %s",
                  int((self._thinking_at - self._woke_at) * 1000) if self._thinking_at > self._woke_at else 0,
-                 self.stats["last_turn_ms"], played, audio_s, self._barge_max,
-                 " ".join(f"{k}={v}ms" for k, v in self._mic_lag.items()))
+                 self.stats["last_turn_ms"], played, audio_s, self.player.underruns, self.player.underrun_ms,
+                 self._barge_max, " ".join(f"{k}={v}ms" for k, v in self._mic_lag.items()))
         self._mic_lag = {}
         self._thinking_at = 0.0
         self._barge_max = 0.0
-        await self._send({"type": "playback_ended"})
+        await self._send({"type": "playback_ended", "underruns": self.player.underruns,
+                          "dry_ms": self.player.underrun_ms})
 
     async def stop_playback(self) -> None:
         for task in (self._playback, self._chime):

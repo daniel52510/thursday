@@ -25,11 +25,14 @@ import io
 import os
 import re
 import struct
+import time
 import wave
 
 import numpy as np
 
 PITCH_SEMITONES = float(os.getenv("ROCKY_PITCH_SEMITONES", "2.0"))
+# Speaking tempo after the pitch shift (1.0 = natural TTS speed; _stretch counteracts _shift's speedup).
+TEMPO = float(os.getenv("ROCKY_TEMPO", "1.0"))
 CHORD_MIX = float(os.getenv("ROCKY_CHORD_MIX", "0.20"))
 ALIEN = float(os.getenv("ROCKY_ALIEN", "0"))  # 0 = off; above 0, vocoded chords vs a translator voice
 # The stone-chamber comb and reflections, 0..1. Off since 2026-11-01: heard as reverb on the satellite,
@@ -58,7 +61,9 @@ STREAM_MARGIN_S = 0.08    # streaming holds back this much: the filters' look-ah
 STREAM_PASS_MAX_S = float(os.getenv("ROCKY_STREAM_PASS_MAX_S", "0.4"))
 HOP_S = 0.010                  # analysis hop
 DORIAN = (0, 2, 3, 5, 7, 9, 10)  # D Dorian, as semitones above D
-OCARINA = (294.0, 700.0)       # the chord root lives here (D4 up to about F5)
+OCARINA = (220.0, 587.3)       # the chord root lives here (A3 up to D5, centered on D4 = 293.7 Hz)
+_DORIAN_MIDI = np.array([m for m in range(57, 77) if (m - 62) % 12 in DORIAN], dtype=np.float32)
+_DORIAN_HZ = 440.0 * (2.0 ** ((_DORIAN_MIDI - 69.0) / 12.0))
 PEAK = 0.93                    # of full scale: headroom for the mu-law encoder
 
 _EXCLAIM = re.compile(r"\bamaze\b|\b(bad|happy|good),? \1,? \1\b|!", re.I)
@@ -92,14 +97,73 @@ def _write(x: np.ndarray, sr: int) -> bytes:
 def _lowpass(x: np.ndarray, cutoff: float, taps: int = 127) -> np.ndarray:
     """Windowed-sinc FIR; cutoff as a fraction of the sample rate (0.5 = Nyquist)."""
     n = np.arange(taps) - (taps - 1) / 2
-    h = 2 * cutoff * np.sinc(2 * cutoff * n) * np.blackman(taps)
-    return np.convolve(x, h / h.sum(), mode="same")
+    h = (2 * cutoff * np.sinc(2 * cutoff * n) * np.blackman(taps)).astype(np.float32)
+    return np.convolve(x, h / h.sum(), mode="same").astype(np.float32)
 
 
-def _shift(x: np.ndarray, semitones: float) -> np.ndarray:
-    """Pitch and formants up together by resampling: the cheapest shift with no phasey artifacts.
-    Speech gets 2^(st/12) quicker (12% at +2), which suits an excited engineer."""
+# Band-passed air through the ocarina: deterministic (seed 7), precomputed once so streaming passes
+# slice it in O(1) instead of running two FIR convolutions over the whole sentence every 80 ms.
+_BREATH_RAW = np.random.default_rng(7).standard_normal(24000 * 60).astype(np.float32)
+_BREATH_BUF = _lowpass(_BREATH_RAW, 0.12) - _lowpass(_BREATH_RAW, 0.02)
+
+
+def _breath(n: int) -> np.ndarray:
+    if n <= len(_BREATH_BUF):
+        return _BREATH_BUF[:n]
+    raw = np.random.default_rng(7).standard_normal(n + 256).astype(np.float32)
+    return (_lowpass(raw, 0.12) - _lowpass(raw, 0.02))[:n]
+
+
+def _stretch(x: np.ndarray, ratio: float, sr: int, cache: dict | None = None) -> np.ndarray:
+    """Causal pitch-synchronous overlap-add (WSOLA): stretches duration by `ratio` (>1 = longer)
+    before resampling so _shift raises pitch without rushing speech or starving playback. Looks
+    ahead <=26 ms (under STREAM_MARGIN_S), so streaming and whole-piece processing stay identical."""
+    if abs(ratio - 1.0) < 1e-3 or len(x) < sr // 20:
+        return x
+    win = int(sr * 0.020) // 2 * 2   # 20 ms Hann grain (480 samples at 24 kHz)
+    hs = win // 2                    # 10 ms synthesis hop (50% overlap: Hann sums to 1.0)
+    search = int(sr * 0.006)         # +-6 ms pitch-period search (covers f0 down to ~80 Hz)
+    avail = len(x) - (win + search)
+    if avail <= 0:
+        return x
+    n_frames = 1 + int(avail * ratio) // hs
+    han = np.hanning(win).astype(np.float32)
+    if cache is not None and "wsola_out" in cache:
+        out = cache["wsola_out"]
+        start_k, prev_in = cache["wsola_k"], cache["wsola_prev"]
+        need = n_frames * hs + win
+        if len(out) < need:
+            out = np.pad(out, (0, max(need - len(out), sr * 2)))
+    else:
+        out = np.zeros(max(n_frames * hs + win, sr * 2 if cache is not None else 0), dtype=np.float32)
+        out[:win] = x[:win] * han
+        start_k, prev_in = 1, 0
+    offsets = np.arange(-search, search + 1, 2)
+    t_idx = np.arange(hs)[None, :]
+    for k in range(start_k, n_frames):
+        out_pos = k * hs
+        center = min(max(search, int(round(out_pos / ratio))), len(x) - win - search)
+        nat = min(prev_in + hs, len(x) - hs)
+        ref = x[nat : nat + hs]
+        cands = center + offsets
+        mat = x[cands[:, None] + t_idx]
+        dots = mat @ ref
+        norms = np.sqrt((mat * mat).sum(axis=1) * float(ref @ ref) + 1e-12)
+        best = int(cands[int(np.argmax(dots / norms))])
+        prev_in = best
+        out[out_pos : out_pos + win] += x[best : best + win] * han
+    if cache is not None:
+        cache["wsola_out"], cache["wsola_k"], cache["wsola_prev"] = out, n_frames, prev_in
+    return out[:n_frames * hs]
+
+
+def _shift(x: np.ndarray, semitones: float, sr: int = 24000, cache: dict | None = None,
+           tempo: float | None = None) -> np.ndarray:
+    """Pitch and formants up by resampling, after counter-stretching by r / tempo so speaking
+    speed stays at tempo (1.0 = original TTS pace instead of 12% rushed)."""
     r = 2 ** (semitones / 12)
+    t = TEMPO if tempo is None else float(tempo)
+    x = _stretch(x, r / max(0.5, t), sr, cache)
     if abs(r - 1) < 1e-3:
         return x
     y = _lowpass(x, 0.5 / r * 0.92) if r > 1 else x  # no aliasing from the squeeze
@@ -215,16 +279,18 @@ def _pitch(frames: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
     return sr / lag, strength > 0.35
 
 
-def _snap(freq: float) -> float:
-    """Nearest D Dorian note, folded into the ocarina's range."""
+def _snap(freq: float, prev_midi: float | None = None) -> float:
+    """Nearest D Dorian note in the ocarina's register. When prev_midi is given, penalizes jumps > 4 st
+    so small f0 wobbles never slam the chord root across an octave."""
     while freq < OCARINA[0]:
         freq *= 2
     while freq > OCARINA[1]:
         freq /= 2
-    midi = 69 + 12 * np.log2(freq / 440)
-    cands = [m for m in range(int(midi) - 2, int(midi) + 3) if (m - 62) % 12 in DORIAN]
-    best = min(cands, key=lambda m: abs(m - midi))
-    return float(440 * 2 ** ((best - 69) / 12))
+    midi = 69.0 + 12.0 * np.log2(freq / 440.0)
+    cost = np.abs(_DORIAN_MIDI - midi)
+    if prev_midi is not None:
+        cost = cost + 0.35 * np.maximum(0.0, np.abs(_DORIAN_MIDI - prev_midi) - 4.0)
+    return float(_DORIAN_HZ[int(np.argmin(cost))])
 
 
 def _osc(freq: np.ndarray, sr: int, harmonics: dict[int, float]) -> np.ndarray:
@@ -245,47 +311,92 @@ _REED = {1: 1.0, 3: 1 / 3, 5: 1 / 5, 7: 1 / 7, 9: 1 / 9}  # clarinet: odd harmon
 
 # --- the processor -----------------------------------------------------------------------------
 
-def process(x: np.ndarray, sr: int, text: str = "", final: bool = True, style: dict | None = None) -> np.ndarray:
+def _analyze(voice: np.ndarray, sr: int, hop: int, cache: dict | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-frame (rms, f0, voiced), reusing already-settled frames from `cache` during streaming."""
+    frames = _frames(voice, hop)
+    start = cache.get("settled", 0) if cache is not None else 0
+    sub = frames[start:]
+    rms_sub = np.sqrt(np.mean(sub ** 2, axis=1))
+    f0_sub, voiced_sub = _pitch(sub, sr)
+    if start > 0 and cache is not None:
+        rms = np.concatenate([cache["rms"][:start], rms_sub])
+        f0 = np.concatenate([cache["f0"][:start], f0_sub])
+        voiced = np.concatenate([cache["voiced"][:start], voiced_sub])
+    else:
+        rms, f0, voiced = rms_sub, f0_sub, voiced_sub
+    if cache is not None:
+        settled = max(0, (len(voice) - 128 - 4 * hop) // hop)
+        cache["rms"], cache["f0"], cache["voiced"], cache["settled"] = rms, f0, voiced, settled
+    env, level = np.empty_like(rms), 0.0
+    for i, v in enumerate(rms):
+        level += (v - level) * (0.65 if v > level else 0.15)
+        env[i] = level
+    return env, f0, voiced
+
+
+def process(x: np.ndarray, sr: int, text: str = "", final: bool = True, style: dict | None = None,
+            _cache: dict | None = None, state: dict | None = None) -> np.ndarray:
     """One chunk of speech (float, -1..1) in Rocky's voice.
 
     Prefix-stable: every stage is causal or looks ahead under STREAM_MARGIN_S, so processing
     more of the same chunk never changes the start of the output. That's what lets Stream send
     audio while the TTS is still generating. `final` adds what needs the end in sight: the
-    question chime and the closing fade. style: his voice settings ({"whisper": bool, "volume": 0-1})."""
+    question chime and the closing fade. style: his voice settings ({"whisper": bool, "volume": 0-1, "tempo": float})."""
     whisper, volume = bool((style or {}).get("whisper")), float((style or {}).get("volume", 1.0))
-    voice = _shift(x, PITCH_SEMITONES)
+    if (style or {}).get("voice") == "tara":
+        # Tara is herself: no shift, chords or chime. Volume only; a whisper is just quieter for now.
+        return x * volume * (WHISPER_LEVEL if whisper else 1.0)
+    tempo = (style or {}).get("tempo")
+    voice = _shift(x, PITCH_SEMITONES, sr, _cache, tempo=tempo)
     if len(voice) < sr // 20:  # a click of audio: nothing to sing under
         return _limit(_granite(_whisper(voice, sr) * WHISPER_LEVEL if whisper else voice, sr)) * volume
     hop = int(sr * HOP_S)
-    frames = _frames(voice, hop)
-    env = _envelope(frames)
-    f0, voiced = _pitch(frames, sr)
+    env, f0, voiced = _analyze(voice, sr, hop, _cache)
 
-    # The chord root follows his pitch, snapped to the scale; held through consonants and gaps,
-    # with a 30 ms glide between notes so the layer never steps or clicks.
-    root, note = np.empty(len(env)), _snap(220.0)
+    # The chord root sits an octave above his speaking pitch (male ~150 Hz -> ~300 Hz, centered on D4),
+    # smoothed with hysteresis so small pitch wobbles around 147 Hz never flip octaves mid-syllable.
+    # Multi-piece replies pass `state` across pieces so the chord root and running peak carry over smoothly.
+    root = np.empty(len(env), dtype=np.float32)
+    note_hz = float(state.get("note_hz", _snap(293.66))) if state else _snap(293.66)
+    note_midi = float(state.get("note_midi", 62.0)) if state else 62.0
+    smooth_midi = float(state.get("smooth_midi", 62.0)) if state else 62.0
+    peak_floor = float(state.get("peak_floor", 0.02)) if state else 0.02
+    hold, outliers = 0, 0
     for i in range(len(env)):
-        if voiced[i] and env[i] > 0.02:
-            note = _snap(f0[i])
-        root[i] = note if i == 0 else root[i - 1] * (note / root[i - 1]) ** 0.3
+        if voiced[i] and env[i] > 0.03:
+            target_hz = float(np.clip(f0[i] * 2.0, OCARINA[0], OCARINA[1]))
+            m = 69.0 + 12.0 * np.log2(target_hz / 440.0)
+            if abs(m - smooth_midi) > 5.5 and outliers < 2:
+                outliers += 1
+            else:
+                outliers = 0
+                smooth_midi = 0.72 * smooth_midi + 0.28 * m
+            if hold >= 6 and abs(smooth_midi - note_midi) > 1.35:
+                note_hz = _snap(float(440.0 * 2.0 ** ((smooth_midi - 69.0) / 12.0)), note_midi)
+                note_midi = 69.0 + 12.0 * np.log2(note_hz / 440.0)
+                hold = 0
+        hold += 1
+        root[i] = note_hz if i == 0 else root[i - 1] * (note_hz / root[i - 1]) ** 0.18
+    if final and state is not None and len(env):
+        state["note_hz"], state["note_midi"], state["smooth_midi"] = note_hz, note_midi, smooth_midi
+        state["peak_floor"] = float(max(0.02, 0.85 * float(np.max(env))))
     t = np.arange(len(voice))
     centers = np.arange(len(env)) * hop + 2 * hop
     root_s = np.interp(t, centers, root)
-    level = env / np.maximum(np.maximum.accumulate(env), 0.02)   # running peak: causal
+    level = env / np.maximum(np.maximum.accumulate(env), peak_floor)  # running peak: causal
     env_s = np.interp(t, centers, level)
     loud_s = np.interp(t, centers, env)                          # the voice's own level
 
     exclaim = bool(_EXCLAIM.search(text))
     speech = _granite(voice if ALIEN <= 0 else  # ROCKY_ALIEN=0: his own shifted voice, no vocoder or device
                       _translate(voice, root_s / 2, np.interp(t, centers, voiced.astype(np.float32)), exclaim, sr), sr)
-    breath = _lowpass(np.random.default_rng(7).standard_normal(len(voice)).astype(np.float32), 0.12)
-    breath -= _lowpass(breath, 0.02)                    # band-passed air through the ocarina
+    breath = _breath(len(voice))
     layer = (_osc(root_s, sr, _TRIANGLE) + 0.7 * _osc(root_s * 1.5, sr, _TRIANGLE)
              + 0.5 * _osc(root_s * 2, sr, _SINE) + 0.6 * breath) * env_s
-    # Jug on stressed syllables: near this chunk's loudest so far.
-    layer += 0.9 * _osc(root_s / 4, sr, _JUG) * np.interp(t, centers, np.clip((level - 0.6) / 0.4, 0, 1))
-    if exclaim:  # "Amaze!" / "Bad, bad, bad!": the reed swells in
-        layer += 0.7 * _osc(root_s, sr, _REED) * env_s ** 0.7
+    # Jug on stressed syllables: near this chunk's loudest so far (scaled by env_s so loud_s/env_s cancels).
+    layer += 0.65 * _osc(root_s / 4, sr, _JUG) * env_s * np.interp(t, centers, np.clip((level - 0.65) / 0.35, 0, 1))
+    if exclaim:  # "Amaze!" / "Bad, bad, bad!": the reed swells in on stressed syllables only
+        layer += 0.35 * _osc(root_s, sr, _REED) * env_s * np.interp(t, centers, np.clip((level - 0.45) / 0.55, 0, 1))
     layer *= LAYER_GAIN * loud_s / np.maximum(env_s, 0.05)       # at the voice's level, sample by sample
 
     if final and _QUESTION.search(text.strip()):
@@ -362,13 +473,23 @@ class Stream:
     grown 40%, but never more than STREAM_PASS_MAX_S of new audio between passes: bigger batches
     starved the satellite between them. ~75 ms of CPU per second of audio."""
 
-    def __init__(self, sr: int, text: str, style: dict | None = None) -> None:
-        self.sr, self.text, self.style = sr, text, style
+    def __init__(self, sr: int, text: str, style: dict | None = None, state: dict | None = None) -> None:
+        self.sr, self.text, self.style, self.state = sr, text, style, state
         self.x = np.zeros(0, np.float32)
         self.sent = 0
         self.next = sr // 10        # samples needed before the next pass
-        hold = 0.5 if _QUESTION.search(text.strip()) else STREAM_MARGIN_S  # the chime lives in the last ~0.4 s
+        hold = 0.0 if (style or {}).get("voice") == "tara" else 0.5 if _QUESTION.search(text.strip()) else STREAM_MARGIN_S  # the chime lives in the last ~0.4 s
         self.margin = int(sr * hold)
+        self._cache: dict = {}
+        # Measurement (voice_ws logs it per piece): passes run, their total and worst CPU time.
+        self.passes, self.cpu_s, self.max_pass_s = 0, 0.0, 0.0
+
+    def _process(self, final: bool) -> np.ndarray:
+        started = time.perf_counter()
+        y = process(self.x, self.sr, self.text, final=final, style=self.style, _cache=self._cache, state=self.state)
+        took = time.perf_counter() - started
+        self.passes, self.cpu_s, self.max_pass_s = self.passes + 1, self.cpu_s + took, max(self.max_pass_s, took)
+        return y
 
     def feed(self, pcm16: bytes) -> bytes:
         self.x = np.concatenate([self.x, np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0])
@@ -376,11 +497,11 @@ class Stream:
             return b""
         n = len(self.x)
         self.next = n + max(int(self.sr * 0.08), min(int(n * 0.4), int(self.sr * STREAM_PASS_MAX_S)))
-        y = process(self.x, self.sr, self.text, final=False, style=self.style)
+        y = self._process(final=False)
         return self._take(y, len(y) - self.margin)
 
     def finish(self) -> bytes:
-        return self._take(process(self.x, self.sr, self.text, final=True, style=self.style), None) if len(self.x) else b""
+        return self._take(self._process(final=True), None) if len(self.x) else b""
 
     def _take(self, y: np.ndarray, upto: int | None) -> bytes:
         upto = len(y) if upto is None else upto

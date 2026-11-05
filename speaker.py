@@ -140,8 +140,8 @@ def identify(pcm16: bytes, prints: dict[str, np.ndarray] | None = None) -> dict:
     if not prints:
         return {"user": None, "score": 0.0, "verdict": "unknown"}
     x = speech_only(np.frombuffer(pcm16, dtype="<i2"))
-    if x is None:  # too short or too quiet to judge the voice
-        return {"user": None, "score": 0.0, "verdict": "unsure"}
+    if x is None:  # too short or too quiet to judge the voice: the caller may carry an earlier match
+        return {"user": None, "score": 0.0, "verdict": "unsure", "short": True}
     v = embed(x)
     user, score = max(((u, float(p @ v)) for u, p in prints.items()), key=lambda t: t[1])
     verdict = "match" if score >= THRESHOLD else "unknown" if score < LOW else "unsure"

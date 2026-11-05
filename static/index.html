@@ -1504,8 +1504,9 @@ function animateOrb() {
 async function startAudio() {
   if (V.ctx) return;
   const stream = await navigator.mediaDevices.getUserMedia({
-    // Echo cancellation keeps the cues and THURSDAY's own voice out of the mic.
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    // Echo cancellation keeps the cues and THURSDAY's own voice out of the mic; AGC is off so silence
+    // doesn't pump speaker bleed or room hiss up into the VAD.
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false },
   });
   // One context at the device rate (Firefox refuses a 16 kHz context fed by a
   // 48 kHz mic); the worklet averages down to 16 kHz frames itself.
@@ -1529,7 +1530,69 @@ async function startAudio() {
         return true;
       }
     }
-    registerProcessor("pcm16", Pcm16);`;
+    registerProcessor("pcm16", Pcm16);
+
+    // His voice out: one continuous stream (PCM already at the context rate), so pieces join sample to
+    // sample. A run-dry fades out over FADE and waits for REBUFFER before fading back in: a soft dip
+    // instead of a click, counted as an underrun. "end": the reply is complete, play it out and report.
+    class PcmOut extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.q = []; this.off = 0; this.queued = 0;
+        this.playing = false; this.ended = false; this.stopping = false; this.heard = false; this.gain = 0;
+        this.fade = Math.round(sampleRate * 0.005); this.rebuffer = Math.round(sampleRate * 0.1);
+        this.underruns = 0; this.dry = 0;
+        this.port.onmessage = (e) => {
+          const m = e.data;
+          if (m.pcm) { this.q.push(m.pcm); this.queued += m.pcm.length; this.ended = false; }
+          else if (m.cmd === "mark") { this.underruns = 0; this.dry = 0; this.heard = false; }
+          else if (m.cmd === "end") {
+            if (!this.queued && !this.playing) {
+              this.port.postMessage({ drained: true, underruns: this.underruns, dryMs: Math.round(this.dry / sampleRate * 1000) });
+              this.reset();
+            } else this.ended = true;
+          } else if (m.cmd === "stop") {  // cut off: keep FADE samples to fade out on, drop the rest
+            if (!this.playing || !this.queued) { this.reset(); return; }
+            let keep = Math.min(this.queued, this.fade), q = [];
+            for (let idx = 0; idx < this.q.length && keep > 0; idx++) {
+              const c = this.q[idx], s = idx === 0 ? this.off : 0;
+              const part = c.subarray(s, s + keep); q.push(part); keep -= part.length;
+            }
+            this.q = q; this.off = 0; this.queued = q.reduce((n, c) => n + c.length, 0);
+            this.stopping = true; this.ended = false;
+          }
+        };
+      }
+      reset() { this.playing = false; this.ended = false; this.stopping = false; this.heard = false; this.gain = 0;
+                this.underruns = 0; this.dry = 0; this.q = []; this.off = 0; this.queued = 0; }
+      process(_, outputs) {
+        const out = outputs[0][0];
+        for (let i = 0; i < out.length; i++) {
+          if (!this.playing) {
+            out[i] = 0;
+            if (this.queued && (this.queued >= this.rebuffer || this.ended || this.stopping || !this.heard)) this.playing = true;
+            else { if (this.heard && !this.ended) this.dry++; continue; }
+          }
+          if (!this.queued) {  // ran out
+            out[i] = 0; this.playing = false; this.gain = 0;
+            if (this.stopping) { this.reset(); continue; }
+            if (this.ended) {
+              this.port.postMessage({ drained: true, underruns: this.underruns, dryMs: Math.round(this.dry / sampleRate * 1000) });
+              this.reset();
+            } else this.underruns++;
+            continue;
+          }
+          this.heard = true;
+          const target = this.stopping || (!this.ended && this.queued <= this.fade) ? 0 : 1;
+          this.gain += Math.max(-1 / this.fade, Math.min(1 / this.fade, target - this.gain));
+          const c = this.q[0];
+          out[i] = c[this.off++] * this.gain; this.queued--;
+          if (this.off >= c.length) { this.q.shift(); this.off = 0; }
+        }
+        return true;
+      }
+    }
+    registerProcessor("pcmout", PcmOut);`;
   await V.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" })));
   const mic = V.ctx.createMediaStreamSource(stream);
   V.micNode = new AudioWorkletNode(V.ctx, "pcm16");
@@ -1543,6 +1606,9 @@ async function startAudio() {
   V.micBands = bandMeter(V.ctx, mic);
   V.out = V.ctx.createGain();
   V.out.connect(V.ctx.destination);
+  V.outNode = new AudioWorkletNode(V.ctx, "pcmout");
+  V.outNode.connect(V.out);
+  V.outNode.port.onmessage = (e) => { if (e.data.drained) maybePlaybackEnded(e.data); };
   V.outBands = bandMeter(V.ctx, V.out);
 }
 
@@ -1565,7 +1631,7 @@ function onVoiceEvent(ev) {
     if (ev.state === "idle" && V.replyText && !Cap.segs.length) resetCaption(V.replyText);
     setVoiceState(ev.state);
   }
-  else if (ev.type === "audio_end") { V.audioEnd = true; V.chain.then(maybePlaybackEnded); }
+  else if (ev.type === "audio_end") { V.audioEnd = true; V.chain = V.chain.then(() => V.outNode?.port.postMessage({ cmd: "end" })); }
   else if (ev.type === "barge_in") {
     // The user talked over her: silence her on this tick and show that we're listening.
     stopReplyAudio(); stopThinking(); freezeCaption(false);
@@ -1580,7 +1646,10 @@ function onVoiceEvent(ev) {
     V.turns++; showTurn();
     addUser(ev.text, true); voiceView = addAssistant();
   }
-  else if (ev.type === "tool") { voiceView?.tool(ev.name); vState.textContent = TOOL_LABELS[ev.name]?.label || "Working"; }
+  else if (ev.type === "tool") {
+    voiceView?.tool(ev.name); vState.textContent = TOOL_LABELS[ev.name]?.label || "Working";
+    if (/^(mission|watch|routine|improve)_|^code_review_start$/.test(ev.name)) refreshMissions();
+  }
   else if (ev.type === "reply") { V.replyText = ev.text; if (voiceView) { voiceView.el.querySelectorAll(".chip.running").forEach(() => voiceView.toolDone("", true)); voiceView.set(ev.text); voiceView.finish(); } }
   else if (ev.type === "error") { resetCaption(`${ev.stage}: ${ev.message}`); voiceView?.error(`${ev.stage} failed: ${ev.message}`); voiceView = null; }
 }
@@ -1600,9 +1669,10 @@ function resetCaption(text = "") {
 }
 
 function queueCaption(text, cps) {
+  const first = !Cap.segs.length;
   const seg = { words: [], offsets: [], chars: text.length, cps: cps || 15, start: null, end: null, lit: 0 };
   let at = 0;
-  if (Cap.segs.length) vCaption.append(" ");
+  if (!first) vCaption.append(" ");
   for (const word of text.trim().split(/\s+/)) {
     const span = document.createElement("span");
     span.className = "w"; span.textContent = word;
@@ -1611,7 +1681,7 @@ function queueCaption(text, cps) {
     at += word.length + 1;
   }
   Cap.segs.push(seg);
-  V.chain = V.chain.then(() => { Cap.pending = seg; });
+  V.chain = V.chain.then(() => { if (first) V.outNode?.port.postMessage({ cmd: "mark" }); Cap.pending = seg; });
 }
 
 // Called from scheduleChunk with the start time and length of each WAV.
@@ -1666,15 +1736,10 @@ async function scheduleChunk(data) {
   if (V.interrupting || V.state !== "speaking") return;  // audio from a cancelled turn
   const buffer = await V.ctx.decodeAudioData(data);
   if (V.interrupting || !V.open || V.state !== "speaking") return;  // cut off while decoding
-  const src = V.ctx.createBufferSource();
-  src.buffer = buffer;
-  src.connect(V.out);
-  // Start exactly when the previous sentence ends: no gap, no overlap.
+  const pcm = new Float32Array(buffer.getChannelData(0));
   const at = Math.max(V.ctx.currentTime, V.nextAt);
   V.nextAt = at + buffer.duration;
-  src.onended = () => { V.srcs = V.srcs.filter((s) => s !== src); maybePlaybackEnded(); };
-  src.start(at);
-  V.srcs.push(src);
+  V.outNode.port.postMessage({ pcm }, [pcm.buffer]);
   captionAudio(at, buffer.duration);
   if (!V.started) {
     V.started = true;
@@ -1683,16 +1748,18 @@ async function scheduleChunk(data) {
   }
 }
 
-// The reply is over once the server said audio_end and the last sentence finished.
-function maybePlaybackEnded() {
-  if (!V.audioEnd || V.srcs.length) return;
+// The reply is over once the server said audio_end and the continuous output worklet drained.
+function maybePlaybackEnded(stats) {
+  if (!V.audioEnd) return;
   freezeCaption(true);
   V.audioEnd = false; V.started = false; V.nextAt = 0;
-  V.ws?.readyState === WebSocket.OPEN && V.ws.send(JSON.stringify({ type: "playback_ended" }));
+  V.ws?.readyState === WebSocket.OPEN && V.ws.send(JSON.stringify({
+    type: "playback_ended", underruns: stats?.underruns ?? 0, dry_ms: stats?.dryMs ?? 0,
+  }));
 }
 
 function stopReplyAudio() {
-  for (const s of V.srcs) { s.onended = null; try { s.stop(); } catch {} }
+  V.outNode?.port.postMessage({ cmd: "stop" });
   V.srcs = []; V.nextAt = 0; V.started = false; V.audioEnd = false;
 }
 
@@ -1833,6 +1900,19 @@ const PANES = {
         try { ME = await call("/api/me", jsonReq("PATCH", { display_name: name.value })); await loadMe(); say(youNote, "Saved."); } catch (e) { say(youNote, e.message, true); }
       })),
       el("div", { className: "set-row" }, persona), youNote);
+
+    // Whose voice speaks: Rocky (off) or Tara (on). "Switch to Tara" out loud sets the same thing.
+    const voiceSw = el("button", { className: "switch", role: "switch", ariaLabel: "Tara's voice" });
+    const voiceNote = note();
+    const showVoice = (v) => voiceSw.setAttribute("aria-checked", String(v === "tara"));
+    try { showVoice((await call("/api/voice")).voice); } catch (e) { say(voiceNote, e.message, true); }
+    voiceSw.onclick = async () => {
+      const voice = voiceSw.getAttribute("aria-checked") === "true" ? "rocky" : "tara";
+      try { showVoice((await call("/api/voice", jsonReq("PUT", { voice }))).voice); say(voiceNote, `${voice === "tara" ? "Tara" : "Rocky"} speaks from the next reply.`); }
+      catch (e) { say(voiceNote, e.message, true); }
+    };
+    body.append(el("h3", { className: "set-h", textContent: "Voice" }),
+      el("div", { className: "set-row" }, el("span", { textContent: "Rocky" }), voiceSw, el("span", { textContent: "Tara" })), voiceNote);
 
     const limit = ME.daily_token_limit;
     body.append(el("h3", { className: "set-h", textContent: "Today" }),

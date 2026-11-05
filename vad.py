@@ -60,14 +60,21 @@ def _env_float(name: str, default: float) -> float:
     return float(os.getenv(name, default))
 
 
+def _frame_dbfs(frame: bytes) -> float:
+    """RMS level in dBFS (-96..0) for one int16 frame."""
+    x = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
+    return float(10.0 * np.log10(np.mean(x * x) + 1e-10))
+
+
 @dataclass
 class VADConfig:
-    start_prob: float = 0.5        # frame counts as speech at or above this
+    start_prob: float = 0.6        # frame counts as speech at or above this
     end_prob: float = 0.35         # frame counts as silence below this (hysteresis)
-    min_speech_ms: int = 96        # this much consecutive speech starts an utterance
+    min_speech_ms: int = 160       # this much consecutive speech starts an utterance
     end_silence_ms: int = 600      # this much silence ends it; adds directly to latency
     preroll_ms: int = 300          # audio kept from before the start so the first word isn't clipped
     max_utterance_ms: int = 30000
+    min_dbfs: float = -48.0        # quiet bleed / room noise below this cannot start an utterance
 
     @classmethod
     def from_env(cls) -> "VADConfig":
@@ -78,6 +85,7 @@ class VADConfig:
             end_silence_ms=int(_env_float("VAD_END_SILENCE_MS", cls.end_silence_ms)),
             preroll_ms=int(_env_float("VAD_PREROLL_MS", cls.preroll_ms)),
             max_utterance_ms=int(_env_float("VAD_MAX_UTTERANCE_MS", cls.max_utterance_ms)),
+            min_dbfs=_env_float("VAD_MIN_DBFS", cls.min_dbfs),
         )
 
 
@@ -88,33 +96,50 @@ def _frames(ms: int) -> int:
 class BargeIn:
     """Watches the mic while THURSDAY thinks or speaks. Stricter than the
     endpointer's start: her own voice leaking past echo cancellation, a cough
-    or a quick "mm" must not cut her off; a real interjection must."""
+    or a quick "mm" must not cut her off; a real interjection must.
+
+    Silero VAD is scale-invariant (faint residual speaker bleed still scores >0.9),
+    so barge-in also tracks the mic's residual echo floor in dBFS and requires the
+    user's voice to rise BARGE_SPEECH_DB above it and above BARGE_MIN_DBFS.
+    """
 
     def __init__(self, cfg: VADConfig):
         self.vad = SileroVAD()
-        self.prob = _env_float("BARGE_PROB", 0.8)
-        self._need = _frames(int(_env_float("BARGE_MS", 288)))
+        self.prob = _env_float("BARGE_PROB", 0.85)
+        self._need = _frames(int(_env_float("BARGE_MS", 352)))
+        self.min_dbfs = _env_float("BARGE_MIN_DBFS", -40.0)
+        self.margin_db = _env_float("BARGE_SPEECH_DB", 8.0)
         # Everything since just before the speech began, handed to the endpointer on a trigger.
         self._recent: deque[bytes] = deque(maxlen=_frames(cfg.preroll_ms) + self._need)
+        self._residual: deque[float] = deque(maxlen=40)
         self.reset()
 
     def reset(self) -> None:
         self.vad.reset()
         self._recent.clear()
+        self._residual.clear()
         self._run = 0
         self._miss = 0
 
     def feed(self, frame: bytes) -> list[bytes] | None:
         """The buffered speech once the user has clearly started talking."""
         self._recent.append(frame)
-        if self.vad(frame) >= self.prob:
+        db = _frame_dbfs(frame)
+        bar = max(
+            self.min_dbfs,
+            float(np.percentile(self._residual, 85)) + self.margin_db if len(self._residual) >= 5 else self.min_dbfs,
+        )
+        if db >= bar and self.vad(frame) >= self.prob:
             self._run += 1
             self._miss = 0
-        elif self._run:
-            # One weak frame inside a word doesn't restart the count; two do.
-            self._miss += 1
-            if self._miss > 1:
-                self._run = self._miss = 0
+        else:
+            if db < bar:
+                self._residual.append(db)
+            if self._run:
+                # One weak frame inside a word doesn't restart the count; two do.
+                self._miss += 1
+                if self._miss > 1:
+                    self._run = self._miss = 0
         if self._run >= self._need:
             frames = list(self._recent)
             self.reset()
@@ -161,7 +186,8 @@ class Endpointer:
         prob = self.vad(frame)
         if not self.in_speech:
             self._preroll.append(frame)
-            self._speech_run = self._speech_run + 1 if prob >= self.cfg.start_prob else 0
+            loud_enough = _frame_dbfs(frame) >= self.cfg.min_dbfs
+            self._speech_run = self._speech_run + 1 if (loud_enough and prob >= self.cfg.start_prob) else 0
             if self._speech_run >= self._start_frames:
                 self.in_speech = True
                 self._frames_in = list(self._preroll)

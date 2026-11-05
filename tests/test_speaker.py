@@ -54,7 +54,8 @@ def test_verdicts(fake_embed, vec, verdict, user):
 
 
 def test_short_utterance_is_unsure_not_a_stranger():
-    assert speaker.identify(_speech(0.5).tobytes(), {"owner": _unit(1, 0)})["verdict"] == "unsure"
+    got = speaker.identify(_speech(0.5).tobytes(), {"owner": _unit(1, 0)})
+    assert got["verdict"] == "unsure" and got["short"]  # voice_ws may carry the session's last match
 
 
 def test_nobody_enrolled_is_unknown():

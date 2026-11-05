@@ -53,7 +53,7 @@ import missions
 import music
 import rocky_voice
 import speaker
-from agent_stream import VOICE_TAG, record_cut_off, strip_voice_tags, stream_prompt
+from agent_stream import VOICE_TAG, record_cut_off, strip_voice_tags, stream_prompt, warm_cache
 from vad import FRAME_BYTES, FRAME_MS, SAMPLE_RATE, BargeIn, Endpointer, VADConfig
 
 STT_BASE_URL = os.getenv("STT_BASE_URL", "http://thursday-stt:9200").rstrip("/")
@@ -89,6 +89,7 @@ BC_CLIPS = ("mm", "right", "go-on", "copy")
 BC_GAIN = 0.7
 BC_DEAF_MAX_S = 1.5  # stop ignoring the mic even if the satellite never says the clip ended
 BC_TAIL_S = 0.1      # room echo after the clip
+WARM_EVERY_S = 60.0  # Ollama cache warm-ups at most this often per session (announcements force one)
 # Full duplex, slice 4, shadow mode: at each pause (and each partial, if VOICE_PARTIAL_MS is on) a small
 # second model (interject.py, VOICE_EVALUATOR_MODEL) judges whether THURSDAY should cut in. Logged only:
 # nothing is said. Each call is ~0.4 s on the Mac's GPU while the user talks; replies never wait on it. 0 = off.
@@ -96,6 +97,7 @@ EVALUATOR = os.getenv("VOICE_EVALUATOR", "0") != "0"
 # Who is talking (speaker.py): "shadow" logs each turn's verdict and changes nothing; "off" skips it.
 # It runs beside the reply, never before it, so it costs a turn nothing.
 SPEAKER_ID = os.getenv("SPEAKER_ID", "shadow")
+SPEAKER_CARRY_S = 90.0  # a short clip keeps the session's last match this long ("carried")
 # Smart endpoint: the speculative transcript of a pause (STT_SPECULATE_MS) decides how long to wait.
 # A finished question ends the turn after QUICK ms; a trailing "and", "so", "um" or comma means they're
 # mid-thought, so wait HOLD ms; anything else keeps VAD_END_SILENCE_MS. 0 = off (always the fixed wait).
@@ -142,9 +144,11 @@ def _drop_invented(piece: str) -> str:
     return " ".join(kept)
 
 
-def _with_beat(piece: str, last: bool, after_audio: bool) -> list[tuple[str, bool]]:
-    """[(text, beat before it)]: the reply's closing short line split off with a beat, when it has one."""
-    if BEAT_MS and last:
+def _with_beat(piece: str, last: bool, after_audio: bool, streamed: bool = False) -> list[tuple[str, bool]]:
+    """[(text, beat before it)]: the reply's closing short line split off with a beat, when it has one.
+    When streaming, each split costs a ~450 ms TTS cold start, so only split after a long head (>=140 chars)
+    that has built enough playback lead to cover the second request."""
+    if BEAT_MS and last and not streamed:
         ends = [m.end() for m in _SENTENCE_END.finditer(piece)]
         if ends:
             head, tail = piece[:ends[-1]].strip(), piece[ends[-1]:].strip()
@@ -158,10 +162,43 @@ def _with_beat(piece: str, last: bool, after_audio: bool) -> list[tuple[str, boo
 # A whole utterance like "nevermind" / "I'm good" / "no thanks" ends the conversation: no reply,
 # straight back to the wake word. Answering it opened another follow-up window, which looped.
 _CLOSER = re.compile(
-    r"^\W*(?:(?:oh|ok(?:ay)?|alright|all\s+right|no|nah|um+|uh+|thursday)\W+)*"
-    r"(?:never\s*mind|thanks?|thank\s+you|i'?m\s+good|i\s+am\s+good|i'?m\s+okay|no\s+thanks?|no\s+thank\s+you|that'?s\s+(?:all|it)|"
-    r"all\s+good|forget\s+it|stop\s+listening|i'?m\s+done|we'?re\s+done|nothing|noted|got\s+it|copy(?:\s+that)?|cool)"
-    r"(?:\W+(?:thanks?|thank\s+you|thursday|man|bro|for\s+now|then))*\W*$", re.I)
+    r"^\W*(?:(?:hey|hi|oh|ok(?:ay)?|alright|all\s+right|well|so|no|nah|yeah|yep|um+|uh+|er+|please|wait|hold\s+on|thursday)\W+)*"
+    r"(?:never\s*mind|thanks?(?:\s+a\s+lot)?|thank\s+you(?:\s+(?:so|very)\s+much)?|much\s+appreciated|appreciate\s+it|"
+    r"i'?m\s+good|i\s+am\s+good|i'?m\s+okay|i'?m\s+all\s+set|all\s+set|all\s+good|"
+    r"no\s+thanks?|no\s+thank\s+you|that'?s\s+(?:all|it|enough|good)|that\s+(?:is|will\s+be)\s+(?:all|it|enough)|that'?ll\s+do|"
+    r"forget\s+it|scratch\s+that|cancel(?:\s+that)?|abort|"
+    r"stop(?:\s+(?:listening|talking|speaking|it|now|that))?|quiet|be\s+quiet|shut\s+up|enough|hush|silence|go\s+to\s+sleep|"
+    r"i'?m\s+done|we'?re\s+done|nothing(?:\s+else)?|noted|got\s+it|copy(?:\s+that)?|cool|good\s+talk|bye|goodbye|see\s+ya)"
+    r"(?:\W+(?:thanks?|thank\s+you|so\s+much|very\s+much|a\s+lot|thursday|man|bro|bud|buddy|pal|for\s+now|then|please|now|right\s+now|already|that'?s\s+(?:all|it)))*\W*$",
+    re.I,
+)
+# When a TV or room chatter bleeds a few extra words onto a closer ("Never mind uh that uh Osborne"),
+# still treat it as a closer if it begins or ends with an explicit stop/closer phrase and has no question pivot.
+_CLOSER_EDGE = re.compile(
+    r"(?:^\W*(?:(?:hey|oh|ok(?:ay)?|alright|all\s+right|no|nah|um+|uh+|please|thursday)\W+)*"
+    r"(?:never\s*mind|forget\s+it|stop\s+(?:listening|talking|speaking)|shut\s+up|be\s+quiet|"
+    r"that'?s\s+(?:all|it|enough)|i'?m\s+(?:good|done)|we'?re\s+done|no\s+thanks?|no\s+thank\s+you|"
+    r"thank\s+you(?:\s+(?:so\s+much|very\s+much|thursday))?|thanks\s+(?:a\s+lot|thursday))\b)"
+    r"|(?:\b(?:never\s*mind|stop\s+(?:listening|talking|speaking)|shut\s+up|be\s+quiet|that'?s\s+(?:all|it|enough)|"
+    r"thank\s+you\s+thursday|thanks\s+thursday)\W*$)",
+    re.I,
+)
+_CLOSER_PIVOT = re.compile(
+    r"\b(?:actually|instead|or\s+scratch\s+that|can\s+you|could\s+you|would\s+you|will\s+you|"
+    r"what|who|where|when|why|how|tell\s+me|search|look\s+up|find|check|set|play)\b|\?",
+    re.I,
+)
+
+
+def _is_closer(text: str) -> bool:
+    if not text:
+        return False
+    if _CLOSER.match(text):
+        return True
+    words = text.split()
+    if len(words) <= 12 and not _CLOSER_PIVOT.search(text) and _CLOSER_EDGE.search(text):
+        return True
+    return False
 STT_TIMEOUT = httpx.Timeout(30, connect=5)
 TTS_TIMEOUT = httpx.Timeout(60, connect=5)
 # A TTS server that can stream (the CSM voice from the thursday-voice project)
@@ -175,8 +212,21 @@ STREAM_FIRST_BYTES = 3840  # 80 ms: the first one goes out sooner
 # shortens the audio ~12%, so the next WAV couldn't land in time (a stutter). With Rocky's capped
 # passes (rocky_voice.STREAM_PASS_MAX_S), 250 ms made 9/10 test sentences gapless, for about
 # +160 ms to first audio on a reply's first piece only (measured 2026-11-01). 0 = off.
-PREROLL_MS = int(os.getenv("VOICE_PREROLL_MS", "250"))
+PREROLL_MS = int(os.getenv("VOICE_PREROLL_MS", "350"))
+# A short first piece ending in "question?" waits for this much more: Rocky's chime tail (0.5 s,
+# rocky_voice.Stream) only arrives when the TTS finishes. 2026-11-05 logs: 0.3-0.8 s stutters.
+QUESTION_PREROLL_MS = int(os.getenv("VOICE_QUESTION_PREROLL_MS", "500"))
+QUESTION_SHORT_S = 3.5  # estimated seconds of speech; longer pieces build enough lead on their own
+# Streamed pieces stay under this. Orpheus stops a piece at max_tokens=1400 (~16 s of audio), so a 320-char
+# piece lost its ending and the next piece started: "jumping". Past ~240 chars it also rushed or dropped
+# words (19-23 chars/s vs ~14 normally, 2026-11-05 logs). Cuts stay at sentence ends where one fits.
+STREAM_PIECE_CHARS = int(os.getenv("VOICE_STREAM_PIECE_CHARS", "180"))
 ROCKY_FEED_BYTES = 3840  # Rocky reprocesses the piece every 80 ms of new audio
+# Glitch hunting: when set, every streamed piece is saved twice here, as the TTS sent it (-raw.wav) and in
+# Rocky's voice (-rocky.wav). A glitch in -raw is the TTS's; only in -rocky, the DSP's; in neither, delivery.
+# Inside the core container, use a path under /app/brain (the mounted volume), e.g. /app/brain/voice_debug.
+DEBUG_WAV_DIR = os.getenv("VOICE_DEBUG_WAV_DIR", "")
+_debug_n = 0
 _tts_caps = {"at": 0.0, "stream": False, "rate": 24000, "engine": ""}
 
 logger = logging.getLogger("thursday.voice")
@@ -243,9 +293,11 @@ FIRST_PIECE_CHARS = 60
 # after its first token. So the first piece waits up to this long after the first sentence
 # is complete for the rest, and short replies go out as one piece with no breaks.
 FIRST_PIECE_WAIT_S = 0.6
-# Orpheus generates ~2x faster than real time and starts each piece after a pre-filled silent
-# lead, so a break costs only her ~0.25 s sentence gap; waiting would just delay her first word.
-ORPHEUS_FIRST_PIECE_WAIT_S = float(os.getenv("ORPHEUS_FIRST_PIECE_WAIT_MS", "100")) / 1000
+# Orpheus takes ~400-500 ms to start each piece and runs near real time after Rocky's pitch shift
+# (~0.9-1.0x), so splitting a 2-sentence reply into separate pieces risks running dry between them.
+# Waiting up to 450 ms after the first sentence lets the LLM finish most replies (~200-300 ms total)
+# so they stream through Orpheus as one continuous piece.
+ORPHEUS_FIRST_PIECE_WAIT_S = float(os.getenv("ORPHEUS_FIRST_PIECE_WAIT_MS", "650")) / 1000
 TTS_RTF_GUESS = 0.85        # synthesis seconds per second of audio (1.7B on MPS)
 TTS_CHARS_PER_S_GUESS = 16  # characters of text per second of speech
 PIECE_SAFETY = 0.85         # aim to finish each piece with ~15% of the lead to spare
@@ -264,7 +316,7 @@ class SentenceChunker:
     """
 
     MIN_CHARS = 12
-    MAX_CHARS = 220
+    MAX_CHARS = 320
 
     def __init__(self) -> None:
         self._buf = ""
@@ -408,41 +460,55 @@ FILLERS = {
     # Asked to think it over: reasoning first takes ~30-40 s with his full prompt, so he says so up front.
     "_deliberate": ["Big question. I think. Thirty seconds.", "I think hard now. Half a minute."],
 }
-_filler_audio: dict[str, bytes] = {}
+# Tara's fillers: plain, casual English (her voice has no Eridian).
+FILLERS_TARA = {
+    "web_search": ["Let me look.", "One sec.", "Okay, checking.", "Hang on, let me find it."],
+    "sports_scores": ["Let me check the score.", "One sec."],
+    "launch_schedule": ["Ooh, launches. One sec.", "Let me check."],
+    "get_weather": ["Let me check the sky.", "One sec, weather."],
+    "calendar_events": ["Let me look at your calendar.", "One sec."],
+    "calendar_create": ["Okay, setting it up.", "One sec."],
+    "calendar_delete": ["Let me find it.", "One sec."],
+    "_deliberate": ["Ooh, good one. Give me like thirty seconds.", "Let me really think about that. Half a minute."],
+}
+_FILLERS_BY_VOICE = {"leo": FILLERS, "tara": FILLERS_TARA}
+_filler_audio: dict[tuple[str, str], bytes] = {}  # (voice, line)
 _filler_task: asyncio.Task | None = None
 _last_filler = ""
 
 
 async def _render_fillers() -> None:
     async with httpx.AsyncClient() as http:
-        for line in {line for lines in FILLERS.values() for line in lines}:
-            if line in _filler_audio:
-                continue
-            try:
-                wav = await _tts(http, line)
-            except Exception as exc:  # voice server down: try again with the next session
-                logger.warning("filler %r not rendered: %s", line, exc)
-                return
-            if wav:
-                _filler_audio[line] = _trim_wav(wav, EDGE_MARGIN_MS, PAUSE_CLAUSE_MS)
+        for voice, fillers in _FILLERS_BY_VOICE.items():
+            for line in {line for lines in fillers.values() for line in lines}:
+                if (voice, line) in _filler_audio:
+                    continue
+                try:
+                    wav = await _tts(http, line, {"voice": voice})
+                except Exception as exc:  # voice server down: try again with the next session
+                    logger.warning("filler %r not rendered: %s", line, exc)
+                    return
+                if wav:
+                    _filler_audio[(voice, line)] = _trim_wav(wav, EDGE_MARGIN_MS, PAUSE_CLAUSE_MS)
     logger.info("spoken fillers ready (%d)", len(_filler_audio))
 
 
 def warm_fillers() -> None:
     global _filler_task
-    if (_filler_task is None or _filler_task.done()) and len(_filler_audio) < sum(map(len, FILLERS.values())):
+    total = sum(len({ln for lines in f.values() for ln in lines}) for f in _FILLERS_BY_VOICE.values())
+    if (_filler_task is None or _filler_task.done()) and len(_filler_audio) < total:
         _filler_task = asyncio.create_task(_render_fillers())
 
 
-def pick_filler(kind: str) -> bytes | None:
-    """A ready line for this tool (or "_deliberate"), never the one she said last."""
+def pick_filler(kind: str, voice: str = "leo") -> bytes | None:
+    """A ready line for this tool (or "_deliberate") in this voice, never the one said last."""
     global _last_filler
-    ready = [line for line in FILLERS.get(kind, []) if line in _filler_audio]
+    ready = [line for line in _FILLERS_BY_VOICE.get(voice, FILLERS).get(kind, []) if (voice, line) in _filler_audio]
     fresh = [line for line in ready if line != _last_filler] or ready
     if not fresh:
         return None
     _last_filler = random.choice(fresh)
-    return _filler_audio[_last_filler]
+    return _filler_audio[(voice, _last_filler)]
 
 
 # Clock times as she'd say them: the voice reads "8:15" digit by digit around the
@@ -486,18 +552,31 @@ def _speakable(text: str) -> str:
     return _TIME.sub(_say_time, text)
 
 
+def _tts_body(text: str, style: dict | None) -> dict:
+    """The TTS request: Tara's voice when she's picked (mind.voice_style), else the server's default (Rocky's leo)."""
+    return {"text": text, "voice": "tara"} if (style or {}).get("voice") == "tara" else {"text": text}
+
+
 async def _tts(http: httpx.AsyncClient, text: str, style: dict | None = None) -> bytes | None:
     text = _speakable(text)
     if not text:
         return None
     # /speak/file returns the WAV itself: one round trip instead of two.
-    resp = await http.post(f"{TTS_BASE_URL}/speak/file", json={"text": text}, timeout=TTS_TIMEOUT)
+    resp = await http.post(f"{TTS_BASE_URL}/speak/file", json=_tts_body(text, style), timeout=TTS_TIMEOUT)
     resp.raise_for_status()
     if resp.status_code == 204:  # nothing speakable after cleanup
         return None
     # Every word he says is Rocky's (rocky_voice.py): replies, fillers, briefings, announcements, calls.
     # ~18 ms of NumPy per 2.5 s sentence, off the event loop.
-    return await asyncio.to_thread(rocky_voice.process_wav, resp.content, text, style)
+    out = await asyncio.to_thread(rocky_voice.process_wav, resp.content, text, style)
+    if DEBUG_WAV_DIR:
+        try:
+            with wave.open(io.BytesIO(resp.content)) as raw, wave.open(io.BytesIO(out)) as rocky:
+                _debug_dump(text, raw.readframes(raw.getnframes()), rocky.readframes(rocky.getnframes()),
+                            rocky.getframerate())
+        except (wave.Error, EOFError):
+            pass
+    return out
 
 
 # The first words of every business call (Twilio, when it lands): Florida needs every party's
@@ -523,7 +602,7 @@ async def warm_phone_disclosure() -> None:
         logger.info("phone disclosure ready: %.1f s of 8 kHz mu-law", len(phone_disclosure_mulaw) / 8000)
 
 
-async def synthesize_ahead(http: httpx.AsyncClient, text: str) -> list[bytes]:
+async def synthesize_ahead(http: httpx.AsyncClient, text: str, style: dict | None = None) -> list[bytes]:
     """All of `text` as trimmed WAVs, one per whole sentence, for audio made
     before anyone is listening (alarm briefings). With no listener to keep
     ahead of, there's no pacing: whole sentences sound the most natural."""
@@ -535,7 +614,7 @@ async def synthesize_ahead(http: httpx.AsyncClient, text: str) -> list[bytes]:
         pieces.append(piece)
     audio = []
     for i, piece in enumerate(pieces):
-        wav = await _tts(http, piece)
+        wav = await _tts(http, piece, style)
         if wav:
             audio.append(_trim_wav(wav, lead_ms=0, pause_ms=0 if i == len(pieces) - 1 else _pause_after(piece)))
     return audio
@@ -573,35 +652,75 @@ async def _tts_streams(http: httpx.AsyncClient) -> bool:
     return _tts_caps["stream"]
 
 
+def _debug_dump(text: str, raw: bytes, rocky: bytes, rate: int) -> None:
+    """One piece's audio before and after Rocky, for listening side by side (DEBUG_WAV_DIR)."""
+    global _debug_n
+    if not DEBUG_WAV_DIR:
+        return
+    try:
+        os.makedirs(DEBUG_WAV_DIR, exist_ok=True)
+        _debug_n += 1
+        stem = os.path.join(DEBUG_WAV_DIR, f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{_debug_n:03d}")
+        for suffix, pcm in (("raw", raw), ("rocky", rocky)):
+            with open(f"{stem}-{suffix}.wav", "wb") as f:
+                f.write(_pcm_to_wav(pcm, rate))
+        with open(f"{stem}.txt", "w") as f:
+            f.write(text + "\n")
+    except OSError as exc:  # debugging aid only: never let it stop a reply
+        logger.warning("debug WAV dump failed: %s", exc)
+
+
 async def _tts_stream(http: httpx.AsyncClient, text: str, first_bytes: int = STREAM_FIRST_BYTES,
-                      style: dict | None = None):
+                      style: dict | None = None, rocky_state: dict | None = None):
     """Yield one piece as WAVs while the server is still generating it, in Rocky's voice:
     rocky_voice.Stream processes as audio arrives (bit-identical to processing the whole piece)
     and holds back only its filters' look-ahead. The first WAV goes out at STREAM_FIRST_BYTES,
     the rest at STREAM_MIN_BYTES. Leaving early (barge-in) closes the request, which stops the
-    server's generation."""
+    server's generation. Logs one "piece:" line with the TTS's speed and Rocky's CPU cost."""
     text = _speakable(text)
     rate = _tts_caps["rate"]
-    rocky = rocky_voice.Stream(rate, text, style)  # style: his voice volume / whisper (mind.voice_style)
-    async with http.stream("POST", f"{TTS_BASE_URL}/speak/stream", json={"text": text}, timeout=TTS_TIMEOUT) as resp:
+    rocky = rocky_voice.Stream(rate, text, style, state=rocky_state)  # style: his voice volume / whisper (mind.voice_style)
+    started, first_byte, out_bytes = time.monotonic(), None, 0
+    sent: list[bytes] = []  # Rocky's output, kept only for DEBUG_WAV_DIR
+    async with http.stream("POST", f"{TTS_BASE_URL}/speak/stream", json=_tts_body(text, style), timeout=TTS_TIMEOUT) as resp:
         if resp.status_code == 204:  # nothing speakable after cleanup
             return
         resp.raise_for_status()
         buf, ready, first = b"", b"", True
         async for data in resp.aiter_bytes():
+            if first_byte is None:
+                first_byte = time.monotonic()
             buf += data
             if len(buf) >= ROCKY_FEED_BYTES:
                 cut = len(buf) - len(buf) % 2  # whole int16 samples only
                 ready += await asyncio.to_thread(rocky.feed, buf[:cut])
                 buf = buf[cut:]
                 if len(ready) >= (first_bytes if first else STREAM_MIN_BYTES):
+                    out_bytes += len(ready)
+                    if DEBUG_WAV_DIR:
+                        sent.append(ready)
                     yield _pcm_to_wav(ready, rate)
                     ready, first = b"", False
         if len(buf) >= 2:
             ready += await asyncio.to_thread(rocky.feed, buf[: len(buf) - len(buf) % 2])
         ready += await asyncio.to_thread(rocky.finish)
         if len(ready) >= 2:
+            out_bytes += len(ready)
+            if DEBUG_WAV_DIR:
+                sent.append(ready)
             yield _pcm_to_wav(ready, rate)
+    # Only reached when the piece finished (a barge-in closes the generator before this).
+    wall = time.monotonic() - started
+    raw_s, out_s = len(rocky.x) / rate, out_bytes / 2 / rate
+    # tts_rtf > 1: the TTS made audio slower than real time. play_rtf > 1: slower than Rocky's (shorter)
+    # audio plays, so the listener runs dry unless a lead was built up.
+    logger.info("piece: chars=%d tts_first_ms=%d wall_ms=%d raw_s=%.2f out_s=%.2f tts_rtf=%.2f play_rtf=%.2f "
+                "rocky_passes=%d rocky_cpu_ms=%d rocky_max_pass_ms=%d",
+                len(text), round(((first_byte or started) - started) * 1000), round(wall * 1000), raw_s, out_s,
+                wall / raw_s if raw_s else 0, wall / out_s if out_s else 0,
+                rocky.passes, round(rocky.cpu_s * 1000), round(rocky.max_pass_s * 1000))
+    if DEBUG_WAV_DIR:
+        _debug_dump(text, (np.clip(rocky.x, -1, 1) * 32767).astype("<i2").tobytes(), b"".join(sent), rate)
 
 
 class Session:
@@ -638,9 +757,13 @@ class Session:
         # None until the reply starts (the user's message is saved by then).
         self._said: list[dict] | None = None
         self._play_end = 0.0
+        self._play_ended_at = 0.0  # when the client last reported playback_ended; deafens the room tail
         self._chars_per_s = TTS_CHARS_PER_S_GUESS
         self._conversation_id: str | None = None  # sent by the client with "start"; a turn may create one
         self._context: dict | None = None  # {"timezone", "location"}, also sent with "start"
+        self._warmed_at = 0.0  # last Ollama cache warm-up (warm_cache)
+        self._speaker_last: tuple[str | None, float] = (None, 0.0)  # last confident speaker match, when
+        self._warming: asyncio.Task | None = None
         self._chunked = False  # client asked for one WAV per sentence
         self.role = "client"   # "satellite" after its hello
         self.sat_status: dict = {}  # a satellite's latest "status" report, for /api/info
@@ -668,11 +791,12 @@ class Session:
 
     async def set_state(self, state: str) -> None:
         was, self.state = self.state, state
-        if state != "idle":
+        if state in ("thinking", "speaking") or (state == "listening" and self.role == "satellite"):
             missions.touch()  # keep the GPU for the voice while anyone's mid-conversation
         if state == "thinking" and self.role == "satellite":
             # Its own cues and clips follow his voice volume too (replies already have it, from rocky_voice).
-            await self.ws.send_json({"type": "voice", "volume": self._style().get("volume", 1.0)})
+            style = self._style()  # volume, and whose voice (the Pi picks its own clips by it)
+            await self.ws.send_json({"type": "voice", "volume": style.get("volume", 1.0), "name": style.get("voice", "leo")})
         # Music down while anyone talks to him, back after (music.py); off the event loop: it's HTTP.
         if was == "idle" and state != "idle":
             self._music_task = asyncio.create_task(asyncio.to_thread(music.duck))  # kept: unreferenced tasks can vanish
@@ -686,32 +810,55 @@ class Session:
         kind = msg.get("type")
         if kind == "start" and self.state == "idle":
             self._drop_spec()
+            if self.role == "satellite":
+                # Follow-up windows open automatically after every reply: use a firmer dBFS floor (-43 dBFS)
+                # so a background TV across the room doesn't loop forever, while explicit wakes use -52 dBFS.
+                follow_up = bool(msg.get("follow_up"))
+                self.endpointer.cfg.min_dbfs = float(
+                    os.getenv("VOICE_SAT_FOLLOWUP_MIN_DBFS", "-43.0") if follow_up
+                    else os.getenv("VOICE_SAT_VAD_MIN_DBFS", "-52.0")
+                )
             self.endpointer.reset()
             self._buf.clear()
-            self._listen_started = time.monotonic()
+            now = time.monotonic()
+            self._listen_started = now
             self._since_partial, self._partials = 0, []
-            self._bc_sent, self._deaf_until = False, 0.0
+            # Ignore the first 250 ms of mic audio right after a reply finishes so speaker reverb in the room
+            # can't start a phantom turn.
+            tail_until = self._play_ended_at + 0.25 if now - self._play_ended_at < 0.3 else 0.0
+            self._bc_sent, self._deaf_until = False, tail_until
             self._evals, self._eval_text = [], ""
+            self._barge_pcm = bytearray() if msg.get("barge_speech") else None
             self._conversation_id = msg.get("conversation_id") or self._conversation_id
             self._chunked = bool(msg.get("chunked"))
             self._context = msg.get("context")
+            self._warm()  # he's talking now: the prefill runs while he does
             await self.set_state("listening")
         elif kind == "playback_started" and self._timing is not None:
             self._timing["speech_end_to_playback_ms"] = _ms(self._speech_end)
             if not self._chunked:  # chunked turns are still synthesizing; log at the end
                 self._log_timing()
         elif kind == "playback_ended" and self.state == "speaking":
+            self._play_ended_at = time.monotonic()
             if self._timing is not None:
+                if msg.get("underruns") is not None:
+                    self._timing["client_underruns"] = int(msg["underruns"])
+                    self._timing["client_dry_ms"] = int(msg.get("dry_ms") or 0)
                 self._log_timing()
             await self.set_state("idle")
         elif kind == "hello":
             # Satellites say so on connect; the alarm scheduler speaks only through them.
             if msg.get("role") == "satellite":
                 self.role = "satellite"
+                # The satellite only streams after the wake word (or in a follow-up window), and far-field
+                # speech across a room lands around -40 to -50 dBFS on the HAT mic.
+                self.endpointer.cfg.min_dbfs = float(os.getenv("VOICE_SAT_VAD_MIN_DBFS", "-52.0"))
                 # Timezone/location for briefings, before any spoken turn sets them.
                 self._context = msg.get("context") or self._context
                 SATELLITES.add(self)
-                logger.info("satellite registered (%d connected)", len(SATELLITES))
+                logger.info("satellite registered (%d connected, min_dbfs=%.1f)",
+                            len(SATELLITES), self.endpointer.cfg.min_dbfs)
+                self._warm()
         elif kind == "status" and self.role == "satellite":
             # Room, mic mute, Wi-Fi, wake stats: shown in the web UI's sidebar.
             self.sat_status = {k: v for k, v in msg.items() if k != "type"} | {"seen": time.time()}
@@ -756,6 +903,7 @@ class Session:
                 self._deaf_until = 0.0
             utterance = self.endpointer.feed(frame)
             if utterance is not None:
+                self._barge_pcm = None
                 self._speech_end = time.monotonic()
                 self._said = None  # the last turn's; this one's starts with its reply
                 if self._eval and not self._eval.done():
@@ -766,10 +914,45 @@ class Session:
                 self._turn = asyncio.create_task(self._run_turn(utterance, self._take_spec()))
                 return
             ep = self.endpointer
-            # Once per pause, and one at a time: a stale one still running would slow the real STT.
+            if ep.in_speech:
+                self._barge_pcm = None
+                missions.touch()
+            elif getattr(self, "_barge_pcm", None) is not None:
+                self._barge_pcm.extend(frame)
+                # If the user barged in with a short "thank you" / "never mind" (~0.6 s) that already
+                # ended inside the AEC-cancelled preroll before Silero's 5-frame start_prob fired,
+                # transcribe the 1.5 s barge-in buffer directly instead of hanging in listening for 8 s.
+                if len(self._barge_pcm) >= 48 * FRAME_BYTES:
+                    barge_bytes, self._barge_pcm = bytes(self._barge_pcm), None
+                    self._speech_end = time.monotonic()
+                    self._said = None
+                    await self.set_state("thinking")
+                    self._turn = asyncio.create_task(self._run_turn(barge_bytes, barge_fallback=True))
+                    return
+            # Early closer check: if a speculative or early snapshot already transcribed a closer
+            # ("never mind", "thank you", "stop"), end the conversation immediately without waiting
+            # for 600 ms of silence (which a background TV can prevent indefinitely).
+            if ep.in_speech and self._spec and self._spec[0].done() and not getattr(self._spec[0], "_closer_checked", False):
+                spec_task = self._spec[0]
+                spec_task._closer_checked = True
+                spec_text = (spec_task.result() if not spec_task.cancelled() and spec_task.exception() is None else "").strip()
+                if _is_closer(spec_text):
+                    self._drop_spec()
+                    if self._eval and not self._eval.done():
+                        self._eval.cancel()
+                    self.endpointer.reset()
+                    self._buf.clear()
+                    self.heard_at = time.monotonic()
+                    await self.ws.send_json({"type": "transcript", "text": spec_text})
+                    logger.info("closer (early) %r: conversation over, back to the wake word", spec_text)
+                    await self.set_state("idle")
+                    return
+            # Once per pause (or once at ~1.2 s of continuous speech if a background TV prevents a pause):
             if ep.in_speech and ep.silence_frames == SPECULATE_FRAMES and (self._spec is None or self._spec[0].done()):
                 self._drop_spec()
                 self._spec = (asyncio.create_task(self._transcribe(ep.snapshot())), ep.voiced)
+            elif ep.in_speech and ep.voiced == 38 and self._spec is None:
+                self._spec = (asyncio.create_task(self._transcribe(ep.snapshot())), -1)
             if PARTIAL_FRAMES and ep.in_speech:
                 self._since_partial += 1
                 # One at a time: a partial still running is skipped, never queued behind.
@@ -804,7 +987,7 @@ class Session:
         if not spec.done() or spec.cancelled() or spec.exception() is not None:
             return  # STT is slower than the pause: skip rather than wait
         text = spec.result().strip()
-        if not text or text.endswith("?") or _CLOSER.match(text):
+        if not text or text.endswith("?") or _is_closer(text):
             return  # a question wants an answer, not "Mm."
         clip = random.choice([c for c in BC_CLIPS if c != self._bc_clip])
         self._bc_sent, self._bc_at, self._bc_clip = True, now, clip
@@ -896,7 +1079,7 @@ class Session:
             seg["end"] = self._play_end
         await self.ws.send_bytes(wav)
 
-    async def _run_turn(self, pcm: bytes, spec: asyncio.Task | None = None) -> None:
+    async def _run_turn(self, pcm: bytes, spec: asyncio.Task | None = None, barge_fallback: bool = False) -> None:
         timing = {
             "speech_ms": len(pcm) // 2 * 1000 // SAMPLE_RATE,
             "endpoint_wait_ms": self.endpointer.cfg.end_silence_ms,
@@ -916,13 +1099,16 @@ class Session:
                 text = await self._transcribe(pcm)
             timing["stt_ms"] = _ms(started)  # from the endpoint; ~0 when the speculative transcript was ready
             if not text:
+                if barge_fallback:
+                    await self.set_state("idle")
+                    return
                 await self._fail("STT", "no speech recognized", input_desc, started)
                 return
             self.heard_at = time.monotonic()
             self._log_partials_vs(text)
             self._log_evals(text, len(pcm) // 32)
             await self.ws.send_json({"type": "transcript", "text": text})
-            if _CLOSER.match(text):
+            if _is_closer(text):
                 # Idle without a reply: the satellite goes back to the wake word, no follow-up window.
                 logger.info("closer %r: conversation over, back to the wake word", text)
                 await self.set_state("idle")
@@ -941,6 +1127,15 @@ class Session:
         try:
             started = time.monotonic()
             who = await asyncio.to_thread(speaker.identify, pcm)
+            # "Yeah." / "Sure." is too little voice to judge (a third of turns, 2026-11-05 logs). Within one
+            # conversation, the last confident match still stands; a longer unknown clip ends it.
+            last_user, last_at = self._speaker_last
+            if who["verdict"] == "match":
+                self._speaker_last = (who["user"], time.monotonic())
+            elif who.get("short") and last_user and time.monotonic() - last_at < SPEAKER_CARRY_S:
+                who = {**who, "verdict": "carried", "user": last_user}
+            elif not who.get("short"):
+                self._speaker_last = (None, 0.0)
             logger.info("speaker (shadow): %s %s score=%.2f (%d ms, %.1f s of audio) %r", who["verdict"], who["user"] or "-",
                         who["score"], _ms(started), len(pcm) / 2 / SAMPLE_RATE, " ".join(text.split()[:3]))
             # Kept across rebuilds (docker logs aren't): verdict, score, length, time. Never his words.
@@ -1108,9 +1303,11 @@ class Session:
         rtf, chars_per_s = TTS_RTF_GUESS, TTS_CHARS_PER_S_GUESS
         max_chars = FIRST_PIECE_CHARS
         gap_s = 0.0
+        dry_count, dry_max_s = 0, 0.0  # times the client (by our estimate) ran out of audio mid-reply
+        self._play_end = 0.0
 
         async def send(audio: bytes, started: float, seg: dict) -> None:
-            nonlocal sent, gap_s
+            nonlocal sent, gap_s, dry_count, dry_max_s
             if sent == 0:
                 timing["tts_first_ms"] = _ms(started)
                 timing["speech_end_to_audio_sent_ms"] = _ms(self._speech_end)
@@ -1120,13 +1317,16 @@ class Session:
             now = time.monotonic()
             if sent and now > self._play_end:
                 gap_s += now - self._play_end  # the client ran dry before this audio arrived
+                dry_count += 1
+                dry_max_s = max(dry_max_s, now - self._play_end)
             await self._send_audio(audio, seg)
             sent += 1
 
         try:
+            rocky_state: dict = {}
             if await _tts_streams(self.http):
                 await chunker.settle(ORPHEUS_FIRST_PIECE_WAIT_S if _tts_caps["engine"] == "orpheus" else FIRST_PIECE_WAIT_S)
-                max_chars = SentenceChunker.MAX_CHARS
+                max_chars = STREAM_PIECE_CHARS
             while (piece := await chunker.next_piece(max_chars)) is not None:
                 started = time.monotonic()
                 if not self._turn_tools and not (piece := _drop_invented(piece)):
@@ -1135,15 +1335,22 @@ class Session:
                     # Forward audio while it's generated. The voice ends each piece
                     # with its own short pause, so no trim / added pause here.
                     audio_s = 0.0
-                    for text, beat in _with_beat(piece, chunker.closed and chunker.empty, sent > 0):
+                    for text, beat in _with_beat(piece, chunker.closed and chunker.empty, sent > 0, streamed=True):
                         seg = self._segment(text)
                         if beat:
                             await self._send_audio(_pcm_to_wav(bytes(_tts_caps["rate"] * BEAT_MS // 1000 * 2),
                                                                _tts_caps["rate"]))
                         # The reply's first audio waits for PREROLL_MS of it: see PREROLL_MS.
-                        first_bytes = max(STREAM_FIRST_BYTES, _tts_caps["rate"] * 2 * PREROLL_MS // 1000) \
+                        preroll_ms = PREROLL_MS
+                        if (sent == 0 and self._style().get("voice") != "tara" and rocky_voice._QUESTION.search(text.strip())
+                                and len(text) / chars_per_s < QUESTION_SHORT_S):
+                            # Rocky holds a question's last 0.5 s (its chime) until the TTS finishes; a short
+                            # piece streams near real time, so playback caught up and stuttered before it.
+                            preroll_ms += QUESTION_PREROLL_MS
+                            timing["question_preroll"] = 1
+                        first_bytes = max(STREAM_FIRST_BYTES, _tts_caps["rate"] * 2 * preroll_ms // 1000) \
                             if sent == 0 else STREAM_FIRST_BYTES
-                        async for audio in _tts_stream(self.http, text, first_bytes, self._style()):
+                        async for audio in _tts_stream(self.http, text, first_bytes, self._style(), rocky_state):
                             audio_s += _wav_seconds(audio)
                             await send(audio, started, seg)
                         seg["done"] = True
@@ -1172,7 +1379,7 @@ class Session:
                     # Streaming starts audio fast whatever the piece length, so after the
                     # first piece cut only at sentence ends: each extra cut costs ~0.5 s of
                     # silence and a falling, end-of-sentence tone mid-sentence.
-                    max_chars = SentenceChunker.MAX_CHARS
+                    max_chars = STREAM_PIECE_CHARS
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1180,6 +1387,8 @@ class Session:
             return -1
         timing["tts_chunks"] = sent
         timing["gap_ms"] = round(gap_s * 1000)
+        timing["dry_count"] = dry_count
+        timing["dry_max_ms"] = round(dry_max_s * 1000)
         timing["tts_rtf"] = round(rtf, 2)
         if sent:
             await self.ws.send_json({"type": "audio_end", "chunks": sent})
@@ -1188,9 +1397,9 @@ class Session:
     async def _say_filler(self, kind: str, timing: dict) -> None:
         """At most one filler a turn, and only before any of the reply's own audio:
         chunked clients queue it ahead of the reply, back to back."""
-        if self.state != "thinking" or (filler := pick_filler(kind)) is None:
-            return
         style = self._style()
+        if self.state != "thinking" or (filler := pick_filler(kind, style.get("voice", "leo"))) is None:
+            return
         if style.get("whisper"):
             return  # a full-voice "let me see" would break the whisper
         if style.get("volume", 1.0) < 1.0:
@@ -1245,9 +1454,22 @@ class Session:
             self._conversation_id = conversation_id
         if audio:
             self._turn = asyncio.create_task(self._send_prepared(audio))
+            # A mission or briefing just had the GPU: re-warm while the report plays, so his reply
+            # to it isn't a cold 5-7 s prefill. Forced: the cache is gone whenever the last warm was.
+            self._warm(force=True)
         else:
             self._turn = asyncio.create_task(self._respond(prompt, {"alarm": 1}, mode=mode, context=context))
         return True
+
+    def _warm(self, force: bool = False) -> None:
+        """Prefill this conversation's prompt in Ollama in the background (warm_cache).
+        At most once a minute unless forced, and never on top of another warm-up."""
+        if self._warming and not self._warming.done():
+            return
+        if not force and time.monotonic() - self._warmed_at < WARM_EVERY_S:
+            return
+        self._warmed_at = time.monotonic()
+        self._warming = asyncio.create_task(warm_cache(self.user, self._context, self._conversation_id))
 
     async def _send_prepared(self, audio: list[bytes]) -> None:
         self._timing = {"alarm": 1, "prepared_chunks": len(audio)}

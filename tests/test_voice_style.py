@@ -27,7 +27,9 @@ def test_voice_requests_run_in_code(said, args):
 
 
 @pytest.mark.parametrize("said", ["turn it up", "louder", "set the volume to 30", "what is whisper ai", "whisper is a model"])
-def test_music_and_other_things_left_alone(said):
+def test_music_and_other_things_left_alone(said, monkeypatch):
+    import music
+    monkeypatch.setattr(music, "playing_hint", lambda: True)
     assert a._voice_intent(said) is None
 
 
@@ -190,3 +192,15 @@ def test_quieter_is_still_volume_not_whisper():
 def test_claimed_whisper_without_a_tool_dropped(said):
     import voice_ws
     assert "Whispering" not in voice_ws._drop_invented(said)
+
+
+def test_voice_speed_intents_and_style(owner_turn):
+    owner_turn("talk slower")
+    assert a._voice_intent("talk slower") == ("voice_setting", {"change": "slower"})
+    assert a._voice_intent("talk a bit faster") == ("voice_setting", {"change": "faster"})
+    assert a._voice_intent("speak at normal speed") == ("voice_setting", {"change": "normal_speed"})
+    mind.voice_setting({"change": "slower"})
+    assert mind.voice_style("owner", NOON)["tempo"] == pytest.approx(0.88)
+    mind.voice_setting({"change": "normal_speed"})
+    assert "tempo" not in mind.voice_style("owner", NOON)
+

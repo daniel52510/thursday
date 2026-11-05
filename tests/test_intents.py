@@ -46,9 +46,11 @@ SELF = [
     ("Can you review code and find potential bugs and propose fixes? Sorry I mean your internal code", "code_review_start"),
     ("improvements to your code.", "code_review_start"),
     ("look for bugs in your music code", "code_review_start"),
+    ("Initialize code_review_start on your satellite implementation", "code_review_start"),
     ("fix yourself so the music actually stops", "improve_start"),
     ("Can you improve how you answer weather questions?", "improve_start"),
     ("debug yourself", "improve_start"),
+    ("Run improve_start tab", "improve_start"),
 ]
 NOT_SELF = ["fix my code", "can you review my essay", "improve my resume", "How are you?", "we will fix it",
             "change the lights to red"]
@@ -65,6 +67,42 @@ def test_other_fix_requests_left_alone(said):
     assert a._self_code_intent(said) is None
 
 
+MISSIONS = [
+    ("Can you do research on uh on exactly what it takes to get me where I am currently to uh SpaceX, let's say, uh, in terms of career growth?",
+     "exactly what it takes to get me where I am currently to SpaceX, let's say, in terms of career growth"),
+    ("Can you perform a task to analyze your satellite code to see whether switching to C++ Instead of Python will be faster for you and more efficient?",
+     "analyze your satellite code to see whether switching to C++ Instead of Python will be faster for you and more efficient"),
+    ("Start a mission to find the best robot vacuum under $400 for a dog",
+     "find the best robot vacuum under $400 for a dog"),
+    ("Run an agentic task to compare home espresso machines under $600",
+     "compare home espresso machines under $600"),
+]
+NOT_MISSIONS = [
+    "Hey Thursday, can I task you to do a mission?",
+    "Can you start a mission? Question?",
+    "What's the weather tomorrow?",
+    "Can you give me the latest in the US-Iran conflict?",
+]
+
+
+@pytest.mark.parametrize("said,goal", MISSIONS)
+def test_mission_requests_run_in_code(said, goal):
+    assert a._mission_intent(said) == ("mission_start", {"goal": goal})
+
+
+@pytest.mark.parametrize("said", NOT_MISSIONS)
+def test_non_mission_or_goal_less_requests_left_alone(said):
+    assert a._mission_intent(said) is None
+
+
+def test_two_turn_mission_goal_after_thursday_asks():
+    history = [{"role": "user", "content": "Hey Thursday, can I task you to do a mission?"},
+               {"role": "assistant", "content": "Mission, question? I like missions, exclamation! Tell me goal and any constraints. I am ready, question?"}]
+    got = a._mission_intent("Find the best robot vacuum under 400 dollars for a dog", history)
+    assert got == ("mission_start", {"goal": "Find the best robot vacuum under 400 dollars for a dog"})
+    assert a._mission_intent("Never mind", history) is None
+
+
 def test_an_offer_is_recognized_and_a_claim_is_caught():
     from agent_loop import initalize_db
     db = initalize_db()
@@ -72,6 +110,7 @@ def test_an_offer_is_recognized_and_a_claim_is_caught():
     db.log_message(role="assistant", content="Classical music is good logic. I keep it ready, question?", conversation_id=conv["id"])
     assert a._last_offer(db, conv["id"]) and a.plain_yes("Yeah, sure.")
     assert a._CLAIMED.search("Music, playing.") and a._CLAIMED.search("Okay, now playing jazz")
+    assert a._CLAIMED.search("I start mission now.") and a._CLAIMED.search("Improvement task is running in sandbox")
     assert not a._CLAIMED.search("Okay. Later then.") and not a._CLAIMED.search("I like playing golf.")
 
 

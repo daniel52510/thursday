@@ -35,8 +35,9 @@ def test_plain_yes_starts_it_and_a_hedge_doesnt(db, owner_turn):
     owner_turn("look into robot vacuums")
     missions.mission_start({"goal": "Best robot vacuum under $400 for a dog"})
     assert missions.confirms_pending("c1", "yes but under 300") is None
-    assert missions.confirms_pending("c1", "yes") == "mission_start"
-    owner_turn("yes")
+    for yes in ("yes", "Uh, yes please", "Hey Thursday, do it", "Start it", "Start the mission", "Run it"):
+        assert missions.confirms_pending("c1", yes) == "mission_start"
+    owner_turn("Uh, yes please")
     r = missions.mission_start({"confirmed": True})
     assert r.data["status"] == "STARTED" and db.created == ["Best robot vacuum under $400 for a dog"]
 

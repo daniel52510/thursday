@@ -72,10 +72,12 @@ Think for yourself. Return ONLY JSON:
 
 # --- settings -----------------------------------------------------------------
 
-# How his voice sounds for this user (rocky_voice style): volume and whisper. Not in SETTINGS: they
-# change the audio, not what he says, so they stay out of the prompt.
-VOICE = {"voice_volume": 100, "whisper": 0, "night_whisper": 1, "normal_until": 0}
+# How his voice sounds for this user (rocky_voice style): volume, whisper, and speaking speed. Not in
+# SETTINGS: they change the audio, not what he says, so they stay out of the prompt.
+VOICE = {"voice_volume": 100, "whisper": 0, "night_whisper": 1, "normal_until": 0, "voice_speed": 100,
+         "voice_tara": 0}  # 1 = Tara's voice (plain Orpheus "tara"), 0 = Rocky's (leo + rocky_voice.py)
 VOICE_STEP = 20  # "louder" / "quieter"
+SPEED_STEP = 12  # "faster" / "slower"
 # Night: he whispers on his own, the same hours the satellite plays quieter (satellite NIGHT, 22-7).
 # "speak normally" at night holds until the night ends (normal_until, unix time); the next night he whispers again.
 NIGHT_HOURS = tuple(int(h) for h in os.getenv("THURSDAY_NIGHT", "22-7").split("-"))
@@ -97,11 +99,15 @@ def voice_style(user_id: str, now: datetime | None = None) -> dict:
     night = bool(s["night_whisper"]) and _night_ends(now) is not None and now.timestamp() >= s["normal_until"]
     # Ears hear level in decibels: percent squared, so 50% is ~-12 dB, 20% ~-28 dB, 10% -40 dB (linear made
     # 50% sound nearly full, 2026-11-01). 1% is near silence.
-    return {"volume": (max(1, min(100, s["voice_volume"])) / 100) ** 2, "whisper": bool(s["whisper"]) or night}
+    out = {"volume": (max(1, min(100, s["voice_volume"])) / 100) ** 2, "whisper": bool(s["whisper"]) or night,
+           "voice": "tara" if s["voice_tara"] else "leo"}
+    if s["voice_speed"] != 100:
+        out["tempo"] = max(65, min(135, s["voice_speed"])) / 100
+    return out
 
 
 def voice_setting(args: Dict[str, Any]) -> ToolResult:
-    """His voice for the speaking user: volume (percent, or louder/quieter) and whisper on/off."""
+    """His voice for the speaking user: volume (percent, or louder/quieter), speed, and whisper on/off."""
     user_id = (TURN.get() or {}).get("user")
     if not user_id:
         return ToolResult(ok=False, tool_name="voice_setting", error="no speaking user")
@@ -113,38 +119,51 @@ def voice_setting(args: Dict[str, Any]) -> ToolResult:
             changed["voice_volume"] = max(1, min(100, round(float(args["volume"]))))
         elif args.get("change") in ("louder", "quieter"):
             changed["voice_volume"] = max(1, min(100, now["voice_volume"] + (VOICE_STEP if args["change"] == "louder" else -VOICE_STEP)))
+        if args.get("speed") not in (None, ""):
+            changed["voice_speed"] = max(65, min(135, round(float(args["speed"]))))
+        elif args.get("change") in ("faster", "slower", "normal_speed"):
+            changed["voice_speed"] = 100 if args["change"] == "normal_speed" else max(
+                65, min(135, now["voice_speed"] + (SPEED_STEP if args["change"] == "faster" else -SPEED_STEP)))
     except (TypeError, ValueError):
-        return ToolResult(ok=False, tool_name="voice_setting", error="volume must be a number 1-100")
+        return ToolResult(ok=False, tool_name="voice_setting", error="volume/speed must be a number")
     if isinstance(args.get("whisper"), bool):
         changed["whisper"] = int(args["whisper"])
         if not args["whisper"] and (ends := _night_ends(datetime.now(VOICE_TZ))):
             changed["normal_until"] = int(ends.timestamp())  # "speak normally" at night: until morning
     if isinstance(args.get("night_whisper"), bool):
         changed["night_whisper"] = int(args["night_whisper"])
+    if args.get("voice") in ("tara", "rocky"):
+        changed["voice_tara"] = int(args["voice"] == "tara")
     if not changed and args.get("report"):  # "what's your volume?"
         return ToolResult(ok=True, tool_name="voice_setting", data={
-            "voice_volume": now["voice_volume"], "whisper_now": voice_style(user_id)["whisper"],
-            "note": "That's your voice's volume (music has its own). Say it in a few words."})
+            "voice_volume": now["voice_volume"], "voice_speed": now["voice_speed"],
+            "whisper_now": voice_style(user_id)["whisper"],
+            "note": "That's your voice's volume and speed (music has its own). Say it in a few words."})
     if not changed:
-        return ToolResult(ok=False, tool_name="voice_setting", error="say a volume, louder/quieter, or whisper on/off")
+        return ToolResult(ok=False, tool_name="voice_setting", error="say a volume, louder/quieter, faster/slower, whisper on/off, or Tara/Rocky")
     for name, value in changed.items():
         db.set_setting(user_id, name, value)
     after = now | changed
     whispering = voice_style(user_id)["whisper"]
     return ToolResult(ok=True, tool_name="voice_setting", data={
-        "voice_volume": after["voice_volume"], "whisper_now": whispering, "night_whisper": bool(after["night_whisper"]),
+        "voice_volume": after["voice_volume"], "voice_speed": after["voice_speed"],
+        "whisper_now": whispering, "night_whisper": bool(after["night_whisper"]),
+        "voice": "tara" if after["voice_tara"] else "rocky",
         "note": "It applies to this reply already. Confirm in a few words" + (", softly." if whispering else ".")})
 
 
 VOICE_SCHEMA = {"type": "function", "function": {
     "name": "voice_setting",
-    "description": "Your own voice: its volume (separate from music) and whisper mode. 'talk louder', 'your voice to 40', "
-    "'whisper', 'speak normally'.",
+    "description": "Your own voice: its volume (separate from music), speaking speed, and whisper mode. "
+    "'talk louder', 'your voice to 40', 'talk slower', 'talk faster', 'whisper', 'speak normally', "
+    "'switch to Tara', 'switch back to Rocky'.",
     "parameters": {"type": "object", "properties": {
         "volume": {"type": "integer", "description": "1-100 percent"},
-        "change": {"type": "string", "enum": ["louder", "quieter"]},
+        "speed": {"type": "integer", "description": "65-135 percent (100 = normal)"},
+        "change": {"type": "string", "enum": ["louder", "quieter", "faster", "slower", "normal_speed"]},
         "whisper": {"type": "boolean"},
         "night_whisper": {"type": "boolean", "description": "Whisper on your own at night (22-7), on by default"},
+        "voice": {"type": "string", "enum": ["tara", "rocky"], "description": "Whose voice speaks: Tara or Rocky"},
         "report": {"type": "boolean", "description": "Just say what your voice volume is now"}}}}}
 
 

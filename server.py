@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -25,7 +25,7 @@ from agent_loop import MODEL, URL as OLLAMA_URL, initalize_db, preload_model
 from agent_stream import stream_prompt
 from alarms import run_scheduler as run_alarm_scheduler
 from episodic import run_memory_writer
-from mind import run_reflection
+from mind import run_reflection, voice_style
 from voice_ws import SATELLITES, VOICE_TOKEN, same_origin, synthesize_ahead, warm_phone_disclosure, router as voice_router
 
 logger = logging.getLogger(__name__)
@@ -179,6 +179,23 @@ def update_me(body: MePatch, user: dict = Depends(current_user)):
             raise HTTPException(status_code=404, detail="persona not found")
         fields["persona_id"] = body.persona_id or None
     return _me(accounts.shared().update_user(user["id"], **fields))
+
+
+class VoiceIn(BaseModel):
+    voice: Literal["tara", "rocky"]
+
+
+# Whose voice speaks to this user (mind.voice_style): the UI's Tara/Rocky toggle. "switch to Tara" by voice
+# sets the same setting (mind.voice_setting).
+@app.get("/api/voice")
+def get_voice(user: dict = Depends(current_user)):
+    return {"voice": "tara" if voice_style(user["id"])["voice"] == "tara" else "rocky"}
+
+
+@app.put("/api/voice")
+def set_voice(body: VoiceIn, user: dict = Depends(current_user)):
+    initalize_db().set_setting(user["id"], "voice_tara", int(body.voice == "tara"))
+    return {"voice": body.voice}
 
 
 class PasswordIn(BaseModel):

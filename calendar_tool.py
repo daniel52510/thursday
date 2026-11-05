@@ -42,8 +42,11 @@ PENDING_TTL_S = 180
 # {"conversation": id, "turn": unique per user message, "user_said": text}
 TURN: ContextVar[dict | None] = ContextVar("calendar_turn", default=None)
 _YES = re.compile(
-    r"^\W*(yes|yeah|yep|yup|ya|sure|ok(ay)?|alright|absolutely|definitely|affirmative|correct|perfect|please"
+    r"^\W*(?:(?:uh+|um+|er+|oh|ah|well|hey|thursday|amaze|good|cool)\W+)*"
+    r"(yes|yeah|yep|yup|ya|sure|ok(ay)?|alright|all\s+right|absolutely|definitely|affirmative|correct|perfect|please"
+    r"|for\s+sure|works\s+for\s+me|you\s+got\s+it|make\s+it\s+happen"
     r"|go (ahead|for it)|do it|let's do it|please do|confirm(ed)?|that's (right|correct|it)|sounds good"
+    r"|(?:start|run|launch|begin)(?:\s+(?:it|now|that|the\s+(?:mission|task|routine)|mission))?"
     r"|(add|save|book|schedule) it)\b",
     re.I,
 )

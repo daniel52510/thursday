@@ -17,6 +17,7 @@ import os
 import threading
 import time
 from collections import deque
+from pathlib import Path
 
 import numpy as np
 
@@ -28,6 +29,39 @@ _PP_SET_ECHO_STATE = 24
 
 log = logging.getLogger("satellite.aec")
 DUMP = os.getenv("THURSDAY_AEC_DUMP", "")  # a folder: each playback's mic + reference saved there (diagnosis)
+
+
+def _load_core() -> ctypes.CDLL | None:
+    so = Path(__file__).resolve().parent / "_sat_core.so"
+    if not so.exists():
+        return None
+    try:
+        c = ctypes.CDLL(str(so))
+        vp, i32, i64, f32, f64 = ctypes.c_void_p, ctypes.c_int, ctypes.c_int64, ctypes.c_float, ctypes.c_double
+        c.sat_boost_pcm.argtypes = [vp, vp, i32, f32, vp]
+        c.sat_dbfs.argtypes = [vp, i32]
+        c.sat_dbfs.restype = f64
+        c.sat_ref_create.restype = vp
+        c.sat_ref_destroy.argtypes = [vp]
+        c.sat_ref_mic_arrived.argtypes = [vp, i32, f64]
+        c.sat_ref_mic_arrived.restype = i64
+        c.sat_ref_index_at.argtypes = [vp, f64, vp]
+        c.sat_ref_index_at.restype = i64
+        c.sat_ref_add_at.argtypes = [vp, vp, i32, i32, i64]
+        c.sat_ref_add_time.argtypes = [vp, vp, i32, i32, f64]
+        c.sat_ref_cut.argtypes = [vp, f64]
+        c.sat_ref_read.argtypes = [vp, i64, i32, vp]
+        c.sat_aec_create.argtypes = [vp, i32]
+        c.sat_aec_create.restype = vp
+        c.sat_aec_destroy.argtypes = [vp]
+        c.sat_aec_process.argtypes = [vp, vp, vp, vp, i32, f64, vp]
+        c.sat_aec_process.restype = i32
+        return c
+    except OSError:
+        return None
+
+
+_CORE = _load_core()
 
 
 def _lib() -> ctypes.CDLL:
@@ -64,15 +98,23 @@ class Reference:
     RING_S = 30
 
     def __init__(self) -> None:
-        self._ring = np.zeros(self.RING_S * RATE, dtype=np.int16)
+        self._c = _CORE.sat_ref_create() if _CORE else None
+        self._ring = np.zeros(self.RING_S * RATE, dtype=np.int16) if not self._c else None
         self._mic_n = 0  # mic samples read so far
         self._anchors: deque = deque(maxlen=64)  # arrival time - samples/RATE, last ~5 s
         self.t0 = None   # monotonic time of mic sample 0 (the smallest anchor: least delayed)
         self.active_until = 0  # mic index after which nothing more has been scheduled
         self._lock = threading.Lock()
 
+    def __del__(self) -> None:
+        if getattr(self, "_c", None) and _CORE:
+            _CORE.sat_ref_destroy(self._c)
+            self._c = None
+
     def mic_arrived(self, samples: int) -> int:
         """The mic delivered `samples` more; returns the index of the chunk's first sample."""
+        if self._c:
+            return int(_CORE.sat_ref_mic_arrived(self._c, samples, time.monotonic()))
         start = self._mic_n
         self._mic_n += samples
         self._anchors.append(time.monotonic() - self._mic_n / RATE)
@@ -84,6 +126,9 @@ class Reference:
 
     def add(self, pcm: bytes, rate: int, at: float) -> None:
         """`pcm` (int16 mono at `rate`) reaches the speaker at monotonic time `at`."""
+        if self._c:
+            _CORE.sat_ref_add_time(self._c, pcm, len(pcm) // 2, rate, at)
+            return
         if self.t0 is None:
             return
         x = _to_16k(pcm, rate)
@@ -93,12 +138,19 @@ class Reference:
     def add_at(self, pcm: bytes, rate: int, index: int) -> None:
         """`pcm` reaches the speaker at mic sample `index`: placed by sample count, not by the clock,
         since the HAT's mic and speaker share one codec clock (no drift, no jitter)."""
+        if self._c:
+            _CORE.sat_ref_add_at(self._c, pcm, len(pcm) // 2, rate, index)
+            return
         x = _to_16k(pcm, rate)
         with self._lock:
             self._add(x, index)
 
     def index_at(self, t: float) -> int | None:
         """The mic sample index for monotonic time `t` (None until the mic has started)."""
+        if self._c:
+            ok = ctypes.c_int(0)
+            idx = int(_CORE.sat_ref_index_at(self._c, t, ctypes.byref(ok)))
+            return idx if ok.value else None
         return None if self.t0 is None else self._index(t)
 
     def _add(self, x: np.ndarray, i: int) -> None:
@@ -114,6 +166,9 @@ class Reference:
 
     def cut(self, at: float) -> None:
         """Playback stopped at `at`: clear everything scheduled after it."""
+        if self._c:
+            _CORE.sat_ref_cut(self._c, at)
+            return
         if self.t0 is None:
             return
         with self._lock:
@@ -126,6 +181,10 @@ class Reference:
         self.active_until = min(self.active_until, i)
 
     def read(self, start: int, n: int) -> np.ndarray:
+        if self._c:
+            out = np.empty(n, dtype=np.int16)
+            _CORE.sat_ref_read(self._c, start, n, out.ctypes.data)
+            return out
         idx = np.arange(start, start + n) % len(self._ring)
         with self._lock:
             out = self._ring[idx].copy()
@@ -139,6 +198,11 @@ class Canceller:
 
     def __init__(self, ref: Reference, filter_ms: int = 300) -> None:
         self.ref = ref
+        self._c = _CORE.sat_aec_create(ref._c, filter_ms) if (_CORE and getattr(ref, "_c", None)) else None
+        if self._c:
+            self.tail = filter_ms * RATE // 1000
+            self._ep: dict | None = None
+            return
         self._lib = lib = _lib()
         self.tail = filter_ms * RATE // 1000
         self._echo = lib.speex_echo_state_init(FRAME, self.tail)
@@ -151,7 +215,36 @@ class Canceller:
         self._out = np.zeros(FRAME, dtype=np.int16)
         self._ep: dict | None = None  # stats for the current playback, logged when it ends
 
+    def __del__(self) -> None:
+        if getattr(self, "_c", None) and _CORE:
+            _CORE.sat_aec_destroy(self._c)
+            self._c = None
+
     def process(self, chunk: bytes) -> bytes:
+        if self._c:
+            n = len(chunk) // 2
+            out = np.empty(n, dtype=np.int16)
+            ref = np.empty(n, dtype=np.int16)
+            stats = (ctypes.c_double * 5)()
+            cpu = time.process_time()
+            active = _CORE.sat_aec_process(self._c, chunk, out.ctypes.data, ref.ctypes.data,
+                                           n, time.monotonic(), stats)
+            if not active:
+                if self._ep:
+                    self._log_episode()
+                return chunk
+            ep = self._ep or {"chunks": 0, "mic": 0.0, "out": 0.0, "cpu": 0.0, "mics": [], "refs": [], "levels": []}
+            self._ep = ep
+            ep["chunks"] += 1
+            ep["cpu"] += time.process_time() - cpu
+            if stats[0] > 0.5:
+                ep["mic"] += float(stats[1])
+                ep["out"] += float(stats[2])
+                ep["levels"].append((float(stats[3]), float(stats[4])))
+            if len(ep["mics"]) < (150 if DUMP else 25):
+                ep["mics"].append(np.frombuffer(chunk, dtype=np.int16).copy())
+                ep["refs"].append(ref)
+            return out.tobytes()
         mic = np.frombuffer(chunk, dtype=np.int16)
         start = self.ref.mic_arrived(len(mic))
         if start > self.ref.active_until + self.tail:

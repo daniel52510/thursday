@@ -32,16 +32,27 @@ LINES = {
 }
 # Short, never a question: they must not sound like he's taking the floor.
 BACKCHANNELS = {"bc-mm": "Mm.", "bc-right": "Yes.", "bc-go-on": "Go on.", "bc-copy": "Understand."}
+# Tara's takes (thursday-tara-*.wav; the Pi plays them while she's the voice): plain English, her own voice,
+# no Rocky processing. Render only these with: make_sat_lines.py <out_dir> tara
+TARA_LINES = {
+    "offline": "Hm, I can't reach the Mac right now. Give it a minute and try me again?",
+    "error": "Sorry, something went wrong on my end. Try that again?",
+    "mic-off": "Okay, mic's off. I'm not listening.",
+    "mic-on": "I'm back, listening.",
+}
+TARA_BACKCHANNELS = {"bc-mm": "Mm-hm.", "bc-right": "Right.", "bc-go-on": "Go on.", "bc-copy": "Okay."}
 BC_TAKES = 3      # takes vary a lot in length and level; keep the median-length one
 BC_PEAK = 12000   # every clip at the same level (the Pi plays them at 0.7 of that)
 BC_TAIL_MS = 60   # trailing silence kept: the server stops listening while a clip plays
 
 
-def _speak(text: str) -> bytes:
-    req = urllib.request.Request(f"{TTS_URL}/speak/file", data=json.dumps({"text": text}).encode(),
+def _speak(text: str, voice: str = "leo") -> bytes:
+    body = {"text": text} if voice == "leo" else {"text": text, "voice": voice}
+    req = urllib.request.Request(f"{TTS_URL}/speak/file", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as res:
-        return rocky_voice.process_wav(res.read(), text)
+        wav = res.read()
+    return rocky_voice.process_wav(wav, text) if voice == "leo" else wav
 
 
 def _clip(wav: bytes) -> tuple[float, bytes]:
@@ -63,15 +74,17 @@ def _clip(wav: bytes) -> tuple[float, bytes]:
 def main() -> None:
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "satellite" / "sounds"
     out_dir.mkdir(parents=True, exist_ok=True)
-    for name, text in LINES.items():
-        wav = _speak(text)
-        (out_dir / f"thursday-{name}.wav").write_bytes(wav)
-        print(f"wrote thursday-{name}.wav ({len(wav) // 1024} KB): {text}")
-    for name, text in BACKCHANNELS.items():
-        takes = sorted(_clip(_speak(text)) for _ in range(BC_TAKES))
+    voice = sys.argv[2] if len(sys.argv) > 2 else "leo"
+    lines, bcs, prefix = (TARA_LINES, TARA_BACKCHANNELS, "thursday-tara-") if voice == "tara" else (LINES, BACKCHANNELS, "thursday-")
+    for name, text in lines.items():
+        wav = _speak(text, voice)
+        (out_dir / f"{prefix}{name}.wav").write_bytes(wav)
+        print(f"wrote {prefix}{name}.wav ({len(wav) // 1024} KB): {text}")
+    for name, text in bcs.items():
+        takes = sorted(_clip(_speak(text, voice)) for _ in range(BC_TAKES))
         voiced, wav = takes[len(takes) // 2]
-        (out_dir / f"thursday-{name}.wav").write_bytes(wav)
-        print(f"wrote thursday-{name}.wav ({voiced:.2f} s voiced): {text}")
+        (out_dir / f"{prefix}{name}.wav").write_bytes(wav)
+        print(f"wrote {prefix}{name}.wav ({voiced:.2f} s voiced): {text}")
 
 
 if __name__ == "__main__":

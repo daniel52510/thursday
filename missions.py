@@ -138,14 +138,20 @@ def confirms_pending(conversation_id: str | None, said: str) -> str | None:
     return None
 
 
+def pending_read_back(conversation_id: str | None) -> dict | None:
+    """The waiting read-back on this conversation ({tool, args, at}), or None if expired/none."""
+    p = _pending.get(conversation_id or "")
+    return p if p and time.monotonic() - p["at"] <= CONFIRM_TTL_S else None
+
+
 def _read_back(turn: dict, tool: str, args: dict, read_back: str) -> ToolResult:
     """Hold the start for his yes (or for the detail he adds instead)."""
     _pending[turn.get("conversation") or ""] = {"tool": tool, "args": args, "at": time.monotonic()}
     return ToolResult(ok=True, tool_name=tool, data={
         "status": "NOT STARTED YET - waiting for his yes", "read_back": read_back,
-        "next": "In one short line, say what you'll do (with his constraints) and ask if that's right. If something that "
-                "changes the answer is missing (budget, place, dates, what matters most), ask for that one thing instead. "
-                "It starts only after his yes; if he adds or changes something, call this again with the new version."})
+        "next": "In one short line, read back what you'll do (with his constraints) and ask for his yes to start it "
+                "(e.g. 'I research X for you. Start mission, question?'). Never say it's started or underway yet; "
+                "it starts only after his yes, and if he adds or changes a detail, call this again with the new version."})
 
 
 def _take_confirmed(turn: dict, tool: str) -> dict | None:
@@ -935,14 +941,21 @@ def _quiet_hours(mission: dict) -> bool:
 async def _announce(db, http: httpx.AsyncClient, mission: dict) -> bool:
     """Say the summary on an idle satellite. False if none is free right now."""
     from voice_ws import SATELLITES, synthesize_ahead  # on first use: voice_ws imports this module
+    import mind
     idle = [s for s in SATELLITES if s.state == "idle"]
     if not idle:
         return False
+    tara = mind.voice_style(mission["user_id"])["voice"] == "tara"  # Tara: plain English, her own voice
     if mission["status"] == "done":
-        line = f"{'Watch update' if mission.get('watch_id') else 'Mission complete'}! {eridian.translate(mission['summary'])}"
+        if tara:
+            line = f"{'Quick update on what I was watching.' if mission.get('watch_id') else 'Okay, that research is done.'} {mission['summary']}"
+        else:
+            line = f"{'Watch update' if mission.get('watch_id') else 'Mission complete'}! {eridian.translate(mission['summary'])}"
+    elif tara:
+        line = f"So, I couldn't finish {mission['goal'].rstrip('.')}. The details are on the mission page."
     else:
         line = f"Mission report. Bad, bad, bad: I cannot finish {mission['goal'].rstrip('.')}. Details are on mission page."
-    audio = await synthesize_ahead(http, line)
+    audio = await synthesize_ahead(http, line, {"voice": "tara"} if tara else None)
     for sat in idle:
         if audio and await sat.announce(audio=audio, conversation_id=mission["conversation_id"], cue="announce"):
             logger.info("mission %s reported on the satellite", mission["id"])

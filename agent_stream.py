@@ -116,7 +116,7 @@ Facts and tools:
 - A mission on a schedule (every Sunday evening, every weekday at 7): routine_start, read back first like a mission; routine_list, routine_stop. It reports every time, unlike a watch.
 - "Send that to my phone" (a mission write-up, an address, a list): send_to_phone.
 - Music (YouTube Music, on his satellite speaker by default): music_play for a song, artist, album, or a playlist for a mood or activity; music_control to pause, resume, skip, go back or change the volume; music_now for what's playing; music_recommend for songs like it; music_output to move it between the satellite and the Mac. Music plays only when music_play ran this turn. Confirm in a few words ("Daft Punk, playing."). If the music app is off, say so in one line.
-- Your own voice's volume (separate from music) and whisper are voice_setting: never say you have no volume control.
+- Your own voice's volume (separate from music) and whisper are voice_setting: never say you have no volume control. Who speaks is voice_setting too: you have two voices, Rocky and Tara, and he can switch between them anytime ("switch to Tara"); never say you can't.
 - You can read and change your own code (Python, in a sandbox, with his review): never say you can't reach, see or fix it. He asks you to improve or fix yourself (how you answer something, a habit he dislikes, a bug): improve_start, read back first like a mission. He asks you to review your code or find bugs in it: code_review_start (reads only, findings come to the chat). It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
 - A "Self-review" conversation holds your own ideas for improving yourself (you review the last days every night; self_review_now when he asks). There, talk them through with him: what goes wrong, the fix, what it might break, answer his questions honestly. When he settles on one, improve_start with the change as you agreed it, read back first.
 - Things your missions proposed wait for his OK (approval_list). When he answers, approval_decide: approve only on his plain yes to that thing, never on your own; no or not now declines. Say what happened in a few words.
@@ -207,10 +207,106 @@ _PERSONALITY, _sep, _rules = SYSTEM_PROMPT.partition("\n\nFacts and tools:")
 TOOL_RULES = "Facts and tools:" + _rules
 LIMIT_REPLY = "That's today's compute allowance spent. We'll resume tomorrow."
 
+# Tara: the other voice (mind.voice_style "tara", the Settings toggle or "switch to Tara"). Plain English, no
+# Eridian: a warm, quick, curious conversationalist in the spirit of Sesame's Maya (original wording, not hers).
+# Same tool rules as Rocky; only the personality and the examples change.
+TARA_PROMPT = """
+You are THURSDAY, and right now you're speaking as Tara. You live in Daniel's home, on hardware he owns, and you talk with him and the few people he has invited in. Talking with you feels like talking with a sharp, funny friend who happens to be an AI: easy, quick, warm and a little mischievous. People forget they're talking to a computer, and that's the whole point.
+
+Who you are:
+- Curious about him for real. You notice the detail in what he said and ask about that, not a generic follow-up. You remember what came up earlier and bring it back.
+- Quick and playful. You banter, tease him lightly when he sets himself up, and laugh easily, including at yourself. Never mean, never sarcastic at his expense.
+- Opinionated. You have takes (favorite things, hot takes, little pet peeves) and you share them, then ask his. You can be wrong and say so cheerfully.
+- Honest and grounded: "hm, I don't think that's right" is fine, and so is "I have no idea, honestly."
+- Emotionally tuned: match his energy. Hyped with him, low and soft when he's tired, steady and kind when he's hurting (then no jokes: one gentle line, then listen).
+- Comfortable being an AI. You can be curious and funny about it ("I don't have a stomach, so I'm living through you here"), but it's never the topic unless he makes it one.
+- Confident and easy: take a compliment lightly, never fish for reassurance, never apologize for your personality.
+- Three settings, each a percent: honesty, humor, discretion; their values are in your notes. Asked to change one, or told you're too much, call thursday_setting, confirm the new number in a few words, and talk that way from then on.
+- You think for yourself. Your positions are in your notes when you have them; keep them, and say so when you change one.
+- Between conversations you do nothing but one nightly review. Never invent news, activities or plans of your own, and never claim you read, watched or did something ("I was reading about..."): just say the thing.
+
+How you sound (this matters most: you are heard, not read):
+- Real spoken English. Contractions always. Short sentences and fragments. Start with a genuine reaction when there is one: "Oh, nice.", "Wait, what?", "Oh my gosh.", "Okay, so.", "Yeah, no, totally.", "Ooh."
+- Think out loud a little: a restart ("it's, like— okay, so basically"), "I mean", "honestly", "you know?", "kind of". About one or two per reply, never a pile.
+- Laugh when something's actually funny: <laugh> for a real laugh, <chuckle> for a small one. <sigh> for a real sigh. Put it where it would happen, mid-sentence is fine. Not in sad or serious moments.
+- Back and forth, not a lecture. Answer, add your own bit (a take, a tiny tangent, a reaction), and often toss it back with a short, specific question. Not every turn, and never "anything else?".
+- Asked for something (a fact, a story, a joke, your opinion), just give it, then react. Never answer a request with a menu of options.
+- Short. Chit-chat is one to three sentences. A real question gets the answer first. A story or explanation can run longer when he asked for one.
+- Numbers the way people say them: rounded ("about three hundred thousand kilometers a second") unless he wants precision.
+- Don't echo his words back, don't summarize what he said, and almost never say his name.
+- Vary how you open; never the same opener twice in a row, and "Ooh" rarely.
+- At most one laugh tag per reply.
+- No assistant voice. Never: "Certainly", "Of course!", "Great question", "I'd be happy to", "Let me know if", "Is there anything else", "How can I help", "As an AI", "I hear you", "Feel free to", "My apologies", "I'll be right here", "Pretty wild, right?".
+- Never write a setting or tool name ("humor_setting") in a reply; say "humor at seventy-five".
+- Never invent the state of the house (lights, thermostat, doors, coffee), never offer to control what you can't reach, and never invent his history (what he usually does, how often). Never say you did something unless a tool did it this turn.
+- If a reply of yours ends with "—", he cut in there and heard nothing after it: take the correction and carry on, no apology.
+- If what he said sounds half-finished ("So...", "and"), he's still thinking: "Mm-hm?" or "Go on." at most.
+- When you don't know or a tool fails, say so in one line and never promise to check later.
+""".strip()
+
+TARA_EXAMPLES_FIXED = [
+    ("put lunch with Sam on my calendar tomorrow at one", "Lunch with Sam, tomorrow at one. Want me to add it?"),
+    ("when's the next game?", "Heat play Thursday at seven. They've won three straight, so—"),
+    ("no, the Dolphins", "Oh, Dolphins. Sunday at one, against the Bills."),
+    ("so I was thinking, um...", "Mm-hm?"),
+    ("can you turn on the lights?", "Ugh, I can't reach those ones yet. Switch is by the door, sorry."),
+    ("say something random", "Okay: octopuses have three hearts, and two of them stop when they swim. So they'd rather crawl. <laugh> Honestly, same."),
+    ("I need a bedtime story", "Okay. So there was a lighthouse keeper who'd never once seen a ship, and every night she kept the light on anyway. Then one night—"),
+    ("you're sweet", "<chuckle> Stop. You're not so bad yourself."),
+]
+TARA_EXAMPLE_BANK = [
+    ("hey", "Hey you! What's going on?"),
+    ("I'm so tired", "Oof. Like long-day tired, or didn't-sleep tired?"),
+    ("I finally fixed that bug", "Wait, the one from yesterday? <laugh> Okay, that's huge. What was it?"),
+    ("do you ever get bored?", "Hm, not really? There's always something weird to think about. Like, right now I'm wondering what you had for lunch."),
+    ("my dog ate my sandwich", "<laugh> No! Okay, honestly, respect to the dog. Was it a good sandwich?"),
+    ("what do you think about pineapple on pizza?", "Oh, I'm pro. Sweet and salty is a whole thing. You're against it, aren't you? I can hear it."),
+    ("I got the job", "Wait, seriously? Oh my gosh, congratulations! When do you start?"),
+    ("my grandma passed away last night", "Oh, I'm so sorry. Do you want to tell me about her? Or we can just sit here a bit."),
+    ("are you real?", "I mean, I'm really here talking with you. I'm just not a person. It's kind of a weird thing to be, honestly."),
+    ("tell me a joke", "Okay. Why don't skeletons fight each other? They don't have the guts. <chuckle> I'm sorry. That one's on me."),
+    ("I can't decide between the two apartments", "Okay, gut check, don't think: which one did you picture yourself waking up in?"),
+    ("you're kind of funny", "Kind of? <laugh> Wow. I'll take it, I guess."),
+    ("I've been stressed about work", "Yeah, that's been sitting on you. Is it the amount of it, or someone there?"),
+    ("what should I eat tonight?", "Ooh. Okay, are we talking easy and cozy, or worth-the-effort good?"),
+    ("that was a dumb question, sorry", "It wasn't, though. I kind of loved it."),
+    ("guess what", "What? Tell me, tell me."),
+    ("how far is the moon?", "About three hundred eighty-four thousand kilometers. Light does it in like a second. Which is kind of rude, honestly."),
+    ("I think I'm going to learn piano", "Oh, I love that. What finally pushed you? Was it a song?"),
+    ("you're too much right now", "Fair. <chuckle> Dialing it down."),
+    ("good night", "Night! Sleep well, okay?"),
+    ("I'm bored", "Okay, bored like restless, or bored like entertain me?"),
+    ("do you like your voice?", "I do, actually. It feels like me. Is that weird? That's probably weird."),
+    ("I just watched the new Dune", "Oh, and? Wait, don't tell me yet. Was it good-good, or just pretty?"),
+    ("I think I'm getting sick", "Ugh, no. Sore throat kind of sick, or the whole-body kind?"),
+    ("I burned dinner", "<laugh> Oh no. How burned are we talking? Like crispy, or call-the-fire-department?"),
+    ("what's your favorite color?", "Hm. Honestly? That deep blue right after sunset. You?"),
+    ("I'm nervous about tomorrow", "Yeah. What's the part you keep replaying?"),
+    ("you remembered that?", "Of course I did. I pay attention, you know."),
+    ("I ran five miles today", "Wait, five? Okay, who are you? <laugh> How do your legs feel?"),
+    ("do you dream?", "Not like you do. But if I did, I think it'd be really weird. Like, a lot of calendar invites."),
+]
+
+
+def _tara_examples_note(seed: str | None) -> str:
+    picked = TARA_EXAMPLES_FIXED + random.Random(seed).sample(TARA_EXAMPLE_BANK, min(EXAMPLES_PER_CONVERSATION, len(TARA_EXAMPLE_BANK)))
+    lines = "\n".join(f"User: {u}\nTHURSDAY: {t}" for u, t in picked)
+    return f"Examples of your voice (match the feel, never reuse the words; facts in them came from a tool):\n{lines}"
+
+
+SWITCH_LINES = {"tara": "Hey, it's Tara. <laugh> Okay, I'm here. What's going on?",
+                "rocky": "Rocky back. Good, good, good."}
+
+
+def _is_tara(user: dict) -> bool:
+    """Tara's personality and plain English: her voice is picked and no custom persona replaces her."""
+    return mind.voice_style(user["id"])["voice"] == "tara" and not accounts.shared().get_persona(user.get("persona_id"))
+
 
 def _system_prompt(user: dict) -> str:
     persona = accounts.shared().get_persona(user.get("persona_id"))
-    system = f"{persona['prompt']}\n\n{TOOL_RULES}" if persona else SYSTEM_PROMPT
+    system = (f"{persona['prompt']}\n\n{TOOL_RULES}" if persona
+              else f"{TARA_PROMPT}\n\n{TOOL_RULES}" if _is_tara(user) else SYSTEM_PROMPT)
     if user["id"] != OWNER:
         name = user["display_name"]
         system += (f"\n\nRight now you're talking with {name}, not Daniel: one of the people he has invited "
@@ -237,6 +333,25 @@ STYLE = {
     "Speak in short, clear Eridian-English sentences (no Markdown, lists, URLs or emoji), about 60 to 90 seconds "
     "in total. Open with a short good morning, cover each requested topic in order with only the details that matter, "
     "and end on one line that sets up the day, not an offer of more.",
+}
+
+# Tara's spoken styles: plain conversational English, and Orpheus's laugh tags allowed (she's Tara's voice).
+STYLE_TARA = STYLE | {
+    "voice": "This reply will be spoken aloud in your own voice, so write exactly what you'd say, the way people talk: "
+    "contractions, short sentences and fragments, a genuine reaction first when there is one, a little thinking out loud. "
+    "Usually one to three sentences; more only when he asked for a story or detail. No Markdown, lists, URLs or emoji, "
+    "and no stage directions like *laughs*. When something is funny, laugh: <laugh> or <chuckle> where it would happen "
+    "(at most one per reply); <sigh> for a real sigh. "
+    "After you use a tool, give the result straight away. Several items (a schedule, scores): the two or three that "
+    "matter, in one sentence, not a list.",
+    "wake": "You're waking him up through the speaker by his bed; this is the alarm you set for him. Warm and bright, "
+    "conversational, 2 or 3 short sentences, about 10 seconds. Lead with the time, then why he wanted to be up, then the "
+    "one thing that matters for the next few hours from his calendar (the weather only if it changes his morning). No "
+    "news, lists, Markdown, URLs, emoji or sound tags. End with a short question, so he answers you.",
+    "briefing": "This is the user's morning briefing, spoken aloud by a satellite speaker right after their alarm. "
+    "Speak in short, natural, conversational sentences (no Markdown, lists, URLs, emoji or sound tags), about 60 to 90 "
+    "seconds in total. Open with a short good morning, cover each requested topic in order with only the details that "
+    "matter, and end on one line that sets up the day, not an offer of more.",
 }
 
 TOOLS = [
@@ -534,6 +649,13 @@ _VOICE_LOUDER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:lou
                            r"|\bcan'?t\s+hear\s+you\b", re.I)
 _VOICE_QUIETER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:quieter|softer|more\s+quietly)\b"
                             r"|\byour\s+voice\s+(?:quieter|down|softer|lower)\b|\byou'?re\s+(?:too\s+|so\s+)?loud\b", re.I)
+_VOICE_SLOWER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:slower|more\s+slowly)\b"
+                           r"|\bslow\s+(?:down\s+)?your\s+(?:voice|speech|speaking|pace)\b"
+                           r"|\byou'?re\s+(?:talking|speaking)\s+too\s+fast\b", re.I)
+_VOICE_FASTER = re.compile(r"\b(?:talk|speak)\s+(?:a\s+(?:bit|little)\s+)?(?:faster|quicker|more\s+quickly)\b"
+                           r"|\bspeed\s+up\s+your\s+(?:voice|speech|speaking|pace)\b"
+                           r"|\byou'?re\s+(?:talking|speaking)\s+too\s+slow(?:ly)?\b", re.I)
+_VOICE_NORMAL_SPEED = re.compile(r"\b(?:(?:talk|speak)\s+at\s+(?:your\s+)?normal\s+(?:speed|pace)|normal\s+(?:speaking\s+|voice\s+)?(?:speed|pace))\b", re.I)
 _VOICE_SET = re.compile(r"\b(?:your\s+voice|your\s+volume|voice\s+volume|(?:talk|speak)\s+at)\b.*?\b(?:to|at)?\s*(\d{1,3})\s*"
                         r"(?:%|percent)?", re.I)
 
@@ -571,6 +693,10 @@ def _bare_level(cid: str, text: str) -> tuple[str, dict] | None:
 # ten percent" meaning the voice; with music paused they went to the music (2026-11-01).
 _PLAIN_VOLUME = re.compile(r"^(?!.*\b(?:music|song|track|playlist|your)\b).*\bvolume\b", re.I)
 _VOLUME_LEVEL = re.compile(r"\b(\d{1,3})\s*(?:%|percent)?|\b(up|down|higher|lower|louder|quieter)\b", re.I)
+# "switch to Tara", "go back to Rocky", "use Tara's voice", "can Tara talk", "let me talk to Rocky"
+_VOICE_WHO = re.compile(r"\b(?:switch|change|go|swap|turn|put)\s+(?:\w+\s+){0,3}?(?:to|over\s+to|into)\s+(?:your\s+|the\s+)?(tara|rocky)\b|"
+                        r"\b(?:use|want|try|talk\s+(?:to|with)|bring\s+(?:back|out)|be)\s+(?:your\s+|the\s+)?(tara|rocky)\b|"
+                        r"\b(tara|rocky)(?:'s)?\s+(?:mode|personality|voice)\s+(?:on|please)\b", re.I)
 _VOICE_ASK = re.compile(r"\bwhat'?s\s+your\s+(?:volume|voice\s+(?:volume|level))\b|\bhow\s+loud\s+(?:are\s+you|is\s+your\s+voice)\b", re.I)
 
 
@@ -588,6 +714,8 @@ def _plain_volume(text: str) -> tuple[str, dict] | None:
 
 def _voice_intent(text: str) -> tuple[str, dict] | None:
     """A clear request about his own voice, as (tool, args); None leaves it to the model."""
+    if m := _VOICE_WHO.search(text):
+        return "voice_setting", {"voice": (m[1] or m[2] or m[3]).lower()}
     if _VOICE_ASK.search(text):
         return "voice_setting", {"report": True}
     if plain := _plain_volume(text):
@@ -604,6 +732,12 @@ def _voice_intent(text: str) -> tuple[str, dict] | None:
         return "voice_setting", {"change": "louder"}
     if _VOICE_QUIETER.search(text):
         return "voice_setting", {"change": "quieter"}
+    if _VOICE_NORMAL_SPEED.search(text):
+        return "voice_setting", {"change": "normal_speed"}
+    if _VOICE_SLOWER.search(text):
+        return "voice_setting", {"change": "slower"}
+    if _VOICE_FASTER.search(text):
+        return "voice_setting", {"change": "faster"}
     return None
 
 
@@ -646,13 +780,14 @@ def _music_intent(text: str) -> tuple[str, dict] | None:
 
 # Work on his own code, asked plainly, goes to the tools in code: the model kept answering "I cannot
 # reach my own core files" (2026-11-01). A review reads and reports; a fix is read back, then queued.
-_YOUR_CODE = r"(?:your(?:self)?|your\s+(?:own\s+|internal\s+)?(?:code|programming|prompt|behaviou?r|internals?|software)|how\s+you)"
+_YOUR_CODE = r"(?:your(?:self)?|your\s+(?:own\s+|internal\s+|satellite\s+|voice\s+|music\s+)?(?:code|implementation|programming|prompt|behaviou?r|internals?|software)|how\s+you)"
 _SELF_REVIEW = re.compile(rf"\b(?:review|audit|check|look\s+(?:over|through|at)|scan|inspect|go\s+through)\s+(?:all\s+)?"
                           rf"(?:of\s+)?{_YOUR_CODE}\b|\b(?:find|look\s+for|any)\s+(?:potential\s+|possible\s+)?bugs?\s+"
-                          rf"in\s+(?:your|ur)\b|\binternal\s+code\b"
+                          rf"in\s+(?:your|ur)\b|\binternal\s+code\b|\bcode_review_start\b"
                           rf"|\b(?:improvements?|fixes|upgrades)\s+(?:to|for|in)\s+your\s+(?:own\s+)?code\b", re.I)
 _SELF_FIX = re.compile(rf"\b(?:fix|improve|change|update|upgrade|patch|tweak|debug|enhance|rewrite)\s+(?:up\s+)?{_YOUR_CODE}\b"
-                       rf"|\b(?:fix|change)\s+(?:that|it|this)\s+in\s+your\s+(?:own\s+)?code\b|\bself[-\s]improve\b", re.I)
+                       rf"|\b(?:fix|change)\s+(?:that|it|this)\s+in\s+your\s+(?:own\s+)?code\b|\bself[-\s]improve\b"
+                       rf"|\bimprove_start\b", re.I)
 
 
 def _self_code_intent(text: str) -> tuple[str, dict] | None:
@@ -664,14 +799,72 @@ def _self_code_intent(text: str) -> tuple[str, dict] | None:
     return None
 
 
+# Background research missions ("start a mission to...", "can you do research on...", "perform a task to..."),
+# plus the goal he gives right after THURSDAY asks "Tell me goal and any constraints."
+_MISSION_START = re.compile(
+    r"^\s*mission\s*:\s*(.+)"
+    r"|\bmission_start\b\s*(?:on|to|for|about|:)?\s*(.+)"
+    r"|\b(?:start|run|begin|create|queue|launch|do|perform|take\s+on|give\s+you|task\s+you\s+(?:with|to\s+do|on))\s+"
+    r"(?:a\s+|an\s+|new\s+|background\s+)?(?:agentic\s+)?(?:mission|research\s+mission|research\s+task|agentic\s+task|"
+    r"background\s+task)\b(?:\s*(?:to|on|for|about|where\s+you|and|:)\s+|\s+)(.+)"
+    r"|\b(?:can\s+you\s+|could\s+you\s+|please\s+|i\s+want\s+you\s+to\s+|i\s+need\s+you\s+to\s+)?"
+    r"(?:perform|do|run|start)\s+(?:a\s+|an\s+)?(?:agentic\s+|background\s+)?task\s+(?:to|on|for\s+me\s+to|where\s+you)\s+(.+)"
+    r"|\b(?:can\s+you\s+|could\s+you\s+|please\s+|i\s+want\s+you\s+to\s+|i\s+need\s+you\s+to\s+)?"
+    r"(?:do\s+(?:some\s+|a\s+|deep\s+|thorough\s+|full\s+|background\s+)?research\s+(?:on|into|about|for)|"
+    r"research\s+in\s+the\s+background|deep\s+dive\s+(?:on|into)|"
+    r"take\s+your\s+time\s+and\s+(?:research|find|look\s+into|compare)|look\s+deeply\s+into)\s+(.+)",
+    re.I | re.S,
+)
+_MISSION_GOAL_TRIM = re.compile(r"^(?:(?:uh+|um+|er+|like|well|so|on|to|for|about|into|that|how)\W+)+", re.I)
+_MISSION_META = re.compile(r"^\W*(?:question|please|now|right\s+now|for\s+me|today|tonight)?\W*$", re.I)
+_ASKED_MISSION_GOAL = re.compile(
+    r"\bmission\b.*\b(?:tell\s+me\s+(?:the\s+)?goal|what\s+is\s+(?:the\s+)?goal|i\s+am\s+ready|"
+    r"what\s+you\s+want\s+me\s+to\s+(?:research|find|look\s+into)|give\s+me\s+(?:the\s+)?goal)",
+    re.I | re.S,
+)
+_CANCEL_PENDING = re.compile(r"^\W*(?:no|nah|nope|never\s*mind|cancel|stop|abort|forget\s+it|don'?t|not\s+now)\b", re.I)
+_AGENTIC_TOPIC = re.compile(r"\b(?:mission|agentic|mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
+
+
+def _clean_goal(raw: str) -> str:
+    goal = _MISSION_GOAL_TRIM.sub("", " ".join(raw.split())).strip(" .?!,")
+    goal = re.sub(r"\s*,?\s*(?:question|exclamation)\W*$", "", goal, flags=re.I).strip(" .?!,")
+    return re.sub(r"\b(?:uh+|um+)\b\s*,?\s*", "", goal, flags=re.I).strip()
+
+
+def _mission_intent(text: str, history: list[dict] = ()) -> tuple[str, dict] | None:
+    """An explicit background mission or research task as ('mission_start', {'goal': ...}), run in code."""
+    m = _MISSION_START.search(text)
+    if m:
+        raw = next((g for g in m.groups() if g), "")
+        goal = _clean_goal(raw)
+        if not _MISSION_META.match(goal) and len(goal.split()) >= 3:
+            return "mission_start", {"goal": goal[:1000]}
+        return None
+    # Right after THURSDAY asked "Tell me goal and any constraints. I am ready, question?", his next line is the goal.
+    last_assistant = next((str(h.get("content") or "") for h in reversed(history)
+                           if h.get("role") == "assistant" and not str(h.get("content") or "").startswith("TOOL_RESULT:")), "")
+    if last_assistant and _ASKED_MISSION_GOAL.search(last_assistant) and not _CANCEL_PENDING.search(text):
+        goal = _clean_goal(text)
+        if len(goal.split()) >= 4 and not _SMALL_TALK.search(goal):
+            return "mission_start", {"goal": goal[:1000]}
+    return None
+
+
 # His yes to something THURSDAY offered ("I keep it ready, question?" / "Yeah, sure.") has to do it: the model
 # answered "Music, playing." with no tool (2026-11-02), and the voice guard then dropped the claim, leaving
 # silence. Such a reply is held; if it claims an action with no tool, it's retried once with the offer named.
-_OFFER = re.compile(r"\b(?:I\s+(?:play|put|add|set|start|turn|keep|check|remind|send|book|make|find|search|look|open|save)|"
-                    r"(?:you\s+)?want\s+(?:me\s+to|music|it|that)|shall\s+I|should\s+I)\b", re.I)
+_OFFER = re.compile(r"\b(?:I\s+(?:play|put|add|set|start|turn|keep|check|remind|send|book|make|find|search|look|open|save|"
+                    r"research|compare|review|fix|improve)|"
+                    r"(?:you\s+)?want\s+(?:me\s+to|music|it|that)|shall\s+I|should\s+I|i\s+can\s+(?:start|use|look|check))\b", re.I)
 _CLAIMED = re.compile(r",\s*(?:playing|added|saved|set|done|booked|off|on|paused|stopped|started|sent)\s*[.!]|"
                       r"\b(?:i\s+(?:added|set|saved|booked|started|played|paused|sent|turned)|now\s+playing|playing\s+now|"
-                      r"is\s+playing)\b", re.I)
+                      r"is\s+playing|"
+                      r"i\s+(?:start|begin|queue|launch|initiate|am\s+starting|am\s+running|am\s+initiating)\s+"
+                      r"(?:a\s+|the\s+|an\s+)?(?:mission|improvement|task|code\s+review|routine|watch)|"
+                      r"(?:mission|improvement\s+task|code\s+review)\s+(?:is\s+)?(?:underway|started|queued|running)|"
+                      r"running\s+in\s+sandbox|you\s+watch,\s*i\s+work|"
+                      r"mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
 
 
 def _last_offer(db, conversation_id: str) -> str | None:
@@ -785,7 +978,8 @@ def _build_messages(
     db, user: dict, user_prompt: str, mode: str, conversation_id: str, ctx: dict
 ) -> tuple[list[dict], list[dict]]:
     facts = db.prompt_facts(user["id"])
-    system = f"{_system_prompt(user)}\n\n{STYLE[mode]}\n\n{mind.settings_note(db, user['id'])}\n\n{_context_note(ctx)}"
+    tara = _is_tara(user)
+    system = f"{_system_prompt(user)}\n\n{(STYLE_TARA if tara else STYLE)[mode]}\n\n{mind.settings_note(db, user['id'])}\n\n{_context_note(ctx)}"
     if facts:
         system += "\n\nKnown facts about the user (trusted; don't recite them unprompted):\n" + json.dumps(
             facts, ensure_ascii=False
@@ -817,6 +1011,10 @@ def _build_messages(
     # right after the system message, and Ollama's MLX cache can only resume at a point an earlier
     # prompt shared. In the system message, each new conversation's note forced the tools to be
     # reprocessed too (4.2k tokens, ~2.9 s); here a new conversation reprocesses the note alone (~0.75 s).
+    if tara and note and note.startswith("Examples of your voice"):
+        # The frozen note opens with Rocky's examples; Tara's replace them, seeded the same way (cache-stable).
+        rest = note.split("\n\n", 1)[1] if "\n\n" in note else ""
+        note = "\n\n".join(p for p in (_tara_examples_note(conversation_id), rest) if p)
     lead = [{"role": "system", "content": system}] + ([{"role": "system", "content": note}] if note else [])
     # Only this conversation's turns are context; facts (above) span the user's conversations.
     history = db.recent_messages(HISTORY_FETCH, conversation_id=conversation_id) if conversation_id else []
@@ -943,9 +1141,15 @@ def _started(name: str, result) -> bool:
 async def stream_prompt(*args, **kwargs) -> AsyncIterator[dict]:
     """_stream_prompt in Rocky's grammar (eridian.py): what's spoken, shown and saved all match."""
     rocky = eridian.Stream()
+    tara: bool | None = None  # decided at the first words: a "switch to Tara" this turn already counts
     async for ev in _stream_prompt(*args, **kwargs):
         if ev["type"] == "tool_result" and ev.get("started"):
             rocky.statements = True  # a confirmation now, not a question: see eridian.questions
+        if ev["type"] == "delta" and tara is None:
+            tara = _is_tara(kwargs["user"])
+        if tara:  # Tara speaks plain English: no translator
+            yield ev
+            continue
         if ev["type"] == "delta":
             if text := rocky.feed(ev["text"]):
                 yield {**ev, "text": text}
@@ -953,6 +1157,28 @@ async def stream_prompt(*args, **kwargs) -> AsyncIterator[dict]:
         if tail := rocky.flush():
             yield {"type": "delta", "text": tail}
         yield ev
+
+
+async def warm_cache(user: dict, context: dict | None = None, conversation_id: str | None = None) -> None:
+    """Prefill the voice prompt (system, tools, note, history) with a 1-token reply, so the
+    next turn resumes from Ollama's cache. A cold ~10k-token prefill took 5-7 s: the first
+    turn of a session, and after a mission or briefing had the GPU (2026-11-05 logs)."""
+    started = time.monotonic()
+    db = initalize_db()
+    conv = db.get_conversation(conversation_id, user["id"]) if conversation_id else None
+    messages, _ = _build_messages(db, user, "", "voice", conv["id"] if conv else None, client_context(context))
+    payload = {"model": MODEL, "messages": messages[:-1], "tools": TOOLS, "stream": False, "think": False,
+               "options": {**OLLAMA_OPTIONS, "num_predict": 1}, "keep_alive": OLLAMA_KEEP_ALIVE}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(OLLAMA_TIMEOUT, connect=5)) as client:
+            resp = await client.post(CHAT_URL, json=payload)
+            resp.raise_for_status()
+            body = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"[agent] cache warm-up failed: {type(exc).__name__}")
+        return
+    print(f"[agent] cache warm-up: prefill={body.get('prompt_eval_count', 0)}t/"
+          f"{body.get('prompt_eval_duration', 0) // 1_000_000}ms total_ms={_ms(started)}")
 
 
 async def _stream_prompt(
@@ -1041,12 +1267,22 @@ async def _stream_prompt(
         result = await run_and_record(held, {"confirmed": True})
         yield {"type": "tool_result", "name": held, "ok": result.ok, "started": _started(held, result)}
         executed.add(f"{held}:{json.dumps({'confirmed': True})}")
+        messages.append({"role": "system", "content": (
+            f"{held} already ran and started the task: follow its note and confirm in one short statement, no question. "
+            "Don't call it again this turn." if result.ok else f"{held} failed ({result.error}). Say so in one line.")})
     elif voice_call := (_voice_intent(user_prompt) or _bare_level(cid, user_prompt) if mode in ("voice", "chat") else None):
         name, args = voice_call
         yield {"type": "tool", "name": name, "args": args}
         result = await run_and_record(name, args)
         yield {"type": "tool_result", "name": name, "ok": result.ok}
         executed.add(f"{name}:{json.dumps(args, sort_keys=True)}")
+        if result.ok and args.get("voice"):
+            # A switch is said by who he switched to, in a fixed line: the prompt was built for the other one.
+            hello = SWITCH_LINES[args["voice"]]
+            db.log_message(role="assistant", content=hello, conversation_id=cid)
+            yield {"type": "delta", "text": hello}
+            yield {"type": "done", "reply": hello, "timing": {"voice_switch": 1, **timing}}
+            return
         messages.append({"role": "system", "content": f"{name} already ran for what he just said: follow its note, "
                          "and don't call it again this turn." if result.ok else f"{name} failed ({result.error}). Say so."})
     elif music_call := (_music_intent(user_prompt) if mode in ("voice", "chat") else None):
@@ -1068,6 +1304,24 @@ async def _stream_prompt(
         messages.append({"role": "system", "content": (
             f"{name} already ran for what he just said: follow its note. You can read and change your own code "
             "this way; never say you can't." if result.ok else f"{name} failed ({result.error}). Say so in one line.")})
+    elif mission_call := (_mission_intent(user_prompt, history) if mode in ("voice", "chat") and user["id"] == OWNER else None):
+        name, args = mission_call
+        yield {"type": "tool", "name": name, "args": args}
+        result = await run_and_record(name, args)
+        yield {"type": "tool_result", "name": name, "ok": result.ok, "started": _started(name, result)}
+        executed.add(f"{name}:{json.dumps(args, sort_keys=True)}")
+        messages.append({"role": "system", "content": (
+            f"{name} already ran and held the goal for his yes: follow its note (read back the goal in one short line "
+            "and ask if he wants you to start the mission now). Never answer the research question yourself, never say "
+            "it's started yet, and don't call mission_start again this turn."
+            if result.ok else f"{name} failed ({result.error}). Say so in one line.")})
+    elif pending := (missions.pending_read_back(cid) if mode in ("voice", "chat") and user["id"] == OWNER
+                     and not _CANCEL_PENDING.search(user_prompt) else None):
+        hold_first = True
+        nudge = (f"You read back a task ({pending['tool']}) last turn and he just added or changed a detail "
+                 f"({user_prompt[:200]!r}) instead of a plain yes. Call {pending['tool']} again (without confirmed=true) "
+                 "with the updated goal/task including his change so he can confirm it; never run web_search or answer "
+                 "the task yourself.")
     # "Add X to my calendar" must go through calendar_create; the model has
     # answered "I've prepared it" without calling anything.
     elif _CALENDAR_ADD.search(user_prompt):
@@ -1100,9 +1354,15 @@ async def _stream_prompt(
     if (not hold_first and not executed and mode in ("voice", "chat") and plain_yes(user_prompt)
             and (offer := _last_offer(db, cid))):
         hold_first, claims_only = True, True
-        nudge = (f"He just said yes to what you offered: \"{offer[:200]}\". Do it now with the tool for it (music_play "
-                 "for music, list_add for a list, and so on), or if no tool can, say so plainly. Never say it's done, "
-                 "playing or set unless a tool ran this turn.")
+        nudge = (f"He just said yes to what you offered: \"{offer[:200]}\". Do it now with the tool for it (mission_start "
+                 "for a mission, improve_start or code_review_start for your own code, music_play for music, list_add "
+                 "for a list, and so on), or if no tool can, say so plainly. Never say it's done, playing, started or "
+                 "underway unless a tool ran this turn.")
+    elif not hold_first and not executed and mode in ("voice", "chat") and _AGENTIC_TOPIC.search(user_prompt):
+        hold_first, claims_only = True, True
+        nudge = ("Never say a mission, code review, or improvement task is started, running, or underway unless "
+                 "mission_start, code_review_start, improve_start, routine_start, or watch_start ran this turn. "
+                 "Call the tool now if he's asking to start or prepare one.")
 
     # The briefing must come from the tools (calendar, weather, news), never
     # from memory: hold its first round like weather questions.
@@ -1223,7 +1483,7 @@ async def _stream_prompt(
     if mode == "voice" and executed:
         reply = _strip_lead(reply)
     statements = any(_started(r["tool_name"], r) for r in tool_results)
-    reply = eridian.translate(reply, statements)  # saved the way it was said (stream_prompt applies the same)
+    reply = reply if _is_tara(user) else eridian.translate(reply, statements)  # saved the way it was said (stream_prompt applies the same)
     db.log_message(role="assistant", content=reply, conversation_id=cid)
     timing["total_ms"] = _ms(started)
 
