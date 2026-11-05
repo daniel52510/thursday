@@ -326,7 +326,6 @@ _SAYS = [(r"stop(?:ped)?\s+talking|done\s+talking|finish(?:ed)?\s+speaking|end\s
           "endpoint silence vad end_silence smart"),
          (r"interrupt|cut\s+(?:you|her|him)\s+off|talk\s+over", "barge"),
          (r"wake\s*word|hey\s+thursday", "wake"),
-         (r"\bvoice\b|\bspeak|\bsay\b", "tts voice"),
          (r"remember|memory|forget", "memory fact recall"),
          (r"\bslow\b|\bfast\b|latency|lag", "timing latency"),
          (r"listen", "listening vad"),
@@ -348,6 +347,64 @@ def _terms(text: str) -> set[str]:
     return {_stem(w) for w in words if len(w) > 2 and w not in _STOP}
 
 
+EMBED_MODEL = os.getenv("CODE_EMBED_MODEL", "nomic-embed-text")
+EMBED_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434/api/chat").split("/api/")[0] + "/api/embed"
+
+
+def _embed(texts: list[str]) -> list[list[float]]:
+    out = []
+    for i in range(0, len(texts), 64):
+        r = httpx_post(EMBED_URL, {"model": EMBED_MODEL, "input": texts[i:i + 64], "keep_alive": "5m"})
+        out += r["embeddings"]
+    return out
+
+
+def httpx_post(url: str, body: dict) -> dict:
+    import httpx
+    r = httpx.post(url, json=body, timeout=120)
+    r.raise_for_status()
+    return r.json()
+
+
+def _meaning(root: Path, project: str, symbols: list, question: str) -> dict[int, float]:
+    """Cosine similarity of the question to each definition, by meaning (nomic-embed-text): finds code that
+    never uses his words ("Wi-Fi drops" -> the reconnect loop). Vectors are cached by each definition's text
+    in runner-out/embed/<project>.json (a subfolder: runner-out/*.json are job reports). {} when it fails."""
+    import math
+    cache_path = OUT / "embed" / f"{project}.json"
+    try:
+        cache = json.loads(cache_path.read_text())
+    except (OSError, ValueError):
+        cache = {}
+    texts, keys, sources = [], [], {}
+    for i, sym in enumerate(symbols):
+        if sym.path not in sources:
+            sources[sym.path] = (root / sym.path).read_text(errors="replace").splitlines()
+        body = "\n".join(sources[sym.path][sym.line - 1:min(sym.end, sym.line + 14)])
+        text = f"{sym.path} {sym.name}\n{sym.doc}\n{body}"[:1500]
+        texts.append(text)
+        keys.append(hashlib.sha1(text.encode()).hexdigest())
+    try:
+        missing = sorted({k for k in keys if k not in cache})
+        if missing:
+            todo = {k: t for k, t in zip(keys, texts) if k in missing}
+            for k, v in zip(todo, _embed([f"search_document: {t}" for t in todo.values()])):
+                cache[k] = [round(x, 5) for x in v]
+            cache = {k: cache[k] for k in set(keys)}  # changed definitions drop out
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(cache))
+        q = _embed([f"search_query: {question}"])[0]
+    except Exception as exc:  # the embedding model is down: words alone still work
+        logger.info("code_ask: no meaning search (%s)", type(exc).__name__)
+        return {}
+    qn = math.sqrt(sum(x * x for x in q)) or 1.0
+    out = {}
+    for i, k in enumerate(keys):
+        v = cache[k]
+        out[i] = sum(a * b for a, b in zip(q, v)) / (qn * (math.sqrt(sum(x * x for x in v)) or 1.0))
+    return out
+
+
 def code_ask(args: Dict[str, Any]) -> ToolResult:
     """A question about how his own code works, answered from the code: the parts that match it (runner/codeindex.py:
     names, docs, constants) with their source, plus the project brief's one-liners. Read-only, ~0.2 s, no extra model:
@@ -366,17 +423,29 @@ def code_ask(args: Dict[str, Any]) -> ToolResult:
     idx = CodeIndex.build(root)
     tests = "test" in terms
 
-    def score(sym) -> float:
-        if sym.path.startswith("tests/") and not tests:
-            return 0
+    def words(sym) -> float:
         name, doc = _terms(sym.name), _terms(sym.doc)
         # A term counts in a name when it starts a word of it: "endpoint" finds Endpointer, "barge" _barge_in.
         named = sum(1 for t in terms if any(w.startswith(t) for w in name))
         return 3 * named + len(terms & doc) + (0.5 if sym.kind != "constant" else 0)
 
-    ranked = sorted((s for s in idx.symbols if score(s) >= 3), key=score, reverse=True)
+    pool = [x for x in idx.symbols if tests or not x.path.startswith("tests/")]
+    near = _meaning(root, project, pool, question)
+    # Words and meaning together: an exact name still wins; meaning finds what his words don't name.
+    # Rank fusion: a definition scores by its place in each list (words, meaning), not by raw numbers: meaning's
+    # similarities sit in a narrow band (0.58-0.68), so adding them to word points let words drown them out.
+    by_words = sorted((i for i, x in enumerate(pool) if words(x) >= 3), key=lambda i: -words(pool[i]))
+    by_meaning = sorted(near, key=lambda i: -near[i])[:30]
+    fused: dict[int, float] = {}
+    for ranks in (by_words, by_meaning):
+        for r, i in enumerate(ranks):
+            fused[i] = fused.get(i, 0.0) + 1 / (10 + r)
+    ranked = [pool[i] for i in sorted(fused, key=lambda i: -fused[i])][:3]
+    # Plus meaning's own top two: on vague questions ("repeating the same joke") words pick noise and meaning
+    # alone had the answer first (recent_lines_note); the chat model picks the relevant one of five.
+    ranked += [pool[i] for i in by_meaning[:2] if pool[i] not in ranked]
     code, used = [], 0
-    for sym in ranked[:3]:
+    for sym in ranked[:5]:
         lines = (root / sym.path).read_text(errors="replace").splitlines()[sym.line - 1:min(sym.end, sym.line + 39)]
         snippet = "\n".join(lines)[:1600]
         code.append({"at": f"{sym.path}:{sym.line}", "name": sym.name, "source": snippet})

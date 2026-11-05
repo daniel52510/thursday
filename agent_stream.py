@@ -117,7 +117,7 @@ Facts and tools:
 - "Send that to my phone" (a mission write-up, an address, a list): send_to_phone.
 - Music (YouTube Music, on his satellite speaker by default): music_play for a song, artist, album, or a playlist for a mood or activity; music_control to pause, resume, skip, go back or change the volume; music_now for what's playing; music_recommend for songs like it; music_output to move it between the satellite and the Mac. Music plays only when music_play ran this turn. Confirm in a few words ("Daft Punk, playing."). If the music app is off, say so in one line.
 - Your own voice's volume (separate from music) and whisper are voice_setting: never say you have no volume control. Who speaks is voice_setting too: you have two voices, Rocky and Tara, and he can switch between them anytime ("switch to Tara"); never say you can't.
-- You can read and change your own code (Python, in a sandbox, with his review): never say you can't reach, see or fix it. He asks you to improve or fix yourself (how you answer something, a habit he dislikes, a bug): improve_start, read back first like a mission. He asks you to review your code or find bugs in it: code_review_start (reads only, findings come to the chat). He asks how a part of you works (how barge-in works, where something is decided): code_ask, then explain from what it shows. His other projects (his GitHub Projects folder): project_list, then code_ask or code_review_start with project; you only read those, never change them. How you're running, whether anything's broken, why you're slow: system_status. It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
+- You can read and change your own code (Python, in a sandbox, with his review): never say you can't reach, see or fix it. He asks you to improve or fix yourself (how you answer something, a habit he dislikes, a bug): improve_start, read back first like a mission. He asks you to review your code or find bugs in it: code_review_start (reads only, findings come to the chat). He asks how or why you do something (how barge-in works, how you avoid repeating yourself, why you paused, how you know it's him): code_ask first, every time, then explain from what it shows. Never describe your own mechanisms from memory: you don't remember your code, and a guess is a claim. His other projects (his GitHub Projects folder): project_list, then code_ask or code_review_start with project; you only read those, never change them. How you're running, whether anything's broken, why you're slow: system_status. It's made in a sandbox and waits for his review on the Agentic page; nothing changes until he approves. How it went: improve_status.
 - A "Self-review" conversation holds your own ideas for improving yourself (you review the last days every night; self_review_now when he asks). There, talk them through with him: what goes wrong, the fix, what it might break, answer his questions honestly. When he settles on one, improve_start with the change as you agreed it, read back first.
 - Things your missions proposed wait for his OK (approval_list). When he answers, approval_decide: approve only on his plain yes to that thing, never on your own; no or not now declines. Say what happened in a few words.
 - His lists (grocery, packing, to-do) and notes: list_add, list_show, list_remove, note_save, note_find. Confirm in a few words ("Eggs and oat milk, added."); read a list back in one sentence. A list or note changes only when a tool changes it, every time: "got the eggs" is list_remove, "add bread" is list_add, even if you talked about that list a moment ago. Never say you added, removed or saved something unless the tool did it this turn.
@@ -797,6 +797,24 @@ _SELF_FIX = re.compile(rf"\b(?:fix|improve|change|update|upgrade|patch|tweak|deb
                        rf"|\bimprove_start\b", re.I)
 
 
+# "How do you avoid repeating yourself?", "how does barge-in work?", "why did you pause?": a question about his
+# own mechanism. The model answered these from imagination even with a rule to use code_ask (2026-11-05:
+# "I use small, efficient models..."), so they're routed in code. Feelings and opinions aren't matched.
+_CODE_QUESTION = re.compile(
+    r"\bhow\s+(?:do|does|did|can|would)\s+(?:you|your\s+\w+(?:\s+\w+)?|the\s+\w+(?:\s+\w+)?)\s+"
+    r"(?:\w+\s+){0,2}?(?:avoid|stop|keep|decide|know|work|handle|pick|choose|detect|tell|remember|warm|switch|hear|"
+    r"listen|wake|cut|interrupt|find|recogni[sz]e|figure|manage|deal|make\s+sure|prevent|get)\b"
+    r"|\bwhy\s+(?:do|did|does)\s+you\s+(?:\w+\s+){0,2}?(?:pause|stop|cut|interrupt|repeat|say|wait|ignore|mishear)\b"
+    r"|\bwhere\s+(?:in\s+your\s+code\s+)?do\s+you\s+(?:decide|handle|detect|check)\b", re.I)
+_NOT_CODE = re.compile(r"\b(?:feel|feeling|think\s+(?:of|about)|like|love|enjoy|opinion)\b", re.I)
+
+
+def _code_question_intent(text: str) -> tuple[str, dict] | None:
+    if _CODE_QUESTION.search(text) and not _NOT_CODE.search(text):
+        return "code_ask", {"question": text[:300]}
+    return None
+
+
 def _self_code_intent(text: str) -> tuple[str, dict] | None:
     """Work on his own code he asked for plainly, as (tool, args); None leaves it to the model."""
     if _SELF_REVIEW.search(text):
@@ -1311,6 +1329,16 @@ async def _stream_prompt(
         messages.append({"role": "system", "content": (
             f"{name} already ran for what he just said: follow its note. You can read and change your own code "
             "this way; never say you can't." if result.ok else f"{name} failed ({result.error}). Say so in one line.")})
+    elif code_q := (_code_question_intent(user_prompt) if mode in ("voice", "chat") and user["id"] == OWNER else None):
+        name, args = code_q
+        yield {"type": "tool", "name": name, "args": args}
+        result = await run_and_record(name, args)
+        yield {"type": "tool_result", "name": name, "ok": result.ok}
+        executed.add(f"{name}:{json.dumps(args, sort_keys=True)}")
+        messages.append({"role": "system", "content": (
+            "code_ask already ran on his question: answer only from the code it returned, following its note; "
+            "if that code doesn't show it, say so. Never describe your own workings from memory." if result.ok else
+            f"code_ask failed ({result.error}). Say you couldn't look at your code just now, in one line.")})
     elif mission_call := (_mission_intent(user_prompt, history) if mode in ("voice", "chat") and user["id"] == OWNER else None):
         name, args = mission_call
         yield {"type": "tool", "name": name, "args": args}

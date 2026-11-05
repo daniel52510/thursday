@@ -131,3 +131,15 @@ def test_code_ask_finds_the_code_a_plain_question_means(monkeypatch):
     names = lambda q: [c["name"] for c in improvements.code_ask({"question": q}).data["code"]]  # noqa: E731
     assert any("Endpointer" in n or "end_silence" in n for n in names("how do you decide when I stopped talking?"))
     assert any("barge" in n.lower() for n in names("how does barge-in work?"))
+
+
+@pytest.mark.parametrize("text,routed", [
+    ("How do you stop yourself from repeating the same joke?", True),
+    ("how do you know it is me talking?", True),
+    ("why did you pause just now?", True),
+    ("How are you feeling today?", False),
+    ("how do you like your new voice?", False),
+    ("how does the weather look tomorrow?", False),
+])
+def test_questions_about_his_own_workings_go_to_code_ask(text, routed):
+    assert (a._code_question_intent(text) is not None) == routed
