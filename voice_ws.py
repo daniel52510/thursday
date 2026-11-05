@@ -767,6 +767,7 @@ class Session:
         self._conversation_id: str | None = None  # sent by the client with "start"; a turn may create one
         self._context: dict | None = None  # {"timezone", "location"}, also sent with "start"
         self._warmed_at = 0.0  # last Ollama cache warm-up (warm_cache)
+        self._no_wake = False   # the current listening window opened without the wake word (a follow-up)
         self._speaker_last: tuple[str | None, float] = (None, 0.0)  # last confident speaker match, when
         self._warming: asyncio.Task | None = None
         self._chunked = False  # client asked for one WAV per sentence
@@ -819,6 +820,7 @@ class Session:
                 # Follow-up windows open automatically after every reply: use a firmer dBFS floor (-43 dBFS)
                 # so a background TV across the room doesn't loop forever, while explicit wakes use -52 dBFS.
                 follow_up = bool(msg.get("follow_up"))
+                self._no_wake = follow_up  # this window opened by itself after a reply: was it said to him? (_run_turn)
                 self.endpointer.cfg.min_dbfs = float(
                     os.getenv("VOICE_SAT_FOLLOWUP_MIN_DBFS", "-43.0") if follow_up
                     else os.getenv("VOICE_SAT_VAD_MIN_DBFS", "-52.0")
@@ -1127,7 +1129,21 @@ class Session:
             self._speaker_task = asyncio.create_task(self._log_speaker(pcm, text))  # kept: unreferenced tasks can vanish
             if SPEAKER_ID == "enforce":  # sensitive tools this turn wait for the verdict (speaker.gate)
                 speaker.CURRENT.set(self._speaker_task)
-        await self._respond(text, timing)
+            if self._no_wake and SPEAKER_ID == "enforce":
+                # No wake word: a voice that's clearly someone else's is someone else's conversation. ~50-150 ms,
+                # follow-up turns only.
+                try:
+                    who = await asyncio.wait_for(asyncio.shield(self._speaker_task), timeout=0.5)
+                except asyncio.TimeoutError:
+                    who = None
+                if who and who.get("verdict") == "unknown":
+                    logger.info("follow-up not for me: another voice (score %.2f)", who.get("score", 0))
+                    timing["skipped"] = "voice"
+                    self._timing = timing
+                    self._log_timing()
+                    await self.set_state("idle")
+                    return
+        await self._respond(text, timing, no_wake=self._no_wake and self.role == "satellite")
 
     async def _log_speaker(self, pcm: bytes, text: str) -> dict | None:
         """Who the voice sounds like, logged with the turn (no words: just the first few); the verdict is
@@ -1155,7 +1171,8 @@ class Session:
             logger.info("speaker: failed: %s", type(exc).__name__)
             return None
 
-    async def _respond(self, text: str, timing: dict, mode: str = "voice", context: dict | None = None) -> None:
+    async def _respond(self, text: str, timing: dict, mode: str = "voice", context: dict | None = None,
+                       no_wake: bool = False) -> None:
         """LLM + TTS for one user message, or for a prompt the server writes
         itself (the alarm briefing's live fallback)."""
         stage, input_desc, started = "LLM", f"{len(text)} chars", time.monotonic()
@@ -1169,7 +1186,18 @@ class Session:
             try:
                 speak_text = ""
                 async for ev in stream_prompt(text, mode=mode, conversation_id=self._conversation_id,
-                                             context=self._context if context is None else context, user=self.user):
+                                             context=self._context if context is None else context, user=self.user,
+                                             no_wake=no_wake):
+                    if ev["type"] == "skip":  # said in the room, not to him: no reply, back to the wake word
+                        logger.info("follow-up not for me: %r", " ".join(text.split()[:6]))
+                        timing["skipped"] = "content"
+                        self._said = None
+                        if speaker:
+                            speaker.cancel()
+                        await self.set_state("idle")
+                        self._timing = timing
+                        self._log_timing()
+                        return
                     if ev["type"] == "conversation":
                         self._conversation_id = ev["id"]
                         await self.ws.send_json(ev)

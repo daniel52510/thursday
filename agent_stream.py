@@ -1165,11 +1165,40 @@ def _started(name: str, result) -> bool:
         and (data or {}).get("status") == "STARTED"
 
 
+SKIP_TOKEN = "<skip>"
+SKIP_NOTE = (f"He said this without the wake word, in the moment right after your reply. If it's clearly not said to "
+             f"you (he's talking to someone else in the room, the TV or a call, reading aloud, thinking out loud to "
+             f"himself), reply with exactly {SKIP_TOKEN} and nothing else. If it could be for you, answer normally.")
+
+
 async def stream_prompt(*args, **kwargs) -> AsyncIterator[dict]:
     """_stream_prompt in Rocky's grammar (eridian.py): what's spoken, shown and saved all match."""
     rocky = eridian.Stream()
     tara: bool | None = None  # decided at the first words: a "switch to Tara" this turn already counts
-    async for ev in _stream_prompt(*args, **kwargs):
+    if kwargs.get("no_wake"):  # hold the start of the reply: "<skip>" is never spoken or shown
+        held, skipping = "", False
+        inner = _stream_prompt(*args, **kwargs)
+        async def gated():
+            nonlocal held, skipping
+            async for ev in inner:
+                if ev["type"] == "delta" and held is not None:
+                    held += ev["text"]
+                    if held.lstrip().lower().startswith(SKIP_TOKEN[:len(held.lstrip())]) and len(held.lstrip()) < len(SKIP_TOKEN):
+                        continue
+                    if held.lstrip().lower().startswith(SKIP_TOKEN):
+                        skipping = True
+                        yield {"type": "skip"}
+                    else:
+                        yield {**ev, "text": held}
+                    held = None
+                    continue
+                if skipping and ev["type"] == "delta":
+                    continue
+                yield ev
+        source = gated()
+    else:
+        source = _stream_prompt(*args, **kwargs)
+    async for ev in source:
         if ev["type"] == "tool_result" and ev.get("started"):
             rocky.statements = True  # a confirmation now, not a question: see eridian.questions
         if ev["type"] == "delta" and tara is None:
@@ -1215,6 +1244,7 @@ async def _stream_prompt(
     context: dict | None = None,
     *,
     user: dict,
+    no_wake: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     started = time.monotonic()
     timing: dict[str, int] = {}
@@ -1236,6 +1266,10 @@ async def _stream_prompt(
         name = "humor" if setting[1].lower().startswith("hum") else setting[1].lower()
         db.set_setting(user["id"], name, max(0, min(100, int(setting[2]))))  # the settings note below shows it
     messages, history = _build_messages(db, user, user_prompt, mode, cid, ctx)
+    if no_wake and mode == "voice":
+        # A follow-up window: the mic stayed open after his last reply, no wake word. Not everything said in the
+        # room is for THURSDAY (a coworker, the TV, someone reading aloud): those he lets pass, silently.
+        messages.insert(-1, {"role": "system", "content": SKIP_NOTE})
     db.log_message(role="user", content=user_prompt, conversation_id=cid)
     # What calendar_confirm checks (and whose calendar); to_thread copies it into the tool's thread.
     missions.touch()  # a turn is starting: background missions give up the GPU
@@ -1524,6 +1558,9 @@ async def _stream_prompt(
         reply = _strip_lead(reply)
     statements = any(_started(r["tool_name"], r) for r in tool_results)
     reply = reply if _is_tara(user) else eridian.translate(reply, statements)  # saved the way it was said (stream_prompt applies the same)
+    if no_wake and reply.lstrip().lower().startswith(SKIP_TOKEN):  # not said to him: nothing to remember
+        yield {"type": "done", "reply": "", "timing": timing | {"skipped": 1}}
+        return
     db.log_message(role="assistant", content=reply, conversation_id=cid)
     timing["total_ms"] = _ms(started)
 

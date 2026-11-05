@@ -153,3 +153,26 @@ def test_engineer_pass_write_up_leads_with_the_failure():
                                            "analysis": {"cause": "end_silence_ms became 0", "commit": "abc1234",
                                                         "fix": "restore 600 in vad.py VADConfig"}})
     assert text.startswith("**Checks are failing.**") and "abc1234" in text and "restore 600" in text and "vad.py" in text
+
+
+@pytest.mark.parametrize("chunks,skipped,said", [
+    (["<sk", "ip>"], True, ""),
+    (["<skip>", " sorry"], True, ""),
+    (["Sure", ", here"], False, "Sure, here"),
+    (["<", "b>hi"], False, "<b>hi"),
+])
+def test_follow_up_skip_is_never_spoken(monkeypatch, chunks, skipped, said):
+    import asyncio
+
+    async def fake(*args, **kwargs):
+        for c in chunks:
+            yield {"type": "delta", "text": c}
+        yield {"type": "done", "reply": "".join(chunks), "timing": {}}
+    monkeypatch.setattr(a, "_stream_prompt", fake)
+    monkeypatch.setattr(a, "_is_tara", lambda user: True)  # plain text: no Rocky translation in the way
+
+    async def run():
+        return [ev async for ev in a.stream_prompt("x", mode="voice", user={"id": "owner"}, no_wake=True)]
+    events = asyncio.run(run())
+    assert any(e["type"] == "skip" for e in events) == skipped
+    assert "".join(e["text"] for e in events if e["type"] == "delta") == said
