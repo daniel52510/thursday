@@ -457,6 +457,7 @@ FILLERS = {
     "calendar_events": ["I check schedule.", "Moment."],
     "calendar_create": ["I set it up.", "Moment."],
     "calendar_delete": ["I find it.", "Moment."],
+    "code_ask": ["I look at my code.", "Checking my code."],
     # Asked to think it over: reasoning first takes ~30-40 s with his full prompt, so he says so up front.
     "_deliberate": ["Big question. I think. Thirty seconds.", "I think hard now. Half a minute."],
 }
@@ -469,6 +470,7 @@ FILLERS_TARA = {
     "calendar_events": ["Let me look at your calendar.", "One sec."],
     "calendar_create": ["Okay, setting it up.", "One sec."],
     "calendar_delete": ["Let me find it.", "One sec."],
+    "code_ask": ["Let me look at my code.", "Ooh, okay, let me check."],
     "_deliberate": ["Ooh, good one. Give me like thirty seconds.", "Let me really think about that. Half a minute."],
 }
 _FILLERS_BY_VOICE = {"leo": FILLERS, "tara": FILLERS_TARA}

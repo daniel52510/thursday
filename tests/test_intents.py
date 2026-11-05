@@ -3,6 +3,8 @@
 The phrasings are Daniel's own, from turns where the model claimed an action no tool did
 ("Music, off.") or said it couldn't reach its own code (2026-11-01).
 """
+from pathlib import Path
+
 import pytest
 
 import agent_stream as a
@@ -120,3 +122,12 @@ def test_a_statement_is_not_an_offer():
     conv = db.create_conversation("x", "owner")
     db.log_message(role="assistant", content="Jupiter is best planet.", conversation_id=conv["id"])
     assert a._last_offer(db, conv["id"]) is None
+
+
+def test_code_ask_finds_the_code_a_plain_question_means(monkeypatch):
+    import improvements
+    monkeypatch.setattr(improvements, "TURN", type("T", (), {"get": staticmethod(lambda: {"user": improvements.OWNER})}))
+    monkeypatch.setattr(improvements, "REPO", Path(__file__).resolve().parent.parent)
+    names = lambda q: [c["name"] for c in improvements.code_ask({"question": q}).data["code"]]  # noqa: E731
+    assert any("Endpointer" in n or "end_silence" in n for n in names("how do you decide when I stopped talking?"))
+    assert any("barge" in n.lower() for n in names("how does barge-in work?"))

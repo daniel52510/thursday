@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import re
+import sys
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -302,6 +303,85 @@ async def run_notifier() -> None:
         await asyncio.sleep(10)
 
 
+_STOP = {"the", "and", "how", "does", "what", "where", "when", "why", "you", "your", "with", "for", "that", "this",
+         "work", "works", "code", "about", "from", "into", "can", "are", "is", "do", "decide", "handle", "handles", "tell",
+         "explain", "show", "file", "files", "function", "thursday", "it", "its", "of", "to", "in", "on", "a", "an", "me"}
+
+
+# How he says it -> the words the code uses (names and docstrings), so a plain question finds the code.
+_SAYS = [(r"stop(?:ped)?\s+talking|done\s+talking|finish(?:ed)?\s+speaking|end\s+of\s+(?:my\s+)?speech",
+          "endpoint silence vad end_silence smart"),
+         (r"interrupt|cut\s+(?:you|her|him)\s+off|talk\s+over", "barge"),
+         (r"wake\s*word|hey\s+thursday", "wake"),
+         (r"\bvoice\b|\bspeak|\bsay\b", "tts voice"),
+         (r"remember|memory|forget", "memory fact recall"),
+         (r"\bslow\b|\bfast\b|latency|lag", "timing latency"),
+         (r"listen", "listening vad"),
+         (r"who(?:'s|\s+is)\s+(?:talking|speaking)|recogni[sz]e\s+(?:me|my\s+voice)", "speaker identify voiceprint"),
+         (r"finish|is\s+done|complete", "finish announce report")]
+
+
+def _stem(w: str) -> str:
+    for end in ("ing", "es", "ed", "s"):
+        if w.endswith(end) and len(w) - len(end) >= 4:
+            return w[: -len(end)]
+    return w
+
+
+def _terms(text: str) -> set[str]:
+    text = text.lower()
+    extra = " ".join(add for pat, add in _SAYS if re.search(pat, text))
+    words = re.findall(r"[a-z][a-z0-9]+", f"{text} {extra}".replace("_", " "))
+    return {_stem(w) for w in words if len(w) > 2 and w not in _STOP}
+
+
+def code_ask(args: Dict[str, Any]) -> ToolResult:
+    """A question about how his own code works, answered from the code: the parts that match it (runner/codeindex.py:
+    names, docs, constants) with their source, plus the project brief's one-liners. Read-only, ~0.2 s, no extra model:
+    the chat model answers from what this returns."""
+    if (TURN.get() or {}).get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="code_ask", error="own_code_is_daniels_only")
+    question = " ".join(str(args.get("question") or "").split())[:300]
+    terms = _terms(question)
+    if not terms:
+        return ToolResult(ok=False, tool_name="code_ask", error="ask_what_part_of_the_code")
+    sys.path.insert(0, str(REPO / "runner"))
+    from codeindex import CodeIndex
+    idx = CodeIndex.build(REPO)
+    tests = "test" in terms
+
+    def score(sym) -> float:
+        if sym.path.startswith("tests/") and not tests:
+            return 0
+        name, doc = _terms(sym.name), _terms(sym.doc)
+        # A term counts in a name when it starts a word of it: "endpoint" finds Endpointer, "barge" _barge_in.
+        named = sum(1 for t in terms if any(w.startswith(t) for w in name))
+        return 3 * named + len(terms & doc) + (0.5 if sym.kind != "constant" else 0)
+
+    ranked = sorted((s for s in idx.symbols if score(s) >= 3), key=score, reverse=True)
+    code, used = [], 0
+    for sym in ranked[:3]:
+        lines = (REPO / sym.path).read_text(errors="replace").splitlines()[sym.line - 1:min(sym.end, sym.line + 39)]
+        snippet = "\n".join(lines)[:1600]
+        code.append({"at": f"{sym.path}:{sym.line}", "name": sym.name, "source": snippet})
+        used += len(snippet)
+    try:
+        cache = json.loads((OUT / "brief" / "cache.json").read_text())
+        files = sorted(((len(terms & _terms(v["summary"] + " " + k)), k, v["summary"]) for k, v in cache.get("files", {}).items()),
+                       reverse=True)
+        about = [f"{k}: {v}" for n, k, v in files if n and (tests or not k.startswith("tests/"))][:4]
+    except (OSError, ValueError):
+        about = []
+    if not code and not about:
+        return ToolResult(ok=True, tool_name="code_ask", data={"found": False, "note":
+            "Nothing in your code matches that. Say so in one line and ask which part he means."})
+    return ToolResult(ok=True, tool_name="code_ask", data={"found": True, "files": about, "code": code, "note":
+        "This is your own code. Explain how it works in your own voice from what's here only: 2-4 plain sentences, "
+        "the mechanism and the numbers that matter, naming a file or two in plain words (no backticks or code formatting, "
+        "no line numbers out loud). If it doesn't "
+        "answer the question, say what you can see and that you'd need to look further."})
+
+
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "improve_start",
@@ -537,6 +617,13 @@ async def start_self_review() -> None:
     await run_self_review()
 
 
+TOOL_SCHEMAS.append({"type": "function", "function": {
+    "name": "code_ask",
+    "description": "Look at your own code to answer how part of you works ('how does barge-in work?', 'where do you "
+    "decide when I've stopped talking?', 'what happens when a mission finishes?'). Read-only and instant.",
+    "parameters": {"type": "object", "properties": {
+        "question": {"type": "string", "description": "His question, with the part of the system it's about"}},
+        "required": ["question"]}}})
 TOOL_SCHEMAS.append({"type": "function", "function": {
     "name": "code_review_start",
     "description": "Read through your own code for bugs and report them (changes nothing): when he asks you to review, "
