@@ -320,7 +320,17 @@ async def run_notifier() -> None:
                 report = json.loads(path.read_text())
                 if report.get("notified"):
                     continue
-                if path.stat().st_mtime >= started and report.get("kind") == "review":
+                if path.stat().st_mtime >= started and report.get("kind") == "nightly":
+                    from agent_loop import initalize_db
+                    db = initalize_db()
+                    conv = db.create_conversation(f"Engineer pass · {datetime.now(ZoneInfo(REVIEW_TZ)):%b %-d}", OWNER)
+                    db.log_message(role="assistant", content=_nightly_write_up(report), conversation_id=conv["id"])
+                    if not report.get("passed"):  # quiet when all is well
+                        cause = (report.get("analysis") or {}).get("cause") or "see the chat"
+                        await asyncio.to_thread(approvals.push, "THURSDAY's checks are failing", cause[:400],
+                                                click=approvals.link(conv["id"]), tags=("warning",))
+                    logger.info("engineer pass %s: %s", report.get("job"), "pass" if report.get("passed") else "FAIL")
+                elif path.stat().st_mtime >= started and report.get("kind") == "review":
                     # A code review becomes a conversation to talk through, like a self-review.
                     from agent_loop import initalize_db
                     db = initalize_db()
@@ -554,6 +564,7 @@ TOOL_SCHEMAS = [
 # --- self-review ------------------------------------------------------------------------------
 
 REVIEW_HOUR = int(os.getenv("SELF_REVIEW_HOUR", "3"))
+ENGINEER_HOUR = int(os.getenv("ENGINEER_PASS_HOUR", "2"))  # the nightly engineer pass (runner kind "nightly")
 REVIEW_DAYS = 2
 REVIEW_TZ = os.getenv("SELF_REVIEW_TZ", "America/New_York")
 REVIEW_STATE = Path(os.getenv("THURSDAY_BRAIN_DIR", "/app/brain")) / "self_review.json"
@@ -744,10 +755,43 @@ async def run_self_review() -> None:
             ran_today = state.get("last_run", "")[:10] == now.astimezone(timezone.utc).isoformat()[:10]
             if asked or (now.hour == REVIEW_HOUR and not ran_today):
                 await self_review()
+            today = now.date().isoformat()
+            if now.hour == ENGINEER_HOUR and state.get("engineer_queued") != today:
+                _queue("nightly engineer pass", "nightly")
+                state = json.loads(REVIEW_STATE.read_text()) if REVIEW_STATE.exists() else {}
+                REVIEW_STATE.write_text(json.dumps(state | {"engineer_queued": today}))
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("self-review")
+
+
+def engineer_pass_now(args: Dict[str, Any]) -> ToolResult:
+    """The nightly engineer pass, now: checks on the latest code, and the likely cause if anything fails."""
+    if (TURN.get() or {}).get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="engineer_pass_now", error="self_improvement_is_daniels_only")
+    if any(json.loads(p.read_text()).get("kind") == "nightly" for p in (OUT / "queue").glob("*.json")):
+        return ToolResult(ok=True, tool_name="engineer_pass_now", data={"status": "ALREADY_QUEUED", "note": "Say it's already on the way."})
+    job = _queue("engineer pass (asked)", "nightly")
+    return ToolResult(ok=True, tool_name="engineer_pass_now", data={"job": job, "status": "STARTED", "note":
+        "Confirm in one short statement: you run your checks when the house is quiet, and the result lands in the "
+        "chat (his phone too if anything's broken)."})
+
+
+def _nightly_write_up(report: dict) -> str:
+    commits = report.get("commits") or []
+    parts = [("All checks pass" if report.get("passed") else "**Checks are failing.**") +
+             f" on {report.get('head')}, after {len(commits)} new commit(s)."]
+    if not report.get("passed"):
+        a = report.get("analysis") or {}
+        parts.append(f"- Cause: {a.get('cause') or 'unclear from the output'}\n- Likely commit: {a.get('commit') or 'unknown'}"
+                     f"\n- Fix: {a.get('fix') or 'look at the output below'}")
+        parts.append(f"```\n{(report.get('checks') or '')[-1200:]}\n```")
+    if report.get("listen"):
+        parts.append("Voice-timing code changed (" + ", ".join(report["listen"]) + "): worth a quick listen on the satellite.")
+    if commits:
+        parts.append("New commits:\n" + "\n".join(f"- {c}" for c in commits[:10]))
+    return "\n\n".join(parts)
 
 
 def self_review_now(args: Dict[str, Any]) -> ToolResult:
@@ -791,6 +835,11 @@ TOOL_SCHEMAS.append({"type": "function", "function": {
     "parameters": {"type": "object", "properties": {
         "focus": {"type": "string", "description": "What to look at, if he named it: 'the music code', 'alarms'"},
         "project": {"type": "string", "description": "One of his projects (project_list); leave out for your own code"}}}}})
+TOOL_SCHEMAS.append({"type": "function", "function": {
+    "name": "engineer_pass_now",
+    "description": "Run your nightly engineer check now: the full tests on your latest code, the commits since the "
+    "last check, and the likely cause if anything fails. For 'run your checks', 'are your tests passing?'.",
+    "parameters": {"type": "object", "properties": {}}}})
 TOOL_SCHEMAS.append({"type": "function", "function": {
     "name": "self_review_now",
     "description": "Review your recent conversations with him for where you fell short, and propose fixes to yourself "

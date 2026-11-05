@@ -587,6 +587,9 @@ def run(task: str, kind: str = "change") -> None:
         subprocess.run(["git", "clone", "-q", "--branch", BASE, SRC, str(WORK)], check=True)
     _git("checkout", "-q", "-b", BRANCH)
     base_sha = _git("rev-parse", "HEAD").strip()
+    if kind == "nightly":  # no prompt or brief needed: checks first, a model call only on failure
+        with httpx.Client(timeout=httpx.Timeout(600, connect=5)) as http:
+            return _nightly(http)
     review = kind == "review"
     schemas = REVIEW_SCHEMAS if review else SCHEMAS
     messages = [{"role": "system", "content": _review_system() if review else _system()},
@@ -859,6 +862,41 @@ def _edit_first(http: httpx.Client, task: str, steps: list) -> tuple[dict | None
                      {"role": "user", "content": back + "\n\nThe files are back as they were. Answer again with the "
                       "complete corrected sections (all of them, not just the fixes)."}]
     return None, work
+
+
+# --- the nightly engineer pass --------------------------------------------------------------------------
+# Every night (improvements queues it): the full checks on the latest code, the commits since the last pass,
+# and only when something fails, one model call naming the likely commit and a fix. He hears about it on his
+# phone only when something's wrong.
+NIGHTLY_STATE = Path(os.getenv("NIGHTLY_STATE", "/out/nightly/state.json"))  # a subfolder: runner-out/*.json are job reports
+LATENCY_FILES = re.compile(r"^(voice_ws\.py|vad\.py|rocky_voice\.py|eridian\.py|satellite/|stt_native\.py|voice_in\.py)")
+NIGHTLY = """You find why THURSDAY's checks fail. You get the failing output and the commits since they last passed.
+Reply JSON only: {"cause": "one or two sentences: what breaks and why", "commit": "the short sha most likely
+responsible, or null", "fix": "the smallest fix, concretely (file and what to change)"}. Only what the output and
+the diff support; say so if they don't show it."""
+
+
+def _nightly(http: httpx.Client) -> None:
+    head = _git("rev-parse", "--short", "HEAD").strip()
+    try:
+        last = json.loads(NIGHTLY_STATE.read_text()).get("last_sha")
+    except (OSError, ValueError):
+        last = None
+    known = last and subprocess.run(["git", "cat-file", "-e", f"{last}^{{commit}}"], cwd=WORK).returncode == 0
+    span = f"{last}..HEAD" if known else "HEAD~10..HEAD"
+    commits = [c for c in _git("log", "--format=%h %s", span, check=False).splitlines() if c]
+    changed = sorted({f for f in _git("diff", "--name-only", span, check=False).splitlines() if f})
+    checks = run_checks()
+    analysis = {}
+    if not checks["passed"]:
+        msg, _ = _chat(http, [{"role": "system", "content": NIGHTLY}, {"role": "user", "content":
+                       f"Failing checks:\n{checks['output'][-3000:]}\n\nCommits:\n" + "\n".join(commits[:30]) +
+                       f"\n\nDiff:\n{_git('diff', span, check=False)[:9000]}"}], [])
+        analysis = _json(msg.get("content"))
+    NIGHTLY_STATE.parent.mkdir(parents=True, exist_ok=True)
+    NIGHTLY_STATE.write_text(json.dumps({"last_sha": head, "at": time.time(), "passed": checks["passed"]}))
+    _report(status="nightly_ready", kind="nightly", head=head, passed=checks["passed"], checks=checks["output"][-1500:],
+            commits=commits[:30], listen=[f for f in changed if LATENCY_FILES.match(f)], analysis=analysis)
 
 
 def _quoted(f: dict) -> str | None:
