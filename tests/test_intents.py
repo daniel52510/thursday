@@ -144,3 +144,12 @@ def test_code_ask_finds_the_code_a_plain_question_means(monkeypatch):
 ])
 def test_questions_about_his_own_workings_go_to_code_ask(text, routed):
     assert (a._code_question_intent(text) is not None) == routed
+
+
+def test_engineer_pass_write_up_leads_with_the_failure():
+    import improvements
+    text = improvements._nightly_write_up({"passed": False, "head": "abc1234", "commits": ["abc1234 tweak vad"],
+                                           "checks": "FAILED tests/test_vad.py::test_endpoint", "listen": ["vad.py"],
+                                           "analysis": {"cause": "end_silence_ms became 0", "commit": "abc1234",
+                                                        "fix": "restore 600 in vad.py VADConfig"}})
+    assert text.startswith("**Checks are failing.**") and "abc1234" in text and "restore 600" in text and "vad.py" in text
