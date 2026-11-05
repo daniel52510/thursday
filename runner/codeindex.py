@@ -73,6 +73,26 @@ class _Walker(ast.NodeVisitor):
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
+    def visit_Assign(self, node):
+        # Module and class constants (regexes, schemas, tables): a task often means changing one, and
+        # without them a job paged through files to find _MUSIC_PLAY (benchmark t4, 2026-11-05).
+        parent = self.stack[-1] if self.stack else None
+        if parent is None or parent.kind == "class":
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    name = f"{parent.name}.{t.id}" if parent is not None else t.id
+                    value = ast.unparse(node.value).replace("\n", " ")
+                    self.symbols.append(Symbol(name, "constant", self.path, node.lineno, node.end_lineno or node.lineno,
+                                               f"{t.id} = {value[:80]}{'...' if len(value) > 80 else ''}", ""))
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node):
+        if node.value is not None:
+            self.visit_Assign(ast.Assign(targets=[node.target], value=node.value, lineno=node.lineno,
+                                         end_lineno=node.end_lineno))
+        else:
+            self.generic_visit(node)
+
     def visit_Call(self, node):
         if self.stack and (name := _called(node)):
             self.stack[-1].calls.append((name, node.lineno))

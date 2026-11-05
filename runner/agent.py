@@ -191,8 +191,8 @@ def _schema(name: str, desc: str, props: dict, required: list[str]) -> dict:
 
 _S = {"type": "string"}
 SCHEMAS = [
-    _schema("find_symbol", "Where a function, class or method is defined: file:lines, signature, what it does. "
-            "Faster than search for a name.", {"name": {"type": "string", "description": "e.g. warm_cache or Session._warm"}}, ["name"]),
+    _schema("find_symbol", "Where a function, class, method or constant (a regex, schema, table) is defined: file:lines, "
+            "signature or value, what it does. Faster than search for a name.", {"name": {"type": "string", "description": "e.g. warm_cache or Session._warm"}}, ["name"]),
     _schema("who_calls", "Every function that calls this name, with the line of each call: what a change would affect.",
             {"name": _S}, ["name"]),
     _schema("outline", "A file's classes and functions with their line ranges and one-line docs, without reading it all.",

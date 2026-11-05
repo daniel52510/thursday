@@ -52,3 +52,11 @@ def test_outline_nests_methods_and_skips_virtualenvs_and_bad_files(tmp_path):
         "def helper(x)", "class Box", "def grow(self)", "async def fetch(self)"]
     assert not idx.find("vendored")
     assert "broken.py" in idx.errors
+
+
+def test_constants_are_indexed(tmp_path):
+    (tmp_path / "m.py").write_text("import re\nPAT = re.compile(r'x+')\nSCHEMA = {\n    'a': 1,\n}\n\nclass C:\n    LIMIT = 3\n")
+    idx = CodeIndex.build(tmp_path)
+    assert idx.find("SCHEMA")[0]["at"] == "m.py:3-5"
+    assert idx.find("PAT")[0]["signature"].startswith("PAT = re.compile")
+    assert idx.find("C.LIMIT")[0]["kind"] == "constant"
