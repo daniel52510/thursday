@@ -522,6 +522,14 @@ def run(task: str, kind: str = "change") -> None:
                 {"role": "user", "content": f"{'Review' if review else 'Task'}: {task}"}]
     steps, started, nudges, work, rounds, critiqued, tested_back = [], time.monotonic(), 0, 0.0, 0, False, False
     with httpx.Client(timeout=httpx.Timeout(600, connect=5)) as http:
+        if EDIT_FIRST and not review:
+            meta, work = _edit_first(http, task, steps)
+            if meta is not None:
+                return _finish(task, {"title": meta["title"] or task[:58], "summary": meta["summary"] or task},
+                               steps, base_sha, started)
+            _reset_work()
+            messages.append({"role": "user", "content": "(A one-shot attempt didn't pass; the files are back as they "
+                             "were. Work through it with the tools.)"})
         while True:
             over = len(steps) >= MAX_STEPS or work > MAX_WORK_S
             if over and nudges >= 2:
@@ -592,6 +600,178 @@ def run(task: str, kind: str = "change") -> None:
                 messages.append({"role": "tool", "tool_name": name,
                                  "content": json.dumps(result, ensure_ascii=False)[:RESULT_CHARS]})
             _trim(messages)
+
+
+# --- edit-first: the runner gathers the code, the model writes the change in one reply --------------------
+# The tool loop's weak spot with gemma4:31b is many steps of tool juggling (benchmark t4: 26-35 steps, line edits,
+# double-escaped quotes, a junk file). Here the runner picks the definitions the task means and shows their exact
+# source; the model answers once with whole new definitions in fenced code blocks (nothing to escape); the runner
+# applies, checks and reviews them. What still fails falls back to the tool loop, so the pass rate can't drop.
+EDIT_FIRST = os.getenv("RUNNER_EDIT_FIRST", "1") != "0"
+EDIT_TRIES = 3
+CONTEXT_CHARS = 16000
+EDIT_SYSTEM = """You change THURSDAY's code. You get a task and the exact current source of the code it's about.
+Answer with the change only, in these sections (any number of each; nothing else outside them):
+
+### REPLACE <file>::<name>
+```python
+<the whole new definition of that function, method, class or constant, decorators included>
+```
+
+### ADD <file> AFTER <name>      (or: ### ADD <file> AT END)
+```python
+<a new definition to insert there>
+```
+
+### TEST <test file under tests/>
+```python
+<new test functions to append to that file, with any imports they need>
+```
+
+### TITLE <commit title, under 60 characters>
+### SUMMARY <2-4 sentences for Daniel: what changed, why, anything to test>
+
+Rules: the smallest change that does the task, matching the style around it; names exactly as shown
+(Class.method for methods); never add files the task doesn't need. A bug fix comes with a TEST that fails
+without the fix. Protected files (runner/, approvals.py, vault.py, docker-compose, Dockerfiles, .env, infra/,
+deploy scripts) can't be changed: if the task needs one, change nothing and say so in SUMMARY."""
+_SECTION = re.compile(r"^###\s+(REPLACE|ADD|TEST|TITLE|SUMMARY)\b[ \t]*(.*)$", re.M)
+_FENCE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.S)
+
+
+def _task_context(task: str) -> str:
+    """The definitions the task means (exact names first, then the best word matches), with their source,
+    and the outline of any file it names."""
+    from codeindex import CodeIndex
+    idx = CodeIndex.build(WORK)
+    words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", task))
+    files = sorted({w for w in words if w.endswith(".py") and (WORK / w).exists()})
+    terms = {w.lower() for w in re.findall(r"[a-z][a-z0-9]+", task.lower().replace("_", " ")) if len(w) > 3}
+
+    def score(sym) -> float:
+        if sym.name in words or sym.name.rsplit(".", 1)[-1] in words:
+            return 100.0
+        parts = set(re.findall(r"[a-z][a-z0-9]+", sym.name.lower().replace("_", " ")))
+        bonus = 2 if sym.path in files else 0
+        return 3 * len(terms & parts) + bonus if terms & parts else 0
+
+    ranked = sorted((x for x in idx.symbols if not x.path.startswith(("tests/", "runner/")) and score(x) > 0),
+                    key=score, reverse=True)
+    out, used = [], 0
+    for name in files:
+        outline = "\n".join(idx.outline(name)[:60])
+        out.append(f"Outline of {name}:\n{outline}")
+        used += len(outline)
+    for sym in ranked[:8]:
+        src = "\n".join((WORK / sym.path).read_text().splitlines()[sym.line - 1:sym.end][:150])
+        if used + len(src) > CONTEXT_CHARS:
+            break
+        out.append(f"{sym.path}::{sym.name} (lines {sym.line}-{sym.end}):\n```python\n{src}\n```")
+        used += len(src)
+    return "\n\n".join(out)
+
+
+def _apply_sections(reply: str) -> tuple[dict, list[str]]:
+    """Apply the model's sections; returns ({title, summary}, errors)."""
+    meta, errors = {"title": "", "summary": ""}, []
+    marks = list(_SECTION.finditer(reply))
+    for i, m in enumerate(marks):
+        kind, head = m.group(1), m.group(2).strip()
+        body = reply[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(reply)]
+        if kind in ("TITLE", "SUMMARY"):
+            meta[kind.lower()] = (head + " " + body.strip()).strip()[:600]
+            continue
+        code = _FENCE.search(body)
+        if not code:
+            errors.append(f"{kind} {head}: no ```python block")
+            continue
+        code = code.group(1).rstrip() + "\n"
+        try:
+            if kind == "REPLACE":
+                path, _, name = head.partition("::")
+                res = replace_symbol({"name": name.strip(), "path": path.strip(), "new": code})
+                if not res.get("ok"):
+                    errors.append(f"REPLACE {head}: {res.get('error')}")
+            elif kind == "ADD":
+                at = re.match(r"(\S+)\s+(?:AFTER\s+(\S+)|AT\s+END)", head)
+                if not at:
+                    errors.append(f"ADD {head}: write '<file> AFTER <name>' or '<file> AT END'")
+                    continue
+                p = _writable(at.group(1))
+                text = p.read_text() if p.exists() else ""
+                if at.group(2):
+                    span = _node_span(ast.parse(text), at.group(2))
+                    if span is None:
+                        errors.append(f"ADD {head}: no {at.group(2)} in {at.group(1)}")
+                        continue
+                    lines = text.splitlines(keepends=True)
+                    block = "\n".join((" " * span[2] + ln) if ln.strip() else "" for ln in textwrap.dedent(code).splitlines())
+                    out = "".join(lines[:span[1]]) + "\n\n" + block + "\n" + "".join(lines[span[1]:])
+                else:
+                    out = text.rstrip("\n") + "\n\n\n" + code
+                ast.parse(out)
+                p.write_text(out)
+            elif kind == "TEST":
+                p = _writable(head)
+                if not _rel(p).startswith("tests/"):
+                    errors.append(f"TEST {head}: tests go under tests/")
+                    continue
+                text = p.read_text() if p.exists() else ""
+                out = (text.rstrip("\n") + "\n\n\n" if text else "") + code
+                ast.parse(out)
+                p.write_text(out)
+        except (SyntaxError, PermissionError, OSError, ValueError) as exc:
+            errors.append(f"{kind} {head}: {type(exc).__name__}: {exc}"[:300])
+    if not marks:
+        errors.append("no sections: answer with ### REPLACE / ADD / TEST / TITLE / SUMMARY")
+    return meta, errors
+
+
+def _reset_work() -> None:
+    _git("checkout", "-q", "--", ".")
+    _git("clean", "-qfd")
+
+
+def _edit_first(http: httpx.Client, task: str, steps: list) -> tuple[dict | None, float]:
+    """Up to EDIT_TRIES single-reply attempts; ({title, summary}, work seconds) when one passes every gate."""
+    context, work = _task_context(task), 0.0
+    messages = [{"role": "system", "content": EDIT_SYSTEM},
+                {"role": "user", "content": f"Task: {task}\n\nThe code it's about:\n\n{context}"}]
+    critiqued = False
+    for attempt in range(1, EDIT_TRIES + 1):
+        msg, secs = _chat(http, messages, [])
+        work += secs
+        reply = msg.get("content") or ""
+        meta, errors = _apply_sections(reply)
+        changed = [line[3:] for line in _git("status", "--porcelain").splitlines()]
+        back = None
+        if errors:
+            back = "These didn't apply:\n- " + "\n- ".join(errors[:6])
+        elif not changed:
+            back = "Nothing changed: give the REPLACE/ADD sections that do the task."
+        else:
+            checks = run_checks()
+            if not checks["passed"]:
+                back = f"Checks failed:\n{checks['output'][-1500:]}"
+            elif BUG_TASK.search(task) and not any(c.startswith("tests/") for c in changed):
+                back = "This is a bug fix: add a TEST section that fails without the fix."
+            elif not critiqued:
+                critiqued = True
+                verdict, secs = _chat(http, [{"role": "system", "content": CRITIC}, {"role": "user", "content":
+                                      f"Task: {task}\n\nDiff:\n{_git('diff')[:8000]}"}], [])
+                work += secs
+                v = _json(verdict.get("content"))
+                if v.get("ok") is False and v.get("problems"):
+                    back = "A review of your diff found:\n- " + "\n- ".join(map(str, v["problems"][:5]))
+        steps.append({"tool": "edit_first", "args": {"attempt": attempt, "back": (back or "passed")[:120]}, "ok": back is None})
+        print(f"edit-first {attempt}: {(back or 'passed').splitlines()[0][:120]}", flush=True)
+        if back is None:
+            return meta, work
+        _reset_work()
+        messages += [{"role": "assistant", "content": reply},
+                     {"role": "user", "content": back + "\n\nThe files are back as they were. Answer again with the "
+                      "complete corrected sections (all of them, not just the fixes)."}]
+    return None, work
 
 
 def _quoted(f: dict) -> str | None:

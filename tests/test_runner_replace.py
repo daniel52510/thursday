@@ -32,3 +32,14 @@ def test_ambiguous_name_lists_matches_and_changes_nothing(work):
 def test_code_that_would_not_parse_is_not_applied(work):
     assert not agent.replace_symbol({"name": "A.go", "new": "def go(self) return"})["ok"]
     assert (work / "m.py").read_text() == SRC
+
+
+def test_edit_first_sections_apply_and_bad_names_are_reported(work):
+    reply = ("### REPLACE m.py::A.go\n```python\ndef go(self):\n    return 5\n```\n"
+             "### ADD m.py AT END\n```python\ndef extra():\n    return 1\n```\n"
+             "### REPLACE m.py::missing\n```python\ndef missing(): pass\n```\n"
+             "### TITLE t\n### SUMMARY s\n")
+    meta, errors = agent._apply_sections(reply)
+    text = (work / "m.py").read_text()
+    assert "    def go(self):\n        return 5" in text and text.endswith("def extra():\n    return 1\n")
+    assert meta["title"] == "t" and len(errors) == 1 and "missing" in errors[0]
