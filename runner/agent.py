@@ -356,7 +356,7 @@ def _flag(name: str, on: bool = True) -> None:
 
 # Memory: on 2026-11-05 the 31b (~30 GB) loaded next to the 26b chat model pushed the Mac's swap to 99%,
 # Ollama hung for everyone (THURSDAY's voice too) and a job waited 47 min on a dead call. Now a call
-# waits until the Mac has room for the 31b (scripts/host_mem.sh writes /out/host-mem.json; swap "used"
+# waits until the Mac has room for the 31b (scripts/host_mem.sh writes /hostmem/host-mem.json; swap "used"
 # is ignored: macOS keeps it allocated long after), and no call may run longer than CALL_LIMIT_S.
 NEED_GB = float(os.getenv("RUNNER_NEED_GB", "34"))   # the 31b at 16k context (~30 GB) plus headroom
 CALL_LIMIT_S = 300
@@ -380,7 +380,7 @@ def _wait_for_memory() -> None:
     said = False
     while not _model_loaded():
         try:
-            mem = json.loads((FLAGS / "host-mem.json").read_text())
+            mem = json.loads(Path("/hostmem/host-mem.json").read_text())
         except (OSError, ValueError):
             return  # no helper running: the call limit still protects us
         if time.time() - mem.get("at", 0) > 60:

@@ -107,6 +107,7 @@ services:
     volumes:
       - ./.git:/repo.git:ro
       - ./runner-out:/out
+      - "${HOME}/Library/Application Support/thursday:/hostmem:ro"  # host_mem.sh: the Mac's memory
     cpus: 2
     mem_limit: 2g
     security_opt:

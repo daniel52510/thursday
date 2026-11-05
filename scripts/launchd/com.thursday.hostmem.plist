@@ -4,7 +4,7 @@
 <dict>
   <key>Label</key><string>com.thursday.hostmem</string>
   <!-- The Mac's memory for the runner (scripts/host_mem.sh), every 15 s. -->
-  <key>ProgramArguments</key><array><string>/bin/bash</string><string>/Users/danielblazquez/Documents/GitHub Projects/thursday/scripts/host_mem.sh</string></array>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>/Users/danielblazquez/Library/Application Support/thursday/host_mem.sh</string></array>
   <key>StartInterval</key><integer>15</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardErrorPath</key><string>/Users/danielblazquez/Library/Logs/thursday/hostmem.log</string>
