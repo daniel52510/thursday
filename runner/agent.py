@@ -179,7 +179,7 @@ def outline(args: dict) -> dict:
     return {"outline": _index().outline(rel)[:150]}
 
 
-TOOLS = {"find_symbol": find_symbol, "who_calls": who_calls, "outline": outline, "list_files": list_files, "read_file": read_file, "search": search, "edit_file": edit_file,
+TOOLS = {"project_map": lambda a: project_map(a), "find_symbol": find_symbol, "who_calls": who_calls, "outline": outline, "list_files": list_files, "read_file": read_file, "search": search, "edit_file": edit_file,
          "edit_lines": edit_lines, "show_diff": show_diff, "undo_file": undo_file, "run_tests": run_tests,
          "create_file": create_file, "run_checks": run_checks}
 
@@ -191,6 +191,8 @@ def _schema(name: str, desc: str, props: dict, required: list[str]) -> dict:
 
 _S = {"type": "string"}
 SCHEMAS = [
+    _schema("project_map", "Every file with one line on what it does (optionally only lines containing match): "
+            "where to look first.", {"match": _S}, []),
     _schema("find_symbol", "Where a function, class, method or constant (a regex, schema, table) is defined: file:lines, "
             "signature or value, what it does. Faster than search for a name.", {"name": {"type": "string", "description": "e.g. warm_cache or Session._warm"}}, ["name"]),
     _schema("who_calls", "Every function that calls this name, with the line of each call: what a change would affect.",
@@ -219,7 +221,7 @@ SCHEMAS = [
 
 
 # Review mode (improvements.code_review_start): read the code, change nothing, report findings.
-READ_ONLY = ("find_symbol", "who_calls", "outline", "list_files", "read_file", "search")
+READ_ONLY = ("project_map", "find_symbol", "who_calls", "outline", "list_files", "read_file", "search")
 # A task in these words is a bug fix: it must come with a test (in code, not just the prompt: the
 # benchmark's t5 fix came back without one, 2026-11-01).
 BUG_TASK = re.compile(r"\b(?:bug|fix|broken|breaks?|wrong|crash(?:es)?|error|fails?|instead|doesn'?t|isn'?t|won'?t)\b", re.I)
@@ -233,14 +235,29 @@ Drop anything that depends on a guess about what a library returns, or that the 
 Reply JSON only: {"keep": [indexes of the findings that are real]}."""
 
 
+_FILE_MAP = ""  # the brief's one line per file, served by project_map
+
+
 def _brief() -> str:
-    """The project brief (brief.py), refreshed for this checkout; the plain code map if that fails."""
+    """The project brief (brief.py) for this checkout: its verified facts and overview go in the prompt,
+    the one-line-per-file map stays behind project_map. All of it in every step (~3k tokens) made jobs
+    slower: t2 12 -> 19 steps, t4 21 -> 26 (benchmark, 2026-11-05). The plain code map if it fails."""
+    global _FILE_MAP
     try:
         from brief import refresh
-        return refresh(WORK, log=lambda m: print(m, flush=True))
+        text = refresh(WORK, log=lambda m: print(m, flush=True))
+        head, _, _FILE_MAP = text.partition("\n\nThe files:\n")
+        return head + "\n\n(project_map lists every file with one line on what it does.)"
     except Exception as exc:  # Ollama busy or down: a job still runs on the plain map
         print(f"brief unavailable ({type(exc).__name__}): using the code map", flush=True)
-        return "The code (file: what it does):\n" + _code_map()
+        _FILE_MAP = _code_map()
+        return "The code (file: what it does):\n" + _FILE_MAP
+
+
+def project_map(args: dict) -> dict:
+    match = str(args.get("match") or "").lower()
+    rows = [r for r in _FILE_MAP.splitlines() if match in r.lower()]
+    return {"files": rows[:80]}
 
 
 def _code_map() -> str:

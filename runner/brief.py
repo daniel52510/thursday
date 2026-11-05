@@ -24,7 +24,9 @@ from codeindex import CodeIndex
 
 MODEL = os.getenv("RUNNER_MODEL", "gemma4:31b")
 CHAT_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434").rstrip("/") + "/api/chat"
-CACHE = Path(os.getenv("RUNNER_OUT", "/out")) / "brief" / "cache.json"
+# Always the shared /out, never RUNNER_OUT: the benchmark points that at runner-out/bench, and its first
+# job rebuilt the whole brief (~12 min) inside the job (t2, 2026-11-05).
+CACHE = Path(os.getenv("BRIEF_CACHE", "/out/brief/cache.json"))
 FILE_CHARS = 9000      # of a file's source, after its outline: enough to see what it really does
 ROLLUP_WORDS = 300
 
