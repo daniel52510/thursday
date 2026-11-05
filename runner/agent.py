@@ -221,7 +221,8 @@ def run_checks(_: dict | None = None) -> dict:
         files = [f for f in _git("ls-files", "*.py").splitlines() if f]
         bad = []
         for rel in files:
-            res = subprocess.run([sys.executable, "-m", "py_compile", rel], cwd=WORK, capture_output=True, text=True)
+            res = subprocess.run([sys.executable, "-m", "py_compile", rel], cwd=WORK, capture_output=True, text=True,
+                                 env={**os.environ, "PYTHONPYCACHEPREFIX": "/tmp/pycache"})  # no __pycache__ in his repo
             if res.returncode:
                 bad.append((res.stderr or res.stdout).strip()[-400:])
         out = f"compiled {len(files) - len(bad)}/{len(files)} Python files (the project's own tests aren't run here)"
