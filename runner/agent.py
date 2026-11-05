@@ -420,7 +420,10 @@ def _flag(name: str, on: bool = True) -> None:
 # Ollama hung for everyone (THURSDAY's voice too) and a job waited 47 min on a dead call. Now a call
 # waits until the Mac has room for the 31b (scripts/host_mem.sh writes /hostmem/host-mem.json; swap "used"
 # is ignored: macOS keeps it allocated long after), and no call may run longer than CALL_LIMIT_S.
-NEED_GB = float(os.getenv("RUNNER_NEED_GB", "34"))   # the 31b at 16k context (~30 GB) plus headroom
+# The 26b chat model stays loaded on purpose (OLLAMA_KEEP_ALIVE=-1: voice never waits for a cold load), so
+# 34 GB free never came and a job waited forever. The 31b ran fine today with 22-26 GB available; the hang came
+# with memory pressure up. So: 20 GB available AND normal kernel pressure, plus the call limit as the backstop.
+NEED_GB = float(os.getenv("RUNNER_NEED_GB", "20"))
 CALL_LIMIT_S = 300
 CALL_TRIES = 3
 
