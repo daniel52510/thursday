@@ -139,6 +139,10 @@ class CodeIndex:
                     continue
                 tree = ast.parse(p.read_text(errors="replace"), filename=str(rel))
                 w = _Walker(str(rel))
+                if doc := ast.get_docstring(tree):  # the module's own description: what the file is for
+                    first = tree.body[0]
+                    w.symbols.append(Symbol(rel.stem, "module", str(rel), 1, first.end_lineno or 1, f"module {rel}",
+                                            doc.strip().splitlines()[0][:160]))
                 w.visit(tree)
             except (SyntaxError, ValueError, OSError, RecursionError) as exc:  # Recursion: huge generated literals
                 idx.errors[str(rel)] = f"{type(exc).__name__}: {str(exc)[:150]}"
@@ -169,7 +173,7 @@ class CodeIndex:
         """The file's definitions in order, indented by nesting: "  12-40 def foo(x) - what it does"."""
         rows = []
         for s in self.symbols:
-            if s.path == path:
+            if s.path == path and s.kind != "module":
                 depth = s.name.count(".")
                 rows.append(f"{'  ' * depth}{s.line}-{s.end} {s.signature}" + (f"  # {s.doc}" if s.doc else ""))
         return rows

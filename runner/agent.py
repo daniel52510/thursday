@@ -43,6 +43,9 @@ RESULT_CHARS = 6000
 WORK, SRC = Path("/work"), "/repo.git"
 PROJECTS = Path("/projects")  # his GitHub Projects folder, read-only: other projects are reviewed, never changed
 PROJECT: str | None = None    # this job's other project, or None for THURSDAY's own code
+BASE_DEFAULT = BASE           # THURSDAY's branch; a project job uses the project's current branch instead
+# In his other projects: secrets and git internals are never touched (THURSDAY's own list is PROTECTED).
+PROJECT_PROTECTED = re.compile(r"(^|/)(\.env[^/]*|\.git(/|$)|[^/]*secret[^/]*|[^/]*\.(pem|key|p12)$|id_rsa[^/]*)", re.I)
 FLAGS = Path("/out")                             # activity, busy flags, the queue: shared with core
 OUT = Path(os.getenv("RUNNER_OUT", "/out"))      # reports and bundles (the benchmark keeps its own)
 BRANCH = f"thursday/improve-{JOB}"
@@ -99,7 +102,7 @@ def search(args: dict) -> dict:
 
 def _writable(rel: str) -> Path:
     p = _path(rel)
-    if PROTECTED.match(_rel(p)):
+    if (PROJECT_PROTECTED.search(_rel(p)) if PROJECT else PROTECTED.match(_rel(p))):
         raise PermissionError(f"protected: {_rel(p)} can't be changed by a job; say so in finish instead")
     return p
 
@@ -214,6 +217,15 @@ def create_file(args: dict) -> dict:
 
 
 def run_checks(_: dict | None = None) -> dict:
+    if PROJECT:  # his other project: every tracked Python file compiles. Its own tests need its own dependencies.
+        files = [f for f in _git("ls-files", "*.py").splitlines() if f]
+        bad = []
+        for rel in files:
+            res = subprocess.run([sys.executable, "-m", "py_compile", rel], cwd=WORK, capture_output=True, text=True)
+            if res.returncode:
+                bad.append((res.stderr or res.stdout).strip()[-400:])
+        out = f"compiled {len(files) - len(bad)}/{len(files)} Python files (the project's own tests aren't run here)"
+        return {"passed": not bad, "output": out + ("\n" + "\n".join(bad) if bad else "")}
     res = subprocess.run([sys.executable, "/runner/checks.py", str(WORK)], capture_output=True, text=True, timeout=300)
     return {"passed": res.returncode == 0, "output": (res.stdout + res.stderr)[-3000:]}
 
@@ -290,8 +302,9 @@ READ_ONLY = ("project_map", "find_symbol", "who_calls", "outline", "list_files",
 BUG_TASK = re.compile(r"\b(?:bug|fix|broken|breaks?|wrong|crash(?:es)?|error|fails?|instead|doesn'?t|isn'?t|won'?t)\b", re.I)
 CRITIC = """You review one change to THURSDAY's code before it's committed. You see the task and the diff only.
 Reply JSON only: {"ok": true} if the diff does exactly what the task asks, no more; or {"ok": false, "problems": ["..."]}
-listing what's wrong: the task not (fully) done, a behavior it breaks, changes the task didn't ask for, a style that
-doesn't match the code around it, a bug fix without a test that would have caught it. Be strict but concrete."""
+listing what's wrong: the task not (fully) done, a behavior it breaks, a bug it adds, changes the task didn't ask for,
+a bug fix without a test that would have caught it. Only real problems: not where a line sits, naming, or how you'd
+have written it. A correct, minimal change that does the task is ok. Be concrete."""
 VERIFY = """You check findings from a code review against the code they quote. For each finding, decide whether the
 problem is real given that code: the code must actually do what the finding says goes wrong, for a concrete input.
 Drop anything that depends on a guess about what a library returns, or that the code already handles.
@@ -390,7 +403,27 @@ The project's guide (CLAUDE.md):
 {guide}"""
 
 
+def _project_system() -> str:
+    guide = next(((WORK / n).read_text()[:5000] for n in ("CLAUDE.md", "README.md") if (WORK / n).exists()), "")
+    return f"""You are THURSDAY's engineer, changing Daniel's {PROJECT} project (in his GitHub Projects folder) in a
+sandbox. He reviews every change before it's merged into his project; nothing you do here touches it until then.
+
+How to work:
+- Start with a short plan (2-4 lines), then use the tools. Find the code first (list_files, search, outline), read
+  before you edit, make the smallest change that does the task, and match the style of the code around it.
+- Secrets (.env files, keys) and .git can't be changed. If the task needs them, say so in finish.
+- run_checks only compiles Python; the project's own tests can't run here, so say in finish what he should test.
+- You have {MAX_STEPS} tool calls and about {MAX_WORK_S // 60} minutes.
+
+{_other_map()}
+
+The project's guide:
+{guide}"""
+
+
 def _system() -> str:
+    if PROJECT:
+        return _project_system()
     guide = (WORK / "CLAUDE.md").read_text()[:5000] if (WORK / "CLAUDE.md").exists() else ""
     return f"""You are THURSDAY's engineer, improving THURSDAY's own code in a sandbox. Daniel reviews every change before it goes anywhere; nothing you do here is live.
 
@@ -528,18 +561,23 @@ def _chat_once(http: httpx.Client, messages: list[dict], tools: list[dict]) -> t
 
 def _report(**fields) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / f"{JOB}.json").write_text(json.dumps({"job": JOB, "branch": BRANCH, "base": BASE, "model": MODEL, **fields},
+    (OUT / f"{JOB}.json").write_text(json.dumps({"job": JOB, "branch": BRANCH, "base": BASE, "model": MODEL,
+                                                 "project": PROJECT or "thursday", **fields},
                                                 indent=1))
     print(json.dumps(fields.get("status")), fields.get("summary", ""), sep="\n")
 
 
 def run(task: str, kind: str = "change") -> None:
-    if PROJECT:  # another project: a read-only review of a copy, never a change
-        if kind != "review":
-            return _report(status="failed", error="other projects are review-only", task=task, project=PROJECT)
+    global BASE
+    BASE = BASE_DEFAULT
+    if PROJECT:  # another project: work on a copy; a change comes back as a bundle he approves into the project
         src = PROJECTS / PROJECT
+        if kind != "review" and not (src / ".git").exists():
+            return _report(status="failed", error="changes need a git repo (approving merges a branch)", task=task,
+                           project=PROJECT)
         if (src / ".git").exists():
             subprocess.run(["git", "clone", "-q", str(src), str(WORK)], check=True)
+            BASE = _git("rev-parse", "--abbrev-ref", "HEAD").strip()  # his project's current branch
         else:
             shutil.copytree(src, WORK, ignore=shutil.ignore_patterns(".venv", "node_modules", "__pycache__", ".env*"))
             for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.email=r@t", "-c", "user.name=r", "commit", "-qm", "snapshot"]):
@@ -616,7 +654,7 @@ def run(task: str, kind: str = "change") -> None:
                     findings = [f for f in (args.get("findings") or []) if isinstance(f, dict) and f.get("problem")][:6]
                     findings, secs = _verify_findings(http, findings)
                     work += secs
-                    return _report(status="review_ready", kind="review", task=task, project=PROJECT or "thursday",
+                    return _report(status="review_ready", kind="review", task=task,
                                    summary=str(args.get("summary") or ""),
                                    findings=findings, steps=steps, minutes=round((time.monotonic() - started) / 60, 1))
                 if review and name not in READ_ONLY:
@@ -780,7 +818,10 @@ def _reset_work() -> None:
 def _edit_first(http: httpx.Client, task: str, steps: list) -> tuple[dict | None, float]:
     """Up to EDIT_TRIES single-reply attempts; ({title, summary}, work seconds) when one passes every gate."""
     context, work = _task_context(task), 0.0
-    messages = [{"role": "system", "content": EDIT_SYSTEM},
+    system = EDIT_SYSTEM if not PROJECT else EDIT_SYSTEM.replace("You change THURSDAY's code.", f"You change Daniel's {PROJECT} project.").replace(
+        "Protected files (runner/, approvals.py, vault.py, docker-compose, Dockerfiles, .env, infra/,\ndeploy scripts) can't be changed",
+        "Secrets (.env files, keys) and .git can't be changed")
+    messages = [{"role": "system", "content": system},
                 {"role": "user", "content": f"Task: {task}\n\nThe code it's about:\n\n{context}"}]
     critiqued = 0  # the critic sees every attempt after it sends one back (t3's second try went unchecked)
     for attempt in range(1, EDIT_TRIES + 1):

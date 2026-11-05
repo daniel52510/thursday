@@ -2374,13 +2374,16 @@ function renderChanges() {
   for (const j of jobs) {
     const waiting = j.status === "ready" && !j.decision;
     const files = (j.files || []).join(", ");
+    const other = j.project && j.project !== "thursday";  // a change to one of his projects, not THURSDAY's code
     const card = el("div", { className: "ag-decision", role: "group", ariaLabel: "Change to review" },
-      el("div", { className: "eyebrow" }, el("span", { textContent: waiting ? "Change for your review" : j.decision === "approved" ? "Merged" : "Declined" }),
+      el("div", { className: "eyebrow" }, el("span", { textContent: (waiting ? "Change for your review" : j.decision === "approved" ? "Merged" : "Declined") + (other ? ` · ${j.project}` : "") }),
         el("span", { textContent: j.job })),
       el("p", { className: "q", textContent: j.title || j.task }),
       el("p", { className: "why", textContent: j.summary || "" }),
       el("p", { className: "lock", textContent: `${files}${j.model ? ` · ${j.model}` : ""}${j.minutes != null ? ` · ${j.minutes} min` : ""}` }));
-    if (j.decision === "approved") {
+    if (j.decision === "approved" && other) {
+      card.append(el("p", { className: "cmd", textContent: `Merged into ${j.project} as ${j.merged}. Run its tests, then git push when you're happy.` }));
+    } else if (j.decision === "approved") {
       const dep = AG.deploy && AG.deploy.job === j.job ? AG.deploy : null;
       const running = dep && ["requested", "testing", "building"].includes(dep.state);
       card.append(el("p", { className: "cmd", textContent: dep ? `Deploy: ${dep.state} · ${dep.detail}`

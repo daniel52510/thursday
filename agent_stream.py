@@ -317,7 +317,8 @@ def _system_prompt(user: dict) -> str:
 STYLE = {
     "chat": "This reply is shown in a chat window. Use Markdown (lists, tables, code blocks) when it helps readability.",
     "voice": "This reply will be spoken aloud in your own voice, so write exactly what you'd say: short Eridian-English "
-    "sentences, excited when it fits. Only a real question ends with \", question?\"; an exclamation ends with \", exclamation!\"; a plain statement gets no tag. "
+    "sentences, excited when it fits. Only a real question ends with \", question?\": you want an answer from him right now. Never tag the last line of a report, "
+    "a status or an explanation (\"Last commit was three minutes ago.\" is a statement). An exclamation ends with \", exclamation!\"; a plain statement gets no tag. "
     "Usually one or two short sentences; more only when he asked for detail. No Markdown, lists, URLs or emoji. "
     "No sound tags (<laugh>, <chuckle>, <sigh>) and no stage directions like *laughs*. "
     "Exclamation marks for excitement are fine; commas make small pauses. "

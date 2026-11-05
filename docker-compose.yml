@@ -37,9 +37,10 @@ services:
       # The approval gate (improvements.py): reads runner-out/ and, on his Approve, merges the
       # reviewed branch into this checkout. It refuses when the checkout has uncommitted work.
       - .:/repo
-      # His GitHub Projects folder (this repo's parent), read-only: code_ask / code_review_start with a project,
-      # project_list. Other projects are only ever read; reviews copy them into the runner's sandbox.
-      - ..:/projects:ro
+      # His GitHub Projects folder (this repo's parent): code_ask / code_review_start / improve_start with a project,
+      # project_list. Writable only for the approval gate (improvements.approve merges a reviewed branch on his
+      # click); everything else here only reads it. The runner's own mount stays read-only.
+      - ..:/projects
       - "${HOME}/Library/Application Support/thursday:/hostmem:ro"  # host_mem.sh: the Mac's memory (system_status)
     ports:
       - "8000:8000"

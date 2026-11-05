@@ -72,8 +72,24 @@ class GateError(Exception):
     """Why a decision couldn't be carried out, in words for the page."""
 
 
-def _git(*args: str, check: bool = True) -> str:
-    res = subprocess.run(["git", *GIT_ID, *args], cwd=REPO, capture_output=True, text=True, timeout=60)
+# His other projects: secrets and git internals are never merged (THURSDAY's own list is PROTECTED).
+PROJECT_PROTECTED = re.compile(r"(^|/)(\.env[^/]*|\.git(/|$)|[^/]*secret[^/]*|[^/]*\.(pem|key|p12)$|id_rsa[^/]*)", re.I)
+
+
+def _repo_of(report: dict) -> Path:
+    """Where a job's change goes: THURSDAY's checkout, or his project (GitHub Projects, writable only for this)."""
+    root, name = _project_root(report.get("project"))
+    if root is None or not (root / ".git").exists():
+        raise GateError(f"the project {name} isn't a git repo in GitHub Projects any more")
+    return root
+
+
+def _protected(report: dict, path: str) -> bool:
+    return bool(PROTECTED.match(path)) if report.get("project", "thursday") == "thursday" else bool(PROJECT_PROTECTED.search(path))
+
+
+def _git(*args: str, check: bool = True, cwd: Path | None = None) -> str:
+    res = subprocess.run(["git", *GIT_ID, *args], cwd=cwd or REPO, capture_output=True, text=True, timeout=60)
     if check and res.returncode:
         raise GateError((res.stderr or res.stdout).strip()[:400] or f"git {args[0]} failed")
     return res.stdout
@@ -90,12 +106,12 @@ def _save(job: str, report: dict) -> None:
 
 
 def _branch(job: str, report: dict) -> str:
-    """The job's branch, fetched from its bundle if it isn't in the repo yet."""
-    branch = report["branch"]
-    if not _git("branch", "--list", branch).strip():
+    """The job's branch, fetched from its bundle into its repo (THURSDAY's or the project's) if it isn't there yet."""
+    branch, repo = report["branch"], _repo_of(report)
+    if not _git("branch", "--list", branch, cwd=repo).strip():
         if not (OUT / f"{job}.bundle").exists():
             raise GateError("the job's bundle is missing")
-        _git("fetch", "-q", str(OUT / f"{job}.bundle"), f"{branch}:{branch}")
+        _git("fetch", "-q", str(OUT / f"{job}.bundle"), f"{branch}:{branch}", cwd=repo)
     return branch
 
 
@@ -109,7 +125,7 @@ def jobs(limit: int = 20) -> list[dict]:
             r = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        out.append({k: r.get(k) for k in ("job", "status", "decision", "title", "summary", "task", "files", "base",
+        out.append({k: r.get(k) for k in ("job", "status", "decision", "title", "summary", "task", "files", "base", "project",
                                            "branch", "model", "minutes", "decided_at", "merged", "error")})
     return out
 
@@ -119,31 +135,32 @@ def review(job: str) -> dict:
     report = _report(job)
     if report.get("status") != "ready":
         return {"job": job, "status": report.get("status"), "diff": report.get("diff") or "", "files": report.get("files")}
-    branch = _branch(job, report)
-    files = _git("diff", "--name-only", f"{report['base']}...{branch}").split()
-    return {"job": job, "status": "ready", "files": files, "protected": [f for f in files if PROTECTED.match(f)],
-            "stat": _git("diff", "--stat", f"{report['base']}...{branch}").strip(),
-            "diff": _git("diff", f"{report['base']}...{branch}")[:200_000]}
+    branch, repo = _branch(job, report), _repo_of(report)
+    files = _git("diff", "--name-only", f"{report['base']}...{branch}", cwd=repo).split()
+    return {"job": job, "status": "ready", "project": report.get("project", "thursday"), "files": files,
+            "protected": [f for f in files if _protected(report, f)],
+            "stat": _git("diff", "--stat", f"{report['base']}...{branch}", cwd=repo).strip(),
+            "diff": _git("diff", f"{report['base']}...{branch}", cwd=repo)[:200_000]}
 
 
 def approve(job: str) -> dict:
     report = _report(job)
     if report.get("status") != "ready" or report.get("decision"):
         raise GateError("this job isn't waiting for a decision")
-    branch = _branch(job, report)
-    if (head := _git("rev-parse", "--abbrev-ref", "HEAD").strip()) != report["base"]:
+    branch, repo = _branch(job, report), _repo_of(report)
+    if (head := _git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo).strip()) != report["base"]:
         raise GateError(f"your checkout is on {head}, not {report['base']}: switch back, then approve")
-    if _git("status", "--porcelain", "--untracked-files=no").strip():
+    if _git("status", "--porcelain", "--untracked-files=no", cwd=repo).strip():
         raise GateError("you have uncommitted changes: commit or stash them first, so the merge can't mix with them")
-    if bad := [f for f in _git("diff", "--name-only", f"{report['base']}...{branch}").split() if PROTECTED.match(f)]:
+    if bad := [f for f in _git("diff", "--name-only", f"{report['base']}...{branch}", cwd=repo).split() if _protected(report, f)]:
         raise GateError(f"it changes protected files ({', '.join(bad)}): decline it")
-    res = subprocess.run(["git", *GIT_ID, "merge", "--no-edit", branch], cwd=REPO, capture_output=True, text=True,
+    res = subprocess.run(["git", *GIT_ID, "merge", "--no-edit", branch], cwd=repo, capture_output=True, text=True,
                          timeout=60)
     if res.returncode:
-        _git("merge", "--abort", check=False)
+        _git("merge", "--abort", check=False, cwd=repo)
         raise GateError("it doesn't merge cleanly with your current code (conflict): decline it and run the job again")
     report.update(decision="approved", decided_at=datetime.now(timezone.utc).isoformat(),
-                  merged=_git("rev-parse", "--short", "HEAD").strip())
+                  merged=_git("rev-parse", "--short", "HEAD", cwd=repo).strip())
     _save(job, report)
     return report
 
@@ -154,6 +171,8 @@ def deploy_request(job: str) -> dict:
     report = _report(job)
     if report.get("decision") != "approved":
         raise GateError("only a merged change can be deployed")
+    if report.get("project", "thursday") != "thursday":
+        raise GateError("deploy is for THURSDAY's own code; his projects run however he runs them")
     state = deploy_status()
     if state.get("state") in ("requested", "testing", "building") or (OUT / "deploy" / "request.json").exists():
         raise GateError("a deploy is already running")
@@ -176,8 +195,12 @@ def decline(job: str) -> dict:
     report = _report(job)
     if report.get("decision"):
         raise GateError("already decided")
-    if report.get("branch") and _git("branch", "--list", report["branch"]).strip():
-        _git("branch", "-D", report["branch"])
+    try:
+        repo = _repo_of(report)
+    except GateError:
+        repo = None
+    if repo and report.get("branch") and _git("branch", "--list", report["branch"], cwd=repo).strip():
+        _git("branch", "-D", report["branch"], cwd=repo)
     report.update(decision="declined", decided_at=datetime.now(timezone.utc).isoformat())
     _save(job, report)
     return report
@@ -202,11 +225,18 @@ def improve_start(args: Dict[str, Any]) -> ToolResult:
     task = " ".join(str(args.get("task") or "").split())[:1000]
     if len(task.split()) < 4:
         return ToolResult(ok=False, tool_name="improve_start", error="task_too_vague: ask what he wants changed")
+    root, project = _project_root(args.get("project"))
+    if root is None:
+        return ToolResult(ok=False, tool_name="improve_start", error=f"no_project_named_{project}: project_list shows them")
+    if project != "thursday" and not (root / ".git").exists():
+        return ToolResult(ok=False, tool_name="improve_start", error=f"{project}_is_not_a_git_repo: changes need git "
+                          "(approving merges a branch); he can run git init there first")
     if len(list((OUT / "queue").glob("*.json"))) >= MAX_QUEUED:
         return ToolResult(ok=False, tool_name="improve_start", error=f"already_{MAX_QUEUED}_jobs_queued")
     if not args.get("confirmed"):
-        return missions._read_back(turn, "improve_start", {"task": task, "confirmed": True}, task)
-    job = _queue(task)
+        held = {"task": task, "confirmed": True} | ({"project": project} if project != "thursday" else {})
+        return missions._read_back(turn, "improve_start", held, f"In {project}: {task}" if project != "thursday" else task)
+    job = _queue(task, project=None if project == "thursday" else project)
     result = ToolResult(ok=True, tool_name="improve_start", data={
         "job": job, "status": "STARTED",
         "note": "Confirm in one short statement, no question: you work on it when the house is quiet and his phone "
@@ -302,7 +332,8 @@ async def run_notifier() -> None:
                                             (report.get("summary") or "")[:400], click=approvals.link(conv["id"]), tags=("mag",))
                     logger.info("code review %s finished: %d finding(s)", report.get("job"), n)
                 elif path.stat().st_mtime >= started:
-                    title = "THURSDAY has a change for you to review" if report.get("status") == "ready" \
+                    where = "" if report.get("project", "thursday") == "thursday" else f" in {report['project']}"
+                    title = f"THURSDAY has a change{where} for you to review" if report.get("status") == "ready" \
                         else f"THURSDAY's improvement job ended: {report.get('status')}"
                     await asyncio.to_thread(approvals.push, title, (report.get("summary") or report.get("error") or "")[:500],
                                             click=approvals.link(), tags=("hammer_and_wrench",))
@@ -329,6 +360,9 @@ _SAYS = [(r"stop(?:ped)?\s+talking|done\s+talking|finish(?:ed)?\s+speaking|end\s
          (r"remember|memory|forget", "memory fact recall"),
          (r"\bslow\b|\bfast\b|latency|lag", "timing latency"),
          (r"listen", "listening vad"),
+         (r"wi-?fi|connection|disconnect|offline|internet|network", "connect reconnect connection offline wifi"),
+         (r"(?:hear|hearing)\s+(?:your|yourself|my)|own\s+voice|echo|feedback", "aec echo cancel reference barge"),
+         (r"\bgpu\b|memory|ram\b", "touch busy gpu memory"),
          (r"who(?:'s|\s+is)\s+(?:talking|speaking)|recogni[sz]e\s+(?:me|my\s+voice)", "speaker identify voiceprint"),
          (r"finish|is\s+done|complete", "finish announce report")]
 
@@ -340,9 +374,11 @@ def _stem(w: str) -> str:
     return w
 
 
-def _terms(text: str) -> set[str]:
+def _terms(text: str, question: bool = False) -> set[str]:
+    """Searchable words; the phrase map (_SAYS) expands only his question: on a name it made the echo tool
+    look like echo cancellation (2026-11-05)."""
     text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text).lower()  # CodeIndex -> code index
-    extra = " ".join(add for pat, add in _SAYS if re.search(pat, text))
+    extra = " ".join(add for pat, add in _SAYS if re.search(pat, text)) if question else ""
     words = re.findall(r"[a-z][a-z0-9]+", f"{text} {extra}".replace("_", " "))
     return {_stem(w) for w in words if len(w) > 2 and w not in _STOP}
 
@@ -412,7 +448,10 @@ def code_ask(args: Dict[str, Any]) -> ToolResult:
     if (TURN.get() or {}).get("user") != OWNER:
         return ToolResult(ok=False, tool_name="code_ask", error="own_code_is_daniels_only")
     question = " ".join(str(args.get("question") or "").split())[:300]
-    terms = _terms(question)
+    terms = _terms(question, question=True)
+    # Words his phrasing maps to ("own voice" -> echo cancellation) count double: they're what he means, while
+    # the literal word ("voice") matches dozens of names (2026-11-05).
+    meant = {_stem(w) for pat, add in _SAYS if re.search(pat, question.lower()) for w in add.split()}
     if not terms:
         return ToolResult(ok=False, tool_name="code_ask", error="ask_what_part_of_the_code")
     root, project = _project_root(args.get("project"))
@@ -426,8 +465,9 @@ def code_ask(args: Dict[str, Any]) -> ToolResult:
     def words(sym) -> float:
         name, doc = _terms(sym.name), _terms(sym.doc)
         # A term counts in a name when it starts a word of it: "endpoint" finds Endpointer, "barge" _barge_in.
-        named = sum(1 for t in terms if any(w.startswith(t) for w in name))
-        return 3 * named + len(terms & doc) + (0.5 if sym.kind != "constant" else 0)
+        named = sum(1 + (t in meant) for t in terms if any(w.startswith(t) for w in name))
+        # A matching module explains the whole mechanism (satellite/aec.py's docstring for "your own voice").
+        return 3 * named + len(terms & doc) + {"constant": 0, "module": 2 if named else 0}.get(sym.kind, 0.5)
 
     pool = [x for x in idx.symbols if tests or not x.path.startswith("tests/")]
     near = _meaning(root, project, pool, question)
@@ -443,9 +483,9 @@ def code_ask(args: Dict[str, Any]) -> ToolResult:
     ranked = [pool[i] for i in sorted(fused, key=lambda i: -fused[i])][:3]
     # Plus meaning's own top two: on vague questions ("repeating the same joke") words pick noise and meaning
     # alone had the answer first (recent_lines_note); the chat model picks the relevant one of five.
-    ranked += [pool[i] for i in by_meaning[:2] if pool[i] not in ranked]
+    ranked += [pool[i] for i in by_meaning[:2] + by_words[:1] if pool[i] not in ranked]  # and words' own best
     code, used = [], 0
-    for sym in ranked[:5]:
+    for sym in ranked[:6]:
         lines = (root / sym.path).read_text(errors="replace").splitlines()[sym.line - 1:min(sym.end, sym.line + 39)]
         snippet = "\n".join(lines)[:1600]
         code.append({"at": f"{sym.path}:{sym.line}", "name": sym.name, "source": snippet})
@@ -501,6 +541,8 @@ TOOL_SCHEMAS = [
         "change is made in a sandbox and waits for his review; nothing changes until he approves it.",
         "parameters": {"type": "object", "properties": {
             "task": {"type": "string", "description": "What to change and why, in full, with any example he gave"},
+            "project": {"type": "string", "description": "One of his projects (project_list) to change instead of your "
+                        "own code; it waits for his approval like any change"},
             "confirmed": {"type": "boolean", "description": "True only right after he said yes to your read-back"}},
             "required": ["task"]}}},
     {"type": "function", "function": {
