@@ -249,9 +249,10 @@ class _RedactToken(logging.Filter):
     _pattern = re.compile(r"(token=)[^&\s\"']+")
 
     def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        if "token=" in msg:
-            record.msg, record.args = self._pattern.sub(r"\1***", msg), ()
+        if isinstance(record.args, tuple) and record.args:  # uvicorn.access formats its 5 args itself: redact in place
+            record.args = tuple(self._pattern.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args)
+        elif "token=" in str(record.msg):
+            record.msg = self._pattern.sub(r"\1***", str(record.msg))
         return True
 
 

@@ -94,13 +94,22 @@ def signature(url: str, params: dict[str, str]) -> str:
     return base64.b64encode(hmac.new(TOKEN.encode(), data.encode(), hashlib.sha1).digest()).decode()
 
 
+def _signed_by_twilio(got: str, url: str, params: dict[str, str]) -> bool:
+    """Twilio signs a URL with a non-standard port (our Funnel's :8443) sometimes with it and sometimes without
+    (2026-11-06: /status passed, /answer on the same call didn't). Its own validators accept either; so do we."""
+    no_port = re.sub(r"^(https?://[^/:]+):\d+", r"\1", url)
+    return any(hmac.compare_digest(got, signature(u, params)) for u in {url, no_port})
+
+
 async def _signed_form(request: Request) -> dict[str, str]:
     """The webhook's form params, or a 403 unless Twilio signed them (checked against the public URL Twilio called,
     not the local one Funnel forwards to)."""
     params = dict(parse_qsl((await request.body()).decode(), keep_blank_values=True))
     got = request.headers.get("x-twilio-signature", "")
-    if not (TOKEN and PUBLIC and got and hmac.compare_digest(got, signature(PUBLIC + request.url.path + (f"?{request.url.query}" if request.url.query else ""), params))):
-        logger.warning("twilio webhook refused: bad or missing signature")
+    url = PUBLIC + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if not (TOKEN and PUBLIC and got and _signed_by_twilio(got, url, params)):
+        logger.warning("twilio webhook refused: bad or missing signature (%s, query %s, %d params, header %s)",
+                       request.url.path, "yes" if request.url.query else "no", len(params), "yes" if got else "no")
         raise HTTPException(status_code=403)
     return params
 
@@ -609,7 +618,7 @@ async def media_stream(ws: WebSocket) -> None:
     Twilio signs the handshake like a webhook (URL, no params); the first "start" frame must also carry a live
     audio token from call_confirm, so a forged stream can't get anything played or heard."""
     got = ws.headers.get("x-twilio-signature", "")
-    if not (TOKEN and PUBLIC and got and hmac.compare_digest(got, signature(_stream_url(), {}))):
+    if not (TOKEN and PUBLIC and got and _signed_by_twilio(got, _stream_url(), {})):
         logger.warning("twilio stream refused: bad or missing signature")
         await ws.close(code=1008)
         return

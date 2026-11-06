@@ -169,3 +169,14 @@ def test_share_comes_from_his_words(phone):
     assert set(r.data["will_share_if_asked"]) == {"Name for the order or message", "His callback number"}
     _turn(2, "call me and order a pizza")
     assert "will_share_if_asked" not in telephony.call_place({"to": "me", "message": "Hi.", "goal": "order"}).data
+
+
+def test_signature_with_or_without_the_port(phone):
+    token = telephony._keep_audio(b"RIFFwav")
+    telephony._briefs[token] = {"who": "Mom", "message": "hi", "transcript": []}
+    path, form = f"/twilio/answer?token={token}", {"AnsweredBy": "human"}
+    no_port = PUBLIC.replace(":8443", "")
+    r = phone.post(path, data=form, headers={"X-Twilio-Signature": telephony.signature(no_port + path, form)})
+    assert r.status_code == 200 and "<Stream" in r.text
+    other = "https://evil.example.com" + path
+    assert phone.post(path, data=form, headers={"X-Twilio-Signature": telephony.signature(other, form)}).status_code == 403
