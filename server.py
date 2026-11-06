@@ -515,15 +515,31 @@ def conversation_messages(conversation_id: str, limit: int = 500, user: dict = D
 
 
 class RenameIn(BaseModel):
-    title: str
+    title: str | None = None
+    pinned: bool | None = None
 
 
 @app.patch("/api/conversations/{conversation_id}")
 def rename_conversation(conversation_id: str, body: RenameIn, user: dict = Depends(current_user)):
-    title = " ".join(body.title.split())[:100]
-    if not title or not initalize_db().rename_conversation(conversation_id, title, user["id"]):
-        raise HTTPException(status_code=404 if title else 422, detail="conversation not found" if title else "empty title")
-    return {"id": conversation_id, "title": title}
+    """Rename and/or pin."""
+    db = initalize_db()
+    out: dict = {"id": conversation_id}
+    if body.pinned is not None:
+        if not db.pin_conversation(conversation_id, body.pinned, user["id"]):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        out["pinned"] = body.pinned
+    if body.title is not None:
+        title = " ".join(body.title.split())[:100]
+        if not title or not db.rename_conversation(conversation_id, title, user["id"]):
+            raise HTTPException(status_code=404 if title else 422, detail="conversation not found" if title else "empty title")
+        out["title"] = title
+    return out
+
+
+@app.get("/api/conversations/search")
+def search_conversations(q: str, user: dict = Depends(current_user)):
+    q = " ".join(q.split())[:100]
+    return initalize_db().search_conversations(user["id"], q) if len(q) >= 2 else []
 
 
 @app.delete("/api/conversations/{conversation_id}")

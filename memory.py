@@ -199,8 +199,11 @@ class MemoryDB:
             self._migrate_conversations(conn)
             # The recall note is chosen on a conversation's first turn and then frozen,
             # so her prompt (and Ollama's prompt cache) stays identical for every later turn.
-            if "memory_note" not in {r["name"] for r in conn.execute("PRAGMA table_info(conversations)")}:
+            conv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)")}
+            if "memory_note" not in conv_cols:
                 conn.execute("ALTER TABLE conversations ADD COLUMN memory_note TEXT")
+            if "pinned" not in conv_cols:  # pinned to the top of the sidebar (2026-11-06)
+                conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
             self._migrate_users(conn)
             if "watch_id" not in {r["name"] for r in conn.execute("PRAGMA table_info(missions)")}:
                 conn.execute("ALTER TABLE missions ADD COLUMN watch_id TEXT")
@@ -283,10 +286,31 @@ class MemoryDB:
     def list_conversations(self, user_id: str, limit: int = 200) -> List[dict]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, title, created_at, updated_at FROM conversations WHERE user_id = ? "
-                "ORDER BY updated_at DESC LIMIT ?",
+                "SELECT id, title, created_at, updated_at, pinned FROM conversations WHERE user_id = ? "
+                "ORDER BY pinned DESC, updated_at DESC LIMIT ?",
                 (user_id, limit),
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    def pin_conversation(self, conversation_id: str, pinned: bool, user_id: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("UPDATE conversations SET pinned = ? WHERE id = ? AND user_id = ?",
+                               (int(pinned), conversation_id, user_id))
+        return cur.rowcount > 0
+
+    def search_conversations(self, user_id: str, query: str, limit: int = 30) -> List[dict]:
+        """His conversations whose title or messages contain `query` (case-insensitive), newest first, each with
+        the first matching line as a snippet."""
+        like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT c.id, c.title, c.updated_at, c.pinned,
+                       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id AND m.tool_name IS NULL
+                          AND m.content LIKE ? ESCAPE '\\' ORDER BY m.id LIMIT 1) AS snippet
+                FROM conversations c WHERE c.user_id = ? AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (
+                    SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.tool_name IS NULL
+                      AND m.content LIKE ? ESCAPE '\\'))
+                ORDER BY c.updated_at DESC LIMIT ?""", (like, user_id, like, like, limit)).fetchall()
         return [dict(r) for r in rows]
 
     def rename_conversation(self, conversation_id: str, title: str, user_id: str) -> bool:

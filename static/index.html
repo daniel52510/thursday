@@ -108,6 +108,10 @@
   .conv-list { flex: 1; overflow-y: auto; margin: 10px -6px 0; padding: 0 6px 12px; }
   .conv-group { padding: 16px 12px 6px; }
   .conv-empty { font-size: 13px; color: var(--text-muted); padding: 14px 12px; }
+  .conv-search { margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--rule); background: var(--bg);
+                 font: 14px var(--sans); color: var(--text); outline: 0; width: 100%; }
+  .conv-search:focus { border-color: var(--rule-strong); }
+  .conv .snippet { display: block; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .conv { display: flex; align-items: center; border-radius: 12px; position: relative; }
   .conv:hover { background: var(--deep); }
   .conv.active { background: var(--deep); }
@@ -598,6 +602,7 @@
   <button class="nav-btn" id="contactsNav"><svg><use href="#i-phone"/></svg>Contacts</button>
   <button class="nav-btn" id="announceNav"><svg><use href="#i-speaker"/></svg>Announce</button>
   <button class="nav-btn" id="settingsNav"><svg><use href="#i-dots"/></svg>Settings</button>
+  <input class="conv-search" id="convSearch" type="search" placeholder="Search conversations" aria-label="Search conversations" autocomplete="off">
   <nav class="conv-list" id="convList" aria-label="Conversations"></nav>
   <div class="stripe-bar" aria-hidden="true" style="margin:0 -12px"><i></i><i></i><i></i><i></i><i></i></div>
   <div class="status">
@@ -1549,7 +1554,7 @@ async function send(text) {
         const line = buf.slice(0, i).trim(); buf = buf.slice(i + 2);
         if (!line.startsWith("data:")) continue;
         const ev = JSON.parse(line.slice(5));
-        if (ev.type === "conversation") touchConversation(ev.id, ev.title);
+        if (ev.type === "conversation") { touchConversation(ev.id, ev.title); if (ev.new) setTimeout(loadConversations, 12000); }  // its generated title
         else if (ev.type === "delta") view.append(ev.text);
         else if (ev.type === "tool") view.tool(ev.name);
         else if (ev.type === "tool_result") view.toolDone(ev.name, ev.ok);
@@ -1593,6 +1598,7 @@ input.addEventListener("keydown", (e) => {
 // chat has no id. The open conversation is remembered across reloads.
 const convList = $("convList");
 let conversations = [];
+let searchResults = null;  // the sidebar's search hits, while the search box has a query
 
 function setConversation(id) {
   conversationId = id;
@@ -1620,8 +1626,10 @@ function renderConversations() {
   convList.innerHTML = "";
   if (!conversations.length) { convList.innerHTML = `<div class="conv-empty">No conversations yet</div>`; return; }
   let group = null;
-  for (const c of conversations) {
-    const g = dateGroup(c.updated_at);
+  const list = searchResults ?? conversations;
+  if (searchResults && !list.length) { convList.innerHTML = `<div class="conv-empty">No matches</div>`; return; }
+  for (const c of list) {
+    const g = searchResults ? "Results" : c.pinned ? "Pinned" : dateGroup(c.updated_at);
     if (g !== group) {
       group = g;
       const h = document.createElement("div");
@@ -1633,6 +1641,7 @@ function renderConversations() {
     row.innerHTML = `<button class="open"></button><button class="icon-btn more" aria-label="Conversation options"><svg><use href="#i-dots"/></svg></button>`;
     const open = row.querySelector(".open");
     open.textContent = c.title; open.title = c.title;
+    if (searchResults && c.snippet) { const sn = document.createElement("span"); sn.className = "snippet"; sn.textContent = c.snippet; open.append(sn); }
     open.onclick = () => openConversation(c.id);
     row.querySelector(".more").onclick = (e) => { e.stopPropagation(); showConvMenu(row, c); };
     convList.append(row);
@@ -1648,17 +1657,37 @@ function showConvMenu(row, c) {
   if (wasOpen) return;
   const menu = document.createElement("div");
   menu.className = "conv-menu";
-  menu.innerHTML = `<button data-act="rename"><svg><use href="#i-edit"/></svg>Rename</button>
+  menu.innerHTML = `<button data-act="pin"><svg><use href="#i-check"/></svg>${c.pinned ? "Unpin" : "Pin"}</button>
+    <button data-act="rename"><svg><use href="#i-edit"/></svg>Rename</button>
     <button data-act="delete" class="danger"><svg><use href="#i-trash"/></svg>Delete</button>`;
   menu.onclick = (e) => {
     e.stopPropagation();
     const act = e.target.closest("button")?.dataset.act;
     closeConvMenu();
     if (act === "rename") renameConversation(row, c);
+    if (act === "pin") pinConversation(c);
     if (act === "delete") deleteConversation(c);
   };
   row.append(menu);
 }
+
+async function pinConversation(c) {
+  const res = await api(`/api/conversations/${c.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pinned: !c.pinned }) });
+  if (res.ok) loadConversations();
+}
+
+// Search: titles and message text, on the server; the list shows results until the box is cleared.
+let searchTimer = 0;
+$("convSearch").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (q.length < 2) { searchResults = null; renderConversations(); return; }
+  searchTimer = setTimeout(async () => {
+    try { const res = await api(`/api/conversations/search?q=${encodeURIComponent(q)}`); if (res.ok) searchResults = await res.json(); } catch {}
+    renderConversations();
+  }, 200);
+});
 
 function renameConversation(row, c) {
   const inp = document.createElement("input");

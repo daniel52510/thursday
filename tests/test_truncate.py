@@ -12,3 +12,17 @@ def test_truncate_from_his_nth_message(tmp_path):
     assert [m["content"] for m in db.recent_messages(50, conversation_id=cid)] == ["one", "a1"]
     assert db.truncate_conversation(cid, "owner", 9) is None        # no such turn
     assert db.truncate_conversation(cid, "someone-else", 0) is None  # not his conversation
+
+
+def test_search_and_pin(tmp_path):
+    db = memory.MemoryDB(str(tmp_path / "m.db"))
+    a = db.create_conversation("Pizza order", "owner")["id"]
+    b = db.create_conversation("Weather", "owner")["id"]
+    db.log_message("user", "what's 100% of my sleep_goal?", conversation_id=b)
+    assert [c["id"] for c in db.search_conversations("owner", "pizza")] == [a]          # title
+    assert db.search_conversations("owner", "100%")[0]["snippet"].startswith("what's")   # content, % is literal
+    assert db.search_conversations("owner", "sleep_goal")[0]["id"] == b                   # _ is literal
+    assert db.search_conversations("owner", "nothing here") == []
+    assert db.search_conversations("someone-else", "pizza") == []
+    assert db.pin_conversation(a, True, "owner")
+    assert db.list_conversations("owner")[0]["id"] == a and db.list_conversations("owner")[0]["pinned"] == 1

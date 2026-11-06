@@ -1104,6 +1104,29 @@ def _history_window(turns: list[dict]) -> list[dict]:
     return window[1:] if window[0]["role"] == "assistant" else window
 
 
+_titling: set = set()
+
+
+async def _auto_title(cid: str, placeholder: str, asked: str, reply: str, user_id: str) -> None:
+    """A short ChatGPT-style title for a new conversation, once its first reply is done. Waits a few seconds so it
+    never competes with his next voice turn for the GPU; keeps a title he has already changed."""
+    await asyncio.sleep(6)
+    prompt = ("Title this conversation in 2 to 5 words, like a chat app's sidebar. No quotes, no ending period, "
+              f"no emoji.\n\nHe asked: {asked[:500]}\nThe reply: {reply[:500]}")
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            r = await http.post(CHAT_URL, json={"model": MODEL, "stream": False, "think": False,
+                                                "keep_alive": OLLAMA_KEEP_ALIVE, "options": OLLAMA_OPTIONS,
+                                                "messages": [{"role": "user", "content": prompt}]})
+        title = " ".join((r.json().get("message") or {}).get("content", "").strip().strip('"\'.').split())[:60]
+    except (httpx.HTTPError, ValueError):
+        return
+    db = initalize_db()
+    conv = db.get_conversation(cid, user_id)
+    if title and conv and conv["title"] == placeholder:
+        db.rename_conversation(cid, title, user_id)
+
+
 def _title_for(text: str) -> str:
     title = " ".join(text.split())
     return title if len(title) <= 60 else title[:57].rsplit(" ", 1)[0] + "…"
@@ -1206,7 +1229,14 @@ async def stream_prompt(*args, **kwargs) -> AsyncIterator[dict]:
         source = gated()
     else:
         source = _stream_prompt(*args, **kwargs)
+    new_conv = None
     async for ev in source:
+        if ev["type"] == "conversation" and ev.get("new"):
+            new_conv = (ev["id"], ev["title"])
+        if ev["type"] == "done" and new_conv and ev.get("reply"):
+            _titling.add(task := asyncio.create_task(_auto_title(*new_conv, args[0] if args else kwargs.get("user_prompt", ""),
+                                                                 ev["reply"], kwargs["user"]["id"])))
+            task.add_done_callback(_titling.discard)
         if ev["type"] == "tool_result" and ev.get("started"):
             rocky.statements = True  # a confirmation now, not a question: see eridian.questions
         if ev["type"] == "delta" and tara is None:
@@ -1259,10 +1289,11 @@ async def _stream_prompt(
     db = initalize_db()
     # An unknown or missing id (or someone else's) starts a new conversation, titled by its first message.
     conv = db.get_conversation(conversation_id, user["id"]) if conversation_id else None
-    if conv is None:
+    new = conv is None
+    if new:
         conv = db.create_conversation(_title_for(user_prompt), user["id"])
     cid = conv["id"]
-    yield {"type": "conversation", "id": cid, "title": conv["title"]}
+    yield {"type": "conversation", "id": cid, "title": conv["title"], **({"new": True} if new else {})}
     if accounts.shared().over_limit(user):
         db.log_message(role="user", content=user_prompt, conversation_id=cid)
         db.log_message(role="assistant", content=LIMIT_REPLY, conversation_id=cid)
