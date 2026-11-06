@@ -189,6 +189,10 @@ def call_place(args: Dict[str, Any]) -> ToolResult:
     number = _number(str(args.get("to", "")))
     message = str(args.get("message") or "").strip()
     goal = str(args.get("goal") or "").strip()[:300]
+    # His own words this turn count ("you can give them my name and number"); the model often skips the field.
+    said = turn.get("user_said", "")
+    share = _shareable((args.get("share") if isinstance(args.get("share"), list) else [])
+                       + (["name"] if _SHARE_NAME.search(said) else []) + (["phone"] if _SHARE_PHONE.search(said) else []))
     if not number:
         names = ", ".join(n.title() for n in contacts()) or "nobody yet"
         return ToolResult(ok=False, tool_name="call_place", error=(
@@ -204,12 +208,16 @@ def call_place(args: Dict[str, Any]) -> ToolResult:
     who = str(args.get("to", "")).strip()
     _briefs[token] = {"message": message, "goal": goal, "conversation": turn["conversation"],
                       "who": "you" if number == OWNER_NUMBER else re.sub(r"^(?:my|our)\s+", "", who, flags=re.I).title(),
-                      "transcript": [], "answered_by": "", "ended_by": "", "from_satellite": FROM_SATELLITE.get()}
+                      "transcript": [], "answered_by": "", "ended_by": "", "from_satellite": FROM_SATELLITE.get(),
+                      "share": share}
     _pending[turn["conversation"]] = {"at": time.monotonic(), "turn": turn["turn"], "to": number, "token": token,
                                       "message": message}
     return ToolResult(ok=True, tool_name="call_place", data={
         "status": "waiting_for_his_ok", "to": number, "will_say": message, **({"goal": goal} if goal else {}),
-        "note": "Read back who and what in one line and ask if you should call. Only call_confirm after a plain yes."})
+        **({"will_share_if_asked": list(share)} if share else {}),
+        "note": "Read back who and what in one line" + (", and that you'll give them his " +
+                " and ".join(("name" if k.startswith("Name") else "number") for k in share) + " if they ask"
+                if share else "") + ", and ask if you should call. Only call_confirm after a plain yes."})
 
 
 def confirms_pending(conversation_id: str, said: str) -> bool:
@@ -337,6 +345,29 @@ FIRST_CLAUSE_MIN = 12
 END_TAG = "[END]"
 
 
+_SHARE_NAME = re.compile(r"\b(?:my|his)\s+name\b", re.I)
+_SHARE_PHONE = re.compile(r"\b(?:my|his)\s+(?:name\s+(?:and|&)\s+)?(?:(?:phone|cell|mobile)\s+)?number\b|"
+                          r"\bmy\s+(?:phone|cell)\b", re.I)
+SHAREABLE = ("name", "phone")  # the only details he can approve for a call; their values never come from the model
+
+
+def _spoken_number(e164: str) -> str:
+    d = e164.removeprefix("+1")
+    return f"{d[:3]}-{d[3:6]}-{d[6:]}" if len(d) == 10 else e164
+
+
+def _shareable(asked) -> dict[str, str]:
+    """What he approved giving out on this call, filled in here from his account (never from the model's words)."""
+    asked = asked if isinstance(asked, list) else [asked] if isinstance(asked, str) else []
+    out = {}
+    for item in (str(a).strip().lower() for a in asked):
+        if item == "name":
+            out["Name for the order or message"] = OWNER_NAME
+        elif item in ("phone", "number", "phone number") and OWNER_NUMBER:
+            out["His callback number"] = _spoken_number(OWNER_NUMBER)
+    return out
+
+
 def call_prompt(brief: dict) -> str:
     """Call mode's whole world: the brief, nothing else (no memory, calendar or tools to leak or misuse)."""
     goal = brief.get("goal") or "deliver that message, answer simple questions about it, and say goodbye"
@@ -356,6 +387,9 @@ def call_prompt(brief: dict) -> str:
         "address, anything private). His first name is fine to give.\n"
         "- Never invent a detail: no phone numbers, addresses, card or payment details, times or prices that aren't "
         f"in the brief. If they ask for one, say you don't have it on hand and {OWNER_NAME} can give it to them.\n"
+        + ("".join(f"- {OWNER_NAME} approved giving this if they ask for it: {k}: {v}" +
+                   (" (say the digits one by one).\n" if "number" in k else ".\n")
+                   for k, v in (brief.get("share") or {}).items())) +
         "- You don't do tasks or favors on this call (no code, lookups, bookings). If they want something from "
         f"{OWNER_NAME}, offer to pass it on, in your own words.\n"
         f"- As soon as the goal is met, thank them, say you'll let {OWNER_NAME} know, say goodbye, and end that "
@@ -792,9 +826,14 @@ TOOL_SCHEMAS = [
         "after his yes. Never say a call is prepared unless this tool ran. If they answer, you talk with them about the goal (no tools on the call) and then hang up.",
         "parameters": {"type": "object", "properties": {
             "to": {"type": "string", "description": "A saved contact's name ('Mom'), or 'me' for his own phone"},
-            "message": {"type": "string", "description": "What to say, worded for the listener, a few sentences"},
+            "message": {"type": "string", "description": "Only the words the listener hears first, worded for them "
+                        "(\"Hi, I'd like to place an order for pickup.\"). Never his instructions, the goal, or "
+                        "what may be shared: those go in goal and share."},
             "goal": {"type": "string", "description": "Optional: what to find out or get done on the call if they "
-                     "answer ('find out what time dinner is'). Only this and the message are known on the call."}},
+                     "answer ('find out what time dinner is'). Only this and the message are known on the call."},
+            "share": {"type": "array", "items": {"type": "string", "enum": list(SHAREABLE)},
+                      "description": "Only what HE said they may have: 'name' (his first name) and/or 'phone' (his "
+                      "number), e.g. for an order. Never add these yourself. Read them back with the call."}},
             "required": ["to", "message"]}}},
     {"type": "function", "function": {
         "name": "call_confirm", "description": "Dial the call call_place prepared, only after his plain yes.",

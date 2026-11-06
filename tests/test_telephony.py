@@ -152,3 +152,20 @@ def test_outcomes_without_a_conversation():
     assert "voicemail" in telephony._outcome({**base, "status": "completed", "answered_by": "machine_end_beep"})
     talked = [("assistant", "hi"), ("user", "(the other person said) dinner is at 8")]
     assert telephony._outcome({**base, "status": "completed", "answered_by": "human", "transcript": talked}) is None
+
+
+def test_share_only_his_approved_details_from_his_account(phone):
+    assert telephony._shareable(["name", "phone"]) == {
+        "Name for the order or message": telephony.OWNER_NAME, "His callback number": "555-111-2222"}
+    assert telephony._shareable(["address", "card", "+1 305 555 0000"]) == {}  # nothing else, no values from the model
+    prompt = telephony.call_prompt({"message": "hi", "goal": "order", "share": telephony._shareable(["phone"])})
+    assert "555-111-2222" in prompt and "Never invent" in prompt
+    assert "555-111-2222" not in telephony.call_prompt({"message": "hi", "goal": "order"})
+
+
+def test_share_comes_from_his_words(phone):
+    _turn(1, "call me and order a pizza, you can give them my name and number")
+    r = telephony.call_place({"to": "me", "message": "Hi, an order for pickup please.", "goal": "order a pizza"})
+    assert set(r.data["will_share_if_asked"]) == {"Name for the order or message", "His callback number"}
+    _turn(2, "call me and order a pizza")
+    assert "will_share_if_asked" not in telephony.call_place({"to": "me", "message": "Hi.", "goal": "order"}).data
