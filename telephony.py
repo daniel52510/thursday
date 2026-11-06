@@ -41,7 +41,7 @@ TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 FROM = os.getenv("TWILIO_FROM", "")
 OWNER_NUMBER = os.getenv("TWILIO_OWNER_NUMBER", "")  # "call me"
 PUBLIC = os.getenv("TWILIO_PUBLIC_URL", "").rstrip("/")  # e.g. https://<mac>.<tailnet>.ts.net:8443
-DAILY_CAP = int(os.getenv("TWILIO_DAILY_CALLS", "10"))
+DAILY_CAP = int(os.getenv("TWILIO_DAILY_CALLS", "10"))  # in memory: a restart resets it
 AUDIO_TTL_S = 15 * 60
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
@@ -101,7 +101,13 @@ def _render(text: str) -> bytes:
                     rate = r.getframerate()
                     w.setnchannels(1), w.setsampwidth(2), w.setframerate(rate)
                 w.writeframes(r.readframes(r.getnframes()))
-    return out.getvalue()
+    # Phone audio is 8 kHz: send that (band-limited like to_mulaw_8k) so Twilio doesn't have to resample a 24 kHz file.
+    import numpy as np
+    import rocky_voice
+    x, sr = rocky_voice._read(out.getvalue())
+    y = rocky_voice._lowpass(x, 3400 / sr, taps=191)
+    y = y[::sr // 8000] if sr % 8000 == 0 else np.interp(np.arange(0, len(y), sr / 8000), np.arange(len(y)), y)
+    return rocky_voice._write(y, 8000)
 
 
 def _keep_audio(wav: bytes) -> str:
@@ -166,7 +172,8 @@ def call_confirm(args: Dict[str, Any]) -> ToolResult:
     twiml = f"<Response><Play>{escape(PUBLIC)}/twilio/audio/{pending['token']}.wav</Play></Response>"
     try:
         r = httpx.post(f"https://api.twilio.com/2010-04-01/Accounts/{SID}/Calls.json", auth=(SID, TOKEN), timeout=10,
-                       data={"To": pending["to"], "From": FROM, "Twiml": twiml})
+                       data={"To": pending["to"], "From": FROM, "Twiml": twiml,
+                             "TimeLimit": "180"})  # a hard stop on billed minutes, whatever happens on the line
     except httpx.HTTPError as exc:
         return ToolResult(ok=False, tool_name="call_confirm", error=f"twilio_unreachable: {type(exc).__name__}")
     if r.status_code >= 400:
