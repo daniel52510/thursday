@@ -2003,8 +2003,12 @@ function animateOrb() {
   V.raf = requestAnimationFrame(tick);
 }
 
+// The mic, wired into the audio context. The context itself is made and resumed by openVoice inside the tap
+// (iOS starts audio only from a gesture); here only as a fallback. Re-running it gets a fresh mic into the same
+// context: iOS ends mic tracks while the home-screen app is in the background ("mic=ended", 2026-11-06).
 async function startAudio() {
-  if (V.ctx) return;
+  if (!V.ctx || V.ctx.state === "closed") V.ctx = new AudioContext();
+  if (V.micNode && V.mic?.getAudioTracks()[0]?.readyState === "live") return;  // already wired, mic still live
   const stream = await navigator.mediaDevices.getUserMedia({
     // Echo cancellation keeps the cues and THURSDAY's own voice out of the mic; AGC is off so silence
     // doesn't pump speaker bleed or room hiss up into the VAD.
@@ -2014,7 +2018,7 @@ async function startAudio() {
   stream.getAudioTracks()[0]?.addEventListener("ended", () => recoverAudio());
   // One context at the device rate (Firefox refuses a 16 kHz context fed by a
   // 48 kHz mic); the worklet averages down to 16 kHz frames itself.
-  V.ctx = new AudioContext();
+  for (const n of [V.micNode, V.outNode, V.out]) { try { n?.disconnect(); } catch {} }  // a previous mic's wiring
   const ctx = V.ctx;  // only this context's own changes count: closing a stale one isn't "iOS took the audio"
   ctx.onstatechange = () => { if (V.open && !V.opening && V.ctx === ctx && ctx.state === "interrupted") setTimeout(recoverAudio, 500); };
   const workletSrc = `
@@ -2099,7 +2103,10 @@ async function startAudio() {
       }
     }
     registerProcessor("pcmout", PcmOut);`;
-  await V.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" })));
+  if (V.workletCtx !== ctx) {  // once per context: registering the processors twice throws
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" })));
+    V.workletCtx = ctx;
+  }
   const mic = V.ctx.createMediaStreamSource(stream);
   V.micNode = new AudioWorkletNode(V.ctx, "pcm16");
   // Stream during a turn too, so talking over her stops her (barge-in). Nothing
@@ -2320,25 +2327,25 @@ async function openVoice() {
     figError("Voice needs a secure connection", "Open THURSDAY over https:// to use the microphone on this device. Text chat works as is.");
     return;
   }
+  // Audio starts here, synchronously inside the tap: iOS only lets a gesture start it. Made after awaiting the
+  // mic, the home-screen app's context was born "suspended" and never resumed (ctx=suspended, frames=0).
+  if (!V.ctx || V.ctx.state === "closed") V.ctx = new AudioContext();
+  const resuming = V.ctx.resume().catch(() => {});
   try {
     V.opening = true;           // recoverAudio stays out of the way until voice mode is up
-    await startAudio();         // mic and audio output need this click as the user gesture
-    // The home-screen app stays in memory: its old context is often "interrupted" (a call, other audio, the
-    // background), and iOS can leave resume() pending forever, which kept voice mode on "Connecting" while Safari,
-    // reloading fresh, connected at once. Give it 1.5 s, then start over with a new context and mic.
-    await withTimeout(V.ctx.resume(), 1500).catch(() => {});
-    if (V.ctx.state !== "running") {
-      try { V.mic?.getTracks().forEach((t) => t.stop()); await withTimeout(V.ctx.close(), 500); } catch {}
-      V.ctx = null;
-      await startAudio();
-      await withTimeout(V.ctx.resume(), 1500).catch(() => {});
-    }
+    await startAudio();         // a fresh mic if the last one ended, wired into that context
+    await withTimeout(resuming, 1500).catch(() => {});  // iOS can leave resume() pending: don't wait forever
   } catch (err) {
     V.opening = false;
     figError("Microphone unavailable", err.message);
     return;
   }
   V.opening = false;
+  if (V.ctx.state !== "running") {  // still not allowed: the next tap on the orb resumes it (recoverAudio)
+    V.state = "paused";
+    figError("Tap the orb to start", "iOS is holding the audio. One tap on the orb and voice mode starts.");
+    return;
+  }
   // Unlock the cue elements inside the gesture so later play() calls are allowed.
   for (const a of [ping, thinking]) { a.muted = true; a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; }); }
   if (!V.raf) animateOrb();
@@ -2358,13 +2365,12 @@ async function recoverAudio() {
   try {
     if (V.mic?.getAudioTracks()[0]?.readyState !== "live") {
       stopReplyAudio();
-      try { await V.ctx.close(); } catch {}
-      V.ctx = null;
-      await startAudio();
+      await startAudio();  // a fresh mic into the same context (a new context would need another tap)
     }
     if (V.ctx.state !== "running") await withTimeout(V.ctx.resume(), 1500).catch(() => {});
     if (V.ctx.state === "running") {
-      if (!V.ws) connectVoice();
+      if (!V.raf) animateOrb();
+      if (!V.ws) { keepAwake(); loadGreetings(); connectVoice(); }
       else if (V.state === "offline" || V.state === "paused") { V.state = ""; setVoiceState("idle"); startListening(); }
       return;
     }
