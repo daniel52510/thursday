@@ -365,6 +365,11 @@
   .health-row span:last-child { color: var(--text-muted); font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
   .health-h { margin: 22px 0 8px; font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); }
   .health-speed { margin: 0; font-variant-numeric: tabular-nums; }
+  .meter { display: grid; grid-template-columns: 90px 1fr 150px; align-items: center; gap: 10px; padding: 7px 0; }
+  .meter b { font-weight: 500; font-size: 14px; }
+  .meter .track { height: 8px; border-radius: 4px; background: var(--deep); overflow: hidden; }
+  .meter .fill { height: 100%; border-radius: 4px; background: var(--text); transition: width .4s var(--ease); }
+  .meter span:last-child { font: 12px var(--mono); color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; }
   .lat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .lat-head .health-h { flex: 1; min-width: 0; }
   .lat-range { display: flex; flex: none; gap: 2px; }
@@ -785,6 +790,9 @@
 <dialog id="healthDialog" class="alarms">
   <div class="alarms-head"><h2>Health</h2><button class="icon-btn" id="healthClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <p id="healthSummary">Checking…</p>
+  <h3 class="health-h" id="macTitle">Mac Studio</h3>
+  <div id="macItems"></div>
+  <h3 class="health-h">Services</h3>
   <div id="healthItems"></div>
   <h3 class="health-h">Reply speed (last 6 h)</h3>
   <p class="health-speed" id="healthSpeed"></p>
@@ -1054,6 +1062,7 @@ async function loadHealth() {
   let h;
   try { const res = await api("/api/health"); if (!res.ok) throw 0; h = await res.json(); }
   catch { $("healthSummary").textContent = "Couldn't reach THURSDAY's core."; return; }
+  drawMac(h.mac);
   const down = h.services.filter((x) => !x.ok);
   $("healthSummary").textContent = h.problems.length ? h.problems.join(" · ")
     : down.length ? `${down.length} part(s) need a look.` : "Everything is up.";
@@ -1141,6 +1150,29 @@ for (const b of document.querySelectorAll(".lat-range button")) b.onclick = () =
   for (const o of document.querySelectorAll(".lat-range button")) o.setAttribute("aria-pressed", String(o === b));
   loadLatency();
 };
+
+// The Mac itself (scripts/host_mem.sh, every 15 s): one meter per resource, the value in words beside it.
+function drawMac(m) {
+  const box = $("macItems"); box.innerHTML = "";
+  if (!m) { box.innerHTML = `<div class="health-warn">No reading: run scripts/install_host_mem.sh on the Mac.</div>`; return; }
+  $("macTitle").textContent = `Mac Studio · updated ${m.age_s} s ago`;
+  const rows = [
+    ["CPU", m.cpu_pct, `${m.cpu_pct}% · load ${m.load1} / ${m.cores}`],
+    ["GPU", m.gpu_pct, `${m.gpu_pct}% busy`],
+    ["RAM", m.ram_total_gb ? m.ram_used_gb / m.ram_total_gb * 100 : 0, `${m.ram_used_gb} / ${m.ram_total_gb} GB`],
+    ["GPU memory", m.ram_total_gb ? m.gpu_mem_gb / m.ram_total_gb * 100 : 0, `${m.gpu_mem_gb} GB of shared RAM`],
+    ["Swap", m.swap_total_gb ? m.swap_used_gb / m.swap_total_gb * 100 : 0, `${m.swap_used_gb} / ${m.swap_total_gb} GB`],
+  ];
+  for (const [name, pct, text] of rows) {
+    const row = document.createElement("div"); row.className = "meter";
+    row.innerHTML = `<b></b><div class="track" role="meter" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div><span></span>`;
+    row.children[0].textContent = name; row.children[2].textContent = text;
+    const p = Math.max(0, Math.min(100, Math.round(pct || 0)));
+    row.children[1].setAttribute("aria-valuenow", p); row.children[1].setAttribute("aria-label", `${name} ${text}`);
+    row.children[1].firstChild.style.width = `${p}%`;
+    box.append(row);
+  }
+}
 
 $("healthClose").onclick = () => $("healthDialog").close();
 $("healthDialog").addEventListener("close", () => clearInterval(healthTimer));

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Writes the Mac's memory state to ~/Library/Application Support/thursday/host-mem.json for the runner (in Docker's VM,
+# Writes the Mac's memory, CPU and GPU state to ~/Library/Application Support/thursday/host-mem.json for the runner (in Docker's VM,
 # it can't see them). The runner waits before loading gemma4:31b while memory is short: on 2026-11-05 the
 # 31b (~30 GB) next to the 26b chat model pushed swap to 99% and Ollama hung for everyone.
 # Run every 15 s by launchd (com.thursday.hostmem). Read-only: it only reads vm_stat.
@@ -13,7 +13,18 @@ swap_used=$(sysctl -n vm.swapusage | awk '{for (i=1;i<=NF;i++) if ($i=="used") {
 swap_total=$(sysctl -n vm.swapusage | awk '{for (i=1;i<=NF;i++) if ($i=="total") {v=$(i+2); sub("M","",v); print v}}')
 pressure=$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null || echo 0)  # 1 normal, 2 warn, 4 critical
 avail_gb=$(echo "($free + $inactive + $spec) * $page / 1073741824" | bc -l)
+total_gb=$(echo "$(sysctl -n hw.memsize) / 1073741824" | bc -l)
+# CPU: top's second sample (the first is since boot), all cores together. Load: the 1-minute average.
+cpu_idle=$(top -l 2 -s 1 -n 0 | awk '/CPU usage/ {v=$7} END {sub("%","",v); print v+0}')
+load1=$(sysctl -n vm.loadavg | awk '{print $2}')
+ncpu=$(sysctl -n hw.ncpu)
+# GPU: Apple's own counters, no sudo (Device Utilization is what Activity Monitor's GPU history shows).
+stats=$(ioreg -r -d 1 -c IOAccelerator)
+gpu_pct=$(grep -o '"Device Utilization %"=[0-9]*' <<<"$stats" | head -1 | cut -d= -f2)
+gpu_mem=$(grep -o '"In use system memory"=[0-9]*' <<<"$stats" | head -1 | cut -d= -f2)
+gpu_pct=${gpu_pct:-0}; gpu_mem=${gpu_mem:-0}
 tmp="$OUT.tmp"
-printf '{"at": %d, "available_gb": %.1f, "swap_used_mb": %.0f, "swap_total_mb": %.0f, "pressure": %d}\n' \
-  "$(date +%s)" "$avail_gb" "$swap_used" "$swap_total" "$pressure" > "$tmp"
+printf '{"at": %d, "available_gb": %.1f, "total_gb": %.0f, "swap_used_mb": %.0f, "swap_total_mb": %.0f, "pressure": %d, "cpu_pct": %.0f, "load1": %.2f, "cores": %d, "gpu_pct": %d, "gpu_mem_gb": %.1f}\n' \
+  "$(date +%s)" "$avail_gb" "$total_gb" "$swap_used" "$swap_total" "$pressure" "$(echo "100 - $cpu_idle" | bc -l)" \
+  "$load1" "$ncpu" "$gpu_pct" "$(echo "$gpu_mem / 1073741824" | bc -l)" > "$tmp"
 mv "$tmp" "$OUT"

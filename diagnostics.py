@@ -70,7 +70,7 @@ def system_status(args: Dict[str, Any]) -> ToolResult:
     if (TURN.get() or {}).get("user") != OWNER:
         return ToolResult(ok=False, tool_name="system_status", error="diagnostics_are_daniels_only")
     data = snapshot()
-    data.pop("services", None), data.pop("recent_warnings", None)  # the page's; out loud he needs the summary
+    data.pop("services", None), data.pop("recent_warnings", None), data.pop("mac", None)  # the page's; out loud he needs the summary
     return ToolResult(ok=True, tool_name="system_status", data={**data,
         "note": "Your own health check. Say what's wrong first (problems), then the one or two numbers that matter, "
                 "in 2-3 sentences. If nothing's wrong, say so and give the reply speed. No lists out loud."})
@@ -89,8 +89,16 @@ def snapshot() -> dict:
     if not ok:
         problems.append(f"Ollama isn't answering ({ps})")
 
+    mac = None
     try:
         mem = json.loads(HOSTMEM.read_text())
+        if "cpu_pct" in mem:  # scripts/host_mem.sh since 2026-11-06: CPU and GPU too
+            total = mem.get("total_gb") or 0
+            mac = {"cpu_pct": mem["cpu_pct"], "load1": mem.get("load1"), "cores": mem.get("cores"),
+                   "gpu_pct": mem.get("gpu_pct"), "gpu_mem_gb": mem.get("gpu_mem_gb"),
+                   "ram_used_gb": round(total - mem.get("available_gb", 0), 1) if total else None, "ram_total_gb": total,
+                   "swap_used_gb": round(mem.get("swap_used_mb", 0) / 1024, 1),
+                   "swap_total_gb": round(mem.get("swap_total_mb", 0) / 1024, 1), "age_s": round(time.time() - mem["at"])}
         mem_age = round(time.time() - mem.get("at", 0))
         memory = {"available_gb": mem.get("available_gb"), "pressure": {1: "normal", 2: "warning", 4: "critical"}.get(
             mem.get("pressure"), mem.get("pressure")), "reading_age_s": mem_age}
@@ -141,6 +149,7 @@ def snapshot() -> dict:
     if not ntfy_ok and approvals.NTFY_URL:
         problems.append("push notifications (ntfy) are down")
     return {
+        "mac": mac,
         "services": services,
         "recent_warnings": list(RECENT_WARNINGS),
         "problems": problems,
