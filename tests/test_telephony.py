@@ -34,7 +34,9 @@ def test_webhook_needs_twilios_signature(phone):
 
 def test_numbers():
     assert telephony._number("(512) 555-0123") == "+15125550123"
-    assert telephony._number("+44 20 7946 0958") == "+442079460958"
+    assert telephony._number("+44 20 7946 0958") is None  # toll fraud: +1 only by default
+    assert telephony._number("+1 900 555 0123") is None   # premium rate
+    assert telephony._number("+1 (305) 555-0123") == "+13055550123"
     assert telephony._number("call the plumber") is None
 
 
