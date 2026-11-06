@@ -333,7 +333,12 @@ def call_confirm(args: Dict[str, Any]) -> ToolResult:
         # Answering-machine detection: /twilio/answer hears whether a person or voicemail picked up (after the beep)
         # and gives the TwiML for each; /twilio/status reports how the call ended, including no answer or busy.
         q = f"?token={pending['token']}"
+        # Asynchronous: the call goes straight to THURSDAY, and Twilio's verdict comes later to /twilio/amd.
+        # Synchronous detection held the line silent while it listened, so a person saying "Hello? Hello?" into
+        # the silence was taken for a machine and got the voicemail message and a hang-up (2026-11-06).
         data.update(Url=f"{PUBLIC}/twilio/answer{q}", Method="POST", MachineDetection="DetectMessageEnd",
+                    AsyncAmd="true", AsyncAmdStatusCallback=f"{PUBLIC}/twilio/amd{q}",
+                    AsyncAmdStatusCallbackMethod="POST",
                     StatusCallback=f"{PUBLIC}/twilio/status{q}", StatusCallbackMethod="POST")
     else:
         data["Twiml"] = f"<Response><Play>{escape(PUBLIC)}/twilio/audio/{pending['token']}.wav</Play></Response>"
@@ -720,11 +725,12 @@ async def media_stream(ws: WebSocket) -> None:
             if event == "start":
                 start = frame.get("start") or {}
                 token = (start.get("customParameters") or {}).get("token", "")
-                item = _audio.pop(token, None)
-                brief = _briefs.get(token, {})
-                if not item or item[0] < time.time():
+                item = _audio.get(token)  # kept: a voicemail found later plays the same audio (/twilio/amd)
+                brief = _briefs.setdefault(token, {}) if item else {}
+                if not item or item[0] < time.time() or brief.get("streamed"):
                     logger.warning("twilio stream refused: no live call token")
                     break
+                brief["streamed"] = True  # one stream per call
                 call = _Call(ws, start.get("streamSid"), brief)
                 audio = await asyncio.to_thread(_mulaw, item[1])
                 await call.send_audio(audio)
@@ -771,6 +777,9 @@ async def media_stream(ws: WebSocket) -> None:
 
 
 _VOICEMAIL = ("machine_end_beep", "machine_end_silence", "machine_end_other")
+# What switches a live call to leaving the message: a beep, or a greeting followed by silence. machine_end_other
+# (a long greeting, no beep) is also what a person saying "Hello? Hello?" looks like, so it never cuts a call off.
+_SURE_VOICEMAIL = ("machine_end_beep", "machine_end_silence")
 
 
 @router.post("/answer")
@@ -794,6 +803,32 @@ async def answer(request: Request) -> Response:
         twiml = (f'<Response><Connect><Stream url="{escape(_stream_url())}">'
                  f'<Parameter name="token" value="{token}"/></Stream></Connect><Hangup/></Response>')
     return Response(f'<?xml version="1.0" encoding="UTF-8"?>{twiml}', media_type="application/xml")
+
+
+@router.post("/amd")
+async def amd(request: Request) -> Response:
+    """Twilio's answering-machine verdict, a few seconds into a call that's already live with THURSDAY. A sure
+    voicemail swaps the call's TwiML for the message (played after the beep) and a hang-up; anything else
+    leaves the conversation alone."""
+    params = await _signed_form(request)
+    token = request.query_params.get("token", "")
+    brief = _briefs.get(token)
+    by, sid = params.get("AnsweredBy", "unknown"), params.get("CallSid", "")
+    logger.info("call answered by %s (async)", by)
+    if brief is None:
+        return Response(status_code=204)
+    brief["answered_by"] = by
+    if by in _SURE_VOICEMAIL and token in _audio and re.fullmatch(r"CA[0-9a-f]{32}", sid):
+        twiml = f"<Response><Play>{escape(PUBLIC)}/twilio/audio/{token}.wav</Play><Hangup/></Response>"
+        try:
+            async with httpx.AsyncClient(timeout=10) as http:
+                r = await http.post(f"https://api.twilio.com/2010-04-01/Accounts/{SID}/Calls/{sid}.json",
+                                    auth=(SID, TOKEN), data={"Twiml": twiml})
+            if r.status_code >= 400:
+                logger.warning("voicemail switch refused by twilio: %s", r.status_code)
+        except httpx.HTTPError as exc:
+            logger.warning("voicemail switch failed: %s", type(exc).__name__)
+    return Response(status_code=204)
 
 
 @router.post("/status")
@@ -821,7 +856,7 @@ def _outcome(brief: dict) -> str | None:
         why = {"no-answer": "nobody picked up", "busy": "the line was busy", "failed": "the call didn't go through",
                "canceled": "the call was canceled"}[st]
         return f"I couldn't reach {who}: {why}. Want me to try again later?"
-    if by in _VOICEMAIL:
+    if by in _SURE_VOICEMAIL or (by in _VOICEMAIL and not brief.get("transcript")):
         return f"{who} didn't pick up, so I left your message on their voicemail."
     if by.startswith("machine") or by == "fax":
         return f"{who}'s line went to an answering machine with no beep, so I hung up without leaving a message."
@@ -921,9 +956,10 @@ TOOL_SCHEMAS = [
         "after his yes. Never say a call is prepared unless this tool ran. If they answer, you talk with them about the goal (no tools on the call) and then hang up.",
         "parameters": {"type": "object", "properties": {
             "to": {"type": "string", "description": "A saved contact's name ('Mom'), or 'me' for his own phone"},
-            "message": {"type": "string", "description": "Only the words the listener hears first, worded for them "
-                        "(\"Hi, I'd like to place an order for pickup.\"). Never his instructions, the goal, or "
-                        "what may be shared: those go in goal and share."},
+            "message": {"type": "string", "description": "Only the words the listener hears first, said TO them "
+                        "(\"Hi Ivanna! Daniel asked me to tell you...\", \"Hi, I'd like to place an order for pickup.\"); "
+                        "never about them (not \"I'd like to tell Ivanna that...\"). Never his instructions, the goal, "
+                        "or what may be shared: those go in goal and share."},
             "goal": {"type": "string", "description": "Optional: what to find out or get done on the call if they "
                      "answer ('find out what time dinner is'). Only this and the message are known on the call."},
             "share": {"type": "array", "items": {"type": "string", "enum": list(SHAREABLE)},

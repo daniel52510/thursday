@@ -619,21 +619,11 @@ async def _tts(http: httpx.AsyncClient, text: str, style: dict | None = None) ->
 # objective follows, spoken live.
 PHONE_DISCLOSURE = (f"Hello! I am THURSDAY, automated AI assistant calling for {accounts.OWNER_NAME}. Important: this "
                     "call is not recorded and no voice or caller information is stored, understand? Good, good, good.")
-phone_disclosure_mulaw: bytes | None = None
 
 
-async def warm_phone_disclosure() -> None:
-    global phone_disclosure_mulaw
-    async with httpx.AsyncClient() as http:
-        try:
-            wav = await _tts(http, PHONE_DISCLOSURE)
-        except Exception as exc:  # voice server not up yet: the call path renders it on first use
-            logger.warning("phone disclosure not rendered: %s", exc)
-            return
-    if wav:
-        x, sr = rocky_voice._read(_trim_wav(wav, lead_ms=0, pause_ms=0))
-        phone_disclosure_mulaw = rocky_voice.to_mulaw_8k(x, sr)
-        logger.info("phone disclosure ready: %.1f s of 8 kHz mu-law", len(phone_disclosure_mulaw) / 8000)
+
+
+AHEAD_MAX_CHARS = 160
 
 
 async def synthesize_ahead(http: httpx.AsyncClient, text: str, style: dict | None = None) -> list[bytes]:
@@ -644,7 +634,10 @@ async def synthesize_ahead(http: httpx.AsyncClient, text: str, style: dict | Non
     chunker.feed(text)
     chunker.close()
     pieces = []
-    while (piece := await chunker.next_piece(SentenceChunker.MAX_CHARS)) is not None:
+    # About a sentence per request: Orpheus stops at ~17 s of audio and drifts off the chosen speaker toward its
+    # default (Tara) on long generations; a call's 276-character opening was cut mid-sentence and sounded like
+    # her (2026-11-06). Short pieces, joined with natural pauses, avoid both.
+    while (piece := await chunker.next_piece(AHEAD_MAX_CHARS)) is not None:
         pieces.append(piece)
     audio = []
     for i, piece in enumerate(pieces):

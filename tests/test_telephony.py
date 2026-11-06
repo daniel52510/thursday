@@ -97,7 +97,10 @@ def test_stream_needs_signature_and_a_live_token(phone, monkeypatch):
         frames = [ws.receive_json() for _ in range(3)]
         assert [f["event"] for f in frames] == ["media", "media", "mark"]
         ws.send_json({"event": "stop"})
-    assert token not in telephony._audio  # one use
+    with phone.websocket_connect("/twilio/stream", headers=sig) as ws:  # one stream per call
+        ws.send_json({"event": "start", "start": {"streamSid": "MZ2", "customParameters": {"token": token}}})
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
 
 
 def test_phone_encoder_has_no_seams_between_pieces():
@@ -200,3 +203,26 @@ def test_same_opener_twice_is_dropped():
     assert m and m.group(1) == "Oh"
     assert not telephony._OPENER.match("A large, please.")
     assert not telephony._OPENER.match("Ohio is far.")
+
+
+def test_amd_only_a_sure_voicemail_switches_a_live_call(phone, monkeypatch):
+    posted = []
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, **k):
+            posted.append((url, k["data"]["Twiml"]))
+            return type("R", (), {"status_code": 200})()
+    monkeypatch.setattr(telephony.httpx, "AsyncClient", FakeClient)
+    token = telephony._keep_audio(b"RIFFwav")
+    telephony._briefs[token] = {"who": "Ivanna", "message": "hi", "transcript": []}
+    sid = "CA" + "0" * 32
+    path = f"/twilio/amd?token={token}"
+    assert phone.post(path, data={"AnsweredBy": "machine_end_beep", "CallSid": sid}).status_code == 403
+    _signed_post(phone, path, {"AnsweredBy": "machine_end_other", "CallSid": sid})  # "Hello? Hello?": leave it
+    _signed_post(phone, path, {"AnsweredBy": "human", "CallSid": sid})
+    assert posted == []
+    _signed_post(phone, path, {"AnsweredBy": "machine_end_beep", "CallSid": sid})
+    assert len(posted) == 1 and sid in posted[0][0] and f"/twilio/audio/{token}.wav" in posted[0][1]

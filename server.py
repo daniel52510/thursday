@@ -29,7 +29,7 @@ from agent_stream import stream_prompt
 from alarms import run_scheduler as run_alarm_scheduler
 from episodic import run_memory_writer
 from mind import run_reflection, voice_style
-from voice_ws import SATELLITES, VOICE_TOKEN, same_origin, synthesize_ahead, warm_phone_disclosure, router as voice_router
+from voice_ws import SATELLITES, VOICE_TOKEN, same_origin, synthesize_ahead, router as voice_router
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,6 @@ async def lifespan(app: FastAPI):
     on_missions = asyncio.create_task(missions.run_worker())
     on_improvements = asyncio.create_task(improvements.run_notifier())
     on_review = asyncio.create_task(improvements.start_self_review())
-    asyncio.create_task(warm_phone_disclosure())  # Rocky's call opening, ready before any call
     on_greetings = asyncio.create_task(greetings.run())  # fresh wake greetings each hour
     yield
     on_greetings.cancel()
