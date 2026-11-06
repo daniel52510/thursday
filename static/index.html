@@ -99,11 +99,12 @@
   .planet-breath { transform-box: fill-box; transform-origin: center; animation: breathe 6s var(--ease) infinite; }
   @keyframes breathe { 50% { transform: scale(1.03); } }
   .wordmark { font: 600 13px/1 var(--tight); letter-spacing: .22em; text-transform: uppercase; color: var(--text); }
-  .stripe-bar { display: grid; gap: 0; }
-  .stripe-bar i { display: block; height: 3px; }
-  .stripe-bar i:nth-child(1) { background: var(--stripe-blue); } .stripe-bar i:nth-child(2) { background: var(--stripe-green); }
-  .stripe-bar i:nth-child(3) { background: var(--stripe-amber); } .stripe-bar i:nth-child(4) { background: var(--stripe-orange); }
-  .stripe-bar i:nth-child(5) { background: var(--stripe-red); }
+  /* The trajectory colours as one smooth line that fades in and out at the ends (was five hard 3px bars). */
+  .stripe-bar { height: 3px; border-radius: 3px; background: linear-gradient(90deg, var(--stripe-blue), var(--stripe-green),
+      var(--stripe-amber), var(--stripe-orange), var(--stripe-red));
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); opacity: .9; }
+  .stripe-bar i { display: none; }
 
   /* ---------- sidebar ---------- */
   aside {
@@ -283,7 +284,7 @@
   #voice .top .brand { padding: 0; }
   #voice .readouts { display: flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; text-align: right; }
   .stage { display: flex; flex-direction: column; align-items: center; width: 100%; }
-  .vfig { width: min(440px, 86vw); height: auto; overflow: visible; }
+  .vfig { width: min(320px, 72vw); height: auto; overflow: visible; margin: 8px 0 4px; }
   #voiceState { margin-top: 14px; min-height: 1.4em; text-align: center; }
   /* Live captions: a three-line window that follows her voice word by word. */
   #voiceCaption { width: min(640px, 100%); text-align: center; font: 500 24px/1.45 var(--sans); letter-spacing: -.01em; color: var(--text); height: 4.35em; margin-top: 14px; padding: 0 8px; position: relative; overflow: hidden; scroll-behavior: smooth; -webkit-mask-image: linear-gradient(transparent, #000 1.1em); mask-image: linear-gradient(transparent, #000 1.1em); }
@@ -304,11 +305,9 @@
   .talk.muted { background: transparent; color: var(--text); border: 1px solid var(--rule-strong); }
 
   /* figure parts */
-  .vfig .stripe path { fill: none; stroke-width: 6; transition: opacity .25s var(--ease), stroke .25s var(--ease); }
-  .vfig .s0 path { stroke: var(--stripe-blue); } .vfig .s1 path { stroke: var(--stripe-green); }
-  .vfig .s2 path { stroke: var(--stripe-amber); } .vfig .s3 path { stroke: var(--stripe-orange); }
-  .vfig .s4 path { stroke: var(--stripe-red); }
-  .vfig .rise { transform-box: fill-box; transform-origin: 50% 100%; transition: transform .35s var(--ease); }
+  /* The aura: a soft glow behind the planet that swells with the live sound level (--level, set each frame). */
+  .vfig .aura { fill: url(#vfig-aura); opacity: calc(.1 + var(--level) * .9); transform-box: view-box; transform-origin: 378px 110px;
+                transform: scale(calc(.8 + var(--level) * .9)); transition: opacity .3s var(--ease); pointer-events: none; }
   .vfig .halo { fill: url(#vfig-halo); opacity: calc(var(--level) * .9); pointer-events: none; }
   .vfig .orbit { fill: none; stroke: var(--text); stroke-width: 3; }
   .vfig .knock { fill: none; stroke: var(--bg); stroke-width: 11; }
@@ -317,30 +316,33 @@
   .vfig .b { fill: var(--band); } .vfig .bl { fill: var(--band-light); } .vfig .spot { fill: var(--spot); }
   .vfig .b, .vfig .bl, .vfig .spot { transition: fill .25s var(--ease); }
   .vfig .planet { transform-box: view-box; transform-origin: 378px 110px; transform: scale(calc(1 + var(--level) * .06)); transition: transform .08s linear; }
+  .vfig .bands { transform-box: view-box; transform-origin: 378px 110px; }
   .vfig .ring { fill: none; stroke: var(--text-faint); stroke-width: 1.5; opacity: 0; vector-effect: non-scaling-stroke; transform-box: fill-box; transform-origin: center; }
   .vfig .orbiting { display: none; }
 
-  /* standby: the planet breathes, stripes rest */
+  /* standby: the planet breathes */
   #voice[data-state="standby"] .globe-g { animation: standby 6s ease-in-out infinite; }
-  #voice[data-state="standby"] .stripe { opacity: .35; }
-  @keyframes standby { 0%, 100% { opacity: .5; } 50% { opacity: .85; } }
+  #voice[data-state="standby"] .aura { opacity: .12; }
+  @keyframes standby { 0%, 100% { opacity: .55; } 50% { opacity: .9; } }
   /* listening: three rings expand from the planet */
   #voice[data-state="listening"] .ring { animation: ring 2.4s var(--ease) infinite; }
   #voice[data-state="listening"] .ring:nth-of-type(2) { animation-delay: .8s; }
   #voice[data-state="listening"] .ring:nth-of-type(3) { animation-delay: 1.6s; }
   @keyframes ring { from { transform: scale(1); opacity: .55; } to { transform: scale(2.8); opacity: 0; } }
-  /* thinking: bands drift, the moon orbits, stripes flow up */
+  /* thinking: bands drift, the moon orbits, a slow aura */
   #voice[data-state="thinking"] .bands { animation: drift 3s ease-in-out infinite; }
   @keyframes drift { 0%, 100% { transform: translateY(-2px); } 50% { transform: translateY(2px); } }
-  #voice[data-state="thinking"] .orbiting { display: inline; }
-  #voice[data-state="thinking"] .moon-rest { display: none; }
-  #voice[data-state="thinking"] .stripe path { stroke-dasharray: 6 6; animation: flow .8s linear infinite; }
-  @keyframes flow { to { stroke-dashoffset: -12; } }
-  /* listening + speaking: the rising stripes become a live five-band spectrum
-     (blue = lows ... red = highs) of the mic or of her voice. --b is set per
-     stripe every frame by animateOrb(), so no CSS transition here. */
-  #voice[data-state="listening"] .rise, #voice[data-state="speaking"] .rise { transform: scaleY(calc(.08 + var(--b, 0) * .92)); transition: none; }
-  #voice[data-state="listening"] .stripe { opacity: calc(.45 + var(--b, 0) * .55); }
+  #voice[data-state="thinking"] .orbiting, #voice[data-state="speaking"] .orbiting { display: inline; }
+  #voice[data-state="thinking"] .moon-rest, #voice[data-state="speaking"] .moon-rest { display: none; }
+  #voice[data-state="thinking"] .aura { animation: auraBreath 2.2s ease-in-out infinite; }
+  @keyframes auraBreath { 0%, 100% { opacity: .15; } 50% { opacity: .4; } }
+  /* speaking: the planet hums with his voice. It swells and the bands shimmer with each syllable, the aura glows;
+     --level is his voice's loudness every frame (animateOrb), so no transitions on these. */
+  #voice[data-state="speaking"] .planet { transform: scale(calc(1 + var(--level) * .16)); transition: none; }
+  #voice[data-state="speaking"] .bands { transform: translateY(calc(var(--level) * -3px)) scaleY(calc(1 + var(--level) * .08)); }
+  #voice[data-state="speaking"] .aura { transition: none; }
+  /* listening: rings ripple out and the planet leans in with his voice */
+  #voice[data-state="listening"] .planet { transform: scale(calc(1 + var(--level) * .09)); transition: none; }
   /* error: gray planet, broken stripes (she also says what's down) */
   #voice[data-state="error"] .globe { fill: #8C877C; }
   #voice[data-state="error"] .b, #voice[data-state="error"] .bl, #voice[data-state="error"] .spot { fill: #A8A396; }
@@ -567,7 +569,7 @@
     *, *::before, *::after { animation: none !important; transition: none !important; }
     .vfig .orbiting { display: none !important; }
     .vfig .moon-rest { display: inline !important; }
-    .vfig .rise { transform: none !important; }
+    .vfig .planet, .vfig .aura, .vfig .bands { transform: none !important; }
   }
 </style>
 </head>
@@ -631,7 +633,7 @@
   <button class="nav-btn" id="settingsNav"><svg><use href="#i-dots"/></svg>Settings</button>
   <input class="conv-search" id="convSearch" type="search" placeholder="Search conversations" aria-label="Search conversations" autocomplete="off">
   <nav class="conv-list" id="convList" aria-label="Conversations"></nav>
-  <div class="stripe-bar" aria-hidden="true" style="margin:0 -12px"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="stripe-bar" aria-hidden="true" style="margin:4px 12px"></div>
   <div class="status">
     <dl class="sys" aria-label="Systems">
       <div><dt>Voice</dt><dd><span class="dot" id="statusDot"></span><span id="statusModel">Connecting…</span></dd></div>
@@ -760,15 +762,12 @@
   </div>
   <div class="stage">
     <!-- The trajectory figure (DESIGN.md sections 5 and 8). data-state on #voice drives it. -->
-    <svg class="vfig" id="vfig" viewBox="0 0 520 420" aria-hidden="true">
+    <svg class="vfig" id="vfig" viewBox="238 -30 280 280" aria-hidden="true">
       <defs><clipPath id="vfig-clip"><circle cx="378" cy="110" r="46"/></clipPath>
         <!-- a gradient, not a blur filter: only its opacity changes per frame, which stays cheap -->
-        <radialGradient id="vfig-halo"><stop offset=".55" stop-color="var(--signal)" stop-opacity=".45"/><stop offset="1" stop-color="var(--signal)" stop-opacity="0"/></radialGradient></defs>
-      <g class="stripe s0"><path d="M 0 360 H 300 A 60 60 0 0 0 360 300"/><path class="rise" d="M 360 300 V 170"/></g>
-      <g class="stripe s1"><path d="M 0 369 H 300 A 69 69 0 0 0 369 300"/><path class="rise" d="M 369 300 V 170"/></g>
-      <g class="stripe s2"><path d="M 0 378 H 300 A 78 78 0 0 0 378 300"/><path class="rise" d="M 378 300 V 170"/></g>
-      <g class="stripe s3"><path d="M 0 387 H 300 A 87 87 0 0 0 387 300"/><path class="rise" d="M 387 300 V 170"/></g>
-      <g class="stripe s4"><path d="M 0 396 H 300 A 96 96 0 0 0 396 300"/><path class="rise" d="M 396 300 V 170"/></g>
+        <radialGradient id="vfig-halo"><stop offset=".55" stop-color="var(--signal)" stop-opacity=".45"/><stop offset="1" stop-color="var(--signal)" stop-opacity="0"/></radialGradient>
+        <radialGradient id="vfig-aura"><stop offset=".3" stop-color="var(--band-light)" stop-opacity=".7"/><stop offset=".62" stop-color="var(--signal)" stop-opacity=".25"/><stop offset="1" stop-color="var(--signal)" stop-opacity="0"/></radialGradient></defs>
+      <circle class="aura" cx="378" cy="110" r="138"/>
       <g><circle class="ring" cx="378" cy="110" r="30"/><circle class="ring" cx="378" cy="110" r="30"/><circle class="ring" cx="378" cy="110" r="30"/></g>
       <g class="planet">
         <circle class="halo" cx="378" cy="110" r="84"/>
@@ -1993,7 +1992,7 @@ function bandMeter(ctx, node) {
   };
 }
 
-const vStripes = [...document.querySelectorAll("#vfig .stripe")];
+
 const calm = matchMedia("(prefers-reduced-motion: reduce)");
 function animateOrb() {
   const sm = new Float32Array(5);
@@ -2005,9 +2004,8 @@ function animateOrb() {
       const t = bands ? bands[i] : 0;
       sm[i] += (t - sm[i]) * (t > sm[i] ? 0.5 : 0.12);  // fast attack, slow release: bars jump with syllables and settle smoothly
       sum += sm[i];
-      vStripes[i].style.setProperty("--b", sm[i].toFixed(3));
     }
-    vFig.style.setProperty("--level", (sum / 5).toFixed(3));
+    vFig.style.setProperty("--level", Math.min(1, (sum / 5) * 1.6).toFixed(3));  // one level: the planet hums with it
     V.raf = requestAnimationFrame(tick);
   };
   V.raf = requestAnimationFrame(tick);
