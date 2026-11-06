@@ -893,6 +893,8 @@ _CLAIMED = re.compile(r",\s*(?:playing|added|saved|set|done|booked|off|on|paused
                       r"(?:a\s+|the\s+|an\s+)?(?:mission|improvement|task|code\s+review|routine|watch)|"
                       r"(?:mission|improvement\s+task|code\s+review)\s+(?:is\s+)?(?:underway|started|queued|running)|"
                       r"running\s+in\s+sandbox|you\s+watch,\s*i\s+work|"
+                      r"call\s+(?:is\s+)?(?:prepared|ready|dialing|placed|complete)|(?:i\s+am\s+)?calling\s+(?:you|them|her|him)\s+now|"
+                      r"i\s+(?:called|dialed|prepared\s+(?:a\s+|the\s+)?call)|"
                       r"mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
 
 
@@ -924,6 +926,10 @@ _LEAD_IN = re.compile(
     r"\b[^.!?,…—\n]{0,30}(?:[.!?,…—]+|\n)\s*",
     re.I,
 )
+# Any turn with no tool run yet: the first sentence is held and checked for a claim of what no tool did ("Call is
+# dialing now." 2026-11-06). Free in voice: TTS waits for that sentence end anyway.
+_GUARD_SETTLED = re.compile(r"[.!?…]+[\"')\]]*\s+\S")
+GUARD_MAX_CHARS = 200
 _LEAD_SETTLED = re.compile(r"(?:[.!?,…—]|\n)\s+\S")  # past the first clause: enough to judge the lead-in
 LEAD_BUFFER_CHARS = 60
 
@@ -1484,6 +1490,10 @@ async def _stream_prompt(
             round_text: list[str] = []
             # A deliberate turn is his opinion, not a lookup: no retry for skipping a tool (it doubled a 15 s think).
             hold = hold_first and round_no == 0 and not deliberate
+            # Not held: still hold the first sentence until it's clear it claims nothing no tool did.
+            guard = "" if (round_no == 0 and not hold and not executed and not final_round
+                           and mode in ("voice", "chat")) else None
+            claimed = False
             async with client.stream("POST", CHAT_URL, json=payload) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode(errors="replace")[:300]
@@ -1495,6 +1505,15 @@ async def _stream_prompt(
                     if chunk.get("error"):
                         raise RuntimeError(f"Ollama error: {chunk['error']}")
                     msg = chunk.get("message") or {}
+                    if msg.get("content") and guard is not None:
+                        guard += msg["content"]
+                        if not (_GUARD_SETTLED.search(guard) or len(guard) >= GUARD_MAX_CHARS):
+                            msg = {**msg, "content": ""}  # still held
+                        elif _CLAIMED.search(guard):
+                            claimed = True
+                            break
+                        else:
+                            msg, guard = {**msg, "content": guard}, None  # released whole, below
                     if msg.get("content"):
                         round_text.append(msg["content"])
                         if not hold:
@@ -1516,6 +1535,19 @@ async def _stream_prompt(
                         # Counted per round, so a reply cut off mid-way still counts what it used.
                         accounts.shared().add_tokens(user["id"], chunk.get("prompt_eval_count", 0) + chunk.get("eval_count", 0))
                         break
+            if guard:  # a reply too short to end a sentence: judge it whole
+                if not calls and _CLAIMED.search(guard):
+                    claimed = True
+                else:
+                    timing.setdefault("ttft_ms", _ms(started))
+                    round_text.append(guard)
+                    yield {"type": "delta", "text": guard}
+            if claimed:
+                print(f"[agent] {user_prompt[:60]!r}: reply claimed an action no tool ran; retrying with a nudge")
+                messages.append({"role": "system", "content": (
+                    "Your reply said something was done, started, playing, set or dialing, but no tool ran this turn. "
+                    "If he asked for an action, call its tool now; otherwise answer without claiming anything was done.")})
+                continue
             if hold and not calls and (not claims_only or _CLAIMED.search("".join(round_text))):
                 print(f"[agent] answered {user_prompt[:60]!r} without a tool; retrying with a nudge")
                 claims_only = False  # once: the retry's reply goes out whatever it says
