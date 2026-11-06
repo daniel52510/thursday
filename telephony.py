@@ -44,6 +44,9 @@ PUBLIC = os.getenv("TWILIO_PUBLIC_URL", "").rstrip("/")  # e.g. https://<mac>.<t
 DAILY_CAP = int(os.getenv("TWILIO_DAILY_CALLS", "10"))  # in memory: a restart resets it
 AUDIO_TTL_S = 15 * 60
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
+# Toll fraud: only these country prefixes dial (international premium lines bill per minute), never US premium-rate.
+ALLOWED = tuple(p.strip() for p in os.getenv("TWILIO_ALLOWED_PREFIXES", "+1").split(",") if p.strip())
+PREMIUM = re.compile(r"^\+1(900|976)")
 
 _audio: dict[str, tuple[float, bytes]] = {}  # token -> (expires, wav)
 _pending: dict[str, dict] = {}               # conversation -> prepared call
@@ -79,7 +82,8 @@ def _number(to: str) -> str | None:
     digits = re.sub(r"[^\d+]", "", to)
     if re.fullmatch(r"\d{10}", digits):  # a US number said without the country code
         digits = "+1" + digits
-    return digits if E164.match(digits) else None
+    ok = E164.match(digits) and digits.startswith(ALLOWED) and not PREMIUM.match(digits)
+    return digits if ok else None
 
 
 def _render(text: str) -> bytes:
