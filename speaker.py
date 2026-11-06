@@ -157,7 +157,7 @@ def identify(pcm16: bytes, prints: dict[str, np.ndarray] | None = None) -> dict:
 SENSITIVE = {"calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "approval_list",
              "approval_decide", "send_to_phone", "improve_start", "code_review_start", "engineer_pass_now",
              "mission_start", "routine_start", "watch_start", "note_find", "note_delete", "alarm_cancel",
-             "call_place", "call_confirm"}
+             "call_place", "call_confirm", "health_check"}
 CURRENT: contextvars.ContextVar = contextvars.ContextVar("speaker_check", default=None)  # this turn's identify task
 
 

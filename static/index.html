@@ -409,6 +409,7 @@
   .tile small { display: block; font: 500 10.5px/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); }
   .tile b { display: block; font: 400 26px/1.2 var(--serif); font-variant-numeric: tabular-nums; margin-top: 2px; }
   .tile span { display: block; font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+  .tile-wide { grid-column: 1 / -1; }
   .mini { margin-top: 18px; }
   .mini .lat-chart svg { overflow: visible; }
   .mini .bar { fill: var(--text); opacity: .85; }
@@ -1131,8 +1132,12 @@ let bodyDays = 30;
 const fmtMin = (m) => m == null ? "–" : `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, "0")} m`;
 const avgOf = (rows, k) => { const v = rows.map((r) => r[k]).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
 async function loadBody() {
-  let rows = [];
-  try { const res = await api(`/api/health/daily?days=${bodyDays}`); if (res.ok) rows = await res.json(); } catch {}
+  let rows = [], ready = {};
+  try {
+    const [d, r] = await Promise.all([api(`/api/health/daily?days=${bodyDays}`), api("/api/health/readiness")]);
+    if (d.ok) rows = await d.json();
+    if (r.ok) ready = await r.json();
+  } catch {}
   const tiles = $("bodyTiles"), charts = $("bodyCharts");
   tiles.innerHTML = ""; charts.innerHTML = "";
   if (!rows.some((r) => Object.keys(r).length > 2)) {
@@ -1154,6 +1159,11 @@ async function loadBody() {
     t.children[0].textContent = label; t.children[1].textContent = value; t.children[2].textContent = sub;
     tiles.append(t);
   };
+  if (ready.score != null) {  // the trainer's call for today, with its reasons
+    const why = ready.drivers.map((d) => `${d.signal} ${d.points > 0 ? "+" : ""}${d.points}`).join(" · ");
+    tile("Readiness", `${ready.score}`, `${ready.label.split(":")[0]} · ${why}`);
+    tiles.lastChild.classList.add("tile-wide");
+  }
   tile("Last night", fmtMin(lastSleep?.sleep_minutes), lastSleep
     ? `deep ${Math.round(lastSleep.sleep_deep || 0)} · REM ${Math.round(lastSleep.sleep_rem || 0)} · core ${Math.round(lastSleep.sleep_core || 0)} min` : "no sleep recorded");
   tile("Resting HR", ...vs("resting_heart_rate", "bpm"));

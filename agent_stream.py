@@ -49,6 +49,7 @@ import eridian
 import improvements
 import missions
 import music
+import health
 import lights
 import notes
 import telephony
@@ -591,7 +592,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -1498,10 +1499,14 @@ async def _stream_prompt(
     if mode == "briefing":
         hold_first = True
         nudge = ("Call the tools for each topic first (calendar_events for today, get_weather, web_search for "
-                 "news) and write the briefing only from their results; never from memory.")
+                 "news, and health_check with topic recovery and days 1 for how he slept and his readiness) and "
+                 "write the briefing only from their results; never from memory. Health: one sentence, readiness "
+                 "and sleep, plus what it means for training today.")
     elif mode == "wake":
         hold_first = True
-        nudge = "Call calendar_events for today first (and get_weather if his location is known); then wake him."
+        nudge = ("Call calendar_events for today first (and get_weather if his location is known, and health_check "
+                 "with topic recovery and days 1); then wake him. Mention how he slept and his readiness in a few "
+                 "words, like a trainer would.")
 
     reply_parts: list[str] = []
     final_round = False

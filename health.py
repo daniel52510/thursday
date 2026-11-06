@@ -220,3 +220,104 @@ def daily(days: int = 30, tz: str | None = None) -> list[dict]:
             d["sleep_minutes"] = round(asleep)
         result.append(d)
     return result
+
+
+# ---------------------------------------------------------------- the trainer
+# Readiness is explainable on purpose: three of his own signals against his own baseline, each adding or taking
+# points, so THURSDAY can say why ("HRV is 12% over your baseline, sleep was short"), not just a number.
+SLEEP_GOAL_MIN = 7 * 60
+
+
+def _avg(rows: list[dict], key: str) -> float | None:
+    vals = [r[key] for r in rows if r.get(key) is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def readiness(days: list[dict] | None = None) -> dict | None:
+    """Today's readiness, 0-100, from HRV and resting heart rate against his 30-day baseline and last night's
+    sleep. None until there's enough data (a few days of HRV or resting heart rate)."""
+    days = days if days is not None else daily(31)
+    if len(days) < 2:
+        return None
+    today, base = days[-1], days[:-1]
+    latest = lambda k: today.get(k) if today.get(k) is not None else next((d[k] for d in reversed(base[-2:]) if d.get(k) is not None), None)
+    hrv, hrv_base = latest("hrv"), _avg(base, "hrv")
+    rhr, rhr_base = latest("resting_heart_rate"), _avg(base, "resting_heart_rate")
+    sleep = latest("sleep_minutes")
+    if (hrv is None or hrv_base is None) and (rhr is None or rhr_base is None):
+        return None
+    score, drivers = 70.0, []
+    if hrv is not None and hrv_base:
+        pct = (hrv - hrv_base) / hrv_base * 100
+        pts = max(-15, min(15, pct * 0.75))
+        score += pts
+        drivers.append({"signal": "HRV", "today": round(hrv), "baseline": round(hrv_base), "unit": "ms",
+                        "change_pct": round(pct), "points": round(pts)})
+    if rhr is not None and rhr_base:
+        diff = rhr - rhr_base
+        pts = max(-12, min(8, -diff * 2))
+        score += pts
+        drivers.append({"signal": "resting heart rate", "today": round(rhr), "baseline": round(rhr_base), "unit": "bpm",
+                        "change": round(diff), "points": round(pts)})
+    if sleep is not None:
+        pts = max(-12, min(8, (sleep - SLEEP_GOAL_MIN) / 60 * 6))
+        score += pts
+        drivers.append({"signal": "sleep", "last_night_min": round(sleep), "goal_min": SLEEP_GOAL_MIN, "points": round(pts)})
+    score = round(max(0, min(100, score)))
+    label = ("primed: a good day to push" if score >= 80 else "good: train as planned" if score >= 60
+             else "so-so: keep it moderate" if score >= 40 else "low: rest or go easy")
+    return {"score": score, "label": label, "drivers": drivers, "date": today["date"]}
+
+
+def health_check(args: dict) -> "ToolResult":
+    """The trainer's eyes: his numbers for a topic, against his own baseline, for THURSDAY to coach from."""
+    from accounts import OWNER
+    from calendar_tool import TURN
+    from tools import ToolResult
+    turn = TURN.get()
+    if not turn or turn.get("user") != OWNER:
+        return ToolResult(ok=False, tool_name="health_check", error="health_data_is_daniels_only")
+    topic = str(args.get("topic") or "overview")
+    span = max(1, min(int(args.get("days") or 7), 90))
+    days = daily(max(31, span + 1))
+    recent, before = days[-span:], days[-31:-span] or days[:-span]
+    if not any(len(d) > 2 for d in days):
+        return ToolResult(ok=False, tool_name="health_check",
+                          error="no_health_data: Health Auto Export hasn't synced yet; ask him to open the app")
+    pick = {"sleep": ("sleep_minutes", "sleep_deep", "sleep_rem", "sleep_core", "sleep_awake"),
+            "heart": ("resting_heart_rate", "hrv", "walking_heart_rate", "heart_rate", "blood_oxygen", "respiratory_rate"),
+            "activity": ("steps", "active_energy", "exercise_minutes", "stand_minutes", "distance", "flights"),
+            "weight": ("weight",), "recovery": ("hrv", "resting_heart_rate", "sleep_minutes", "wrist_temperature")}
+    keys = pick.get(topic) or tuple(k for ks in pick.values() for k in ks) + ("vo2max",)
+    summary = {}
+    for k in keys:
+        now_avg, then_avg = _avg(recent, k), _avg(before, k)
+        if now_avg is not None:
+            summary[k] = {"avg": round(now_avg, 1), **({"baseline_avg": round(then_avg, 1)} if then_avg is not None else {})}
+    per_day = [{"date": d["date"], **{k: d[k] for k in keys if d.get(k) is not None}} for d in recent]
+    workouts = [{"date": d["date"], **w} for d in recent for w in d.get("workouts", [])]
+    data = {"topic": topic, "days": span, "averages_vs_previous_weeks": summary, "per_day": per_day[-14:],
+            "workouts": workouts, "readiness_today": readiness(days),
+            "units": {"sleep_*": "minutes", "hrv": "ms", "resting_heart_rate": "bpm", "active_energy": "kcal",
+                      "distance": "km", "weight": "kg (say pounds if he uses them: x 2.2046)"},
+            "note": "You're his trainer and coach, not a doctor. Lead with what matters for today, compare with his own "
+                    "baseline, then one concrete suggestion (train hard, keep it easy, sleep earlier...). Never "
+                    "diagnose; if something looks off for days (resting HR up, HRV down, poor sleep), suggest rest "
+                    "and, if it persists, checking with a doctor. Missing data: say what's missing, don't guess."}
+    if topic == "weight" and "weight" not in summary:
+        data["note"] += " No weight data yet: weight needs a smart scale or manual entries in Apple Health, " \
+                        "and 'Weight & Body Mass' turned on in Health Auto Export."
+    return ToolResult(ok=True, tool_name="health_check", data=data)
+
+
+TOOL_SCHEMAS = [{"type": "function", "function": {
+    "name": "health_check",
+    "description": "His Apple Watch health data as his personal trainer: sleep, recovery and readiness, heart "
+                   "(resting HR, HRV), activity, workouts, weight, compared with his own baseline. Use for 'how did "
+                   "I sleep', 'am I recovered', 'should I train hard today', 'how active was I this week', 'my "
+                   "resting heart rate', 'last workout'.",
+    "parameters": {"type": "object", "properties": {
+        "topic": {"type": "string", "enum": ["overview", "sleep", "recovery", "heart", "activity", "workouts", "weight"],
+                  "description": "What he's asking about; 'recovery' covers readiness and whether to train"},
+        "days": {"type": "integer", "description": "How far back: 1 for last night/today, 7 for this week, 30 for a month"}},
+        "required": ["topic"]}}}]

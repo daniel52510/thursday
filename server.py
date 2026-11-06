@@ -707,6 +707,11 @@ def health_daily(days: int = 30, user: dict = Depends(owner_only)):
     return health.daily(max(1, min(days, 365)))
 
 
+@app.get("/api/health/readiness")
+def health_readiness(user: dict = Depends(owner_only)):
+    return health.readiness() or {}
+
+
 @app.delete("/api/health/data")
 def health_delete(user: dict = Depends(owner_only)):
     return {"deleted": health.delete_all()}

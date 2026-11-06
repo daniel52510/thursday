@@ -85,3 +85,31 @@ def test_daily_rollup():
     assert d["steps"] == 1200 and d["hrv"] == 48.2 and d["resting_heart_rate"] == 54
     assert d["sleep_deep"] == 66 and d["sleep_minutes"] == round((3.9 + 1.1 + 1.6) * 60)  # awake not counted
     assert by["2026-11-05"]["workouts"][0]["type"] == "Outdoor Run"
+
+
+def _day(date, **kw):
+    return {"date": date, "workouts": [], **kw}
+
+
+def test_readiness_explains_itself():
+    base = [_day(f"2026-10-{d:02d}", hrv=60, resting_heart_rate=55, sleep_minutes=420) for d in range(1, 30)]
+    good = health.readiness(base + [_day("2026-10-30", hrv=72, resting_heart_rate=52, sleep_minutes=480)])
+    bad = health.readiness(base + [_day("2026-10-30", hrv=45, resting_heart_rate=62, sleep_minutes=330)])
+    assert good["score"] >= 80 and "push" in good["label"]
+    assert bad["score"] < 40 and "rest" in bad["label"]
+    assert {d["signal"] for d in bad["drivers"]} == {"HRV", "resting heart rate", "sleep"}
+    assert all(d["points"] < 0 for d in bad["drivers"])
+    assert health.readiness([_day("2026-10-30")]) is None  # not enough data
+
+
+def test_health_check_is_his_only(monkeypatch):
+    from calendar_tool import TURN
+    TURN.set({"user": "guest", "conversation": "c", "turn": 1, "user_said": "how did I sleep"})
+    assert health.health_check({"topic": "sleep"}).error == "health_data_is_daniels_only"
+    TURN.set({"user": "owner", "conversation": "c", "turn": 1, "user_said": "how did I sleep"})
+    assert "no_health_data" in health.health_check({"topic": "sleep"}).error  # empty test db
+    health.store(health.parse_payload(AUTO_EXPORT))
+    monkeypatch.setattr(health, "daily", lambda days, tz=None: [_day("2026-11-05", hrv=50, sleep_minutes=400),
+                                                                _day("2026-11-06", hrv=48.2, sleep_minutes=396, sleep_deep=66)])
+    r = health.health_check({"topic": "sleep", "days": 1})
+    assert r.ok and r.data["averages_vs_previous_weeks"]["sleep_minutes"]["avg"] == 396
