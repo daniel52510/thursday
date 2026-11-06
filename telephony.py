@@ -35,7 +35,7 @@ from accounts import OWNER, OWNER_NAME
 from calendar_tool import PENDING_TTL_S, TURN, _HEDGE, _YES
 from tools import ToolResult
 
-logger = logging.getLogger("thursday.phone")
+logger = logging.getLogger("thursday.voice.phone")  # under voice_ws's logger: its handler gets these into docker logs
 SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 FROM = os.getenv("TWILIO_FROM", "")
