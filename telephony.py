@@ -119,6 +119,8 @@ def _dialable(to: str) -> str | None:
     digits = re.sub(r"[^\d+]", "", to or "")
     if re.fullmatch(r"\d{10}", digits):  # a US number said without the country code
         digits = "+1" + digits
+    elif re.fullmatch(r"1\d{10}", digits):  # "1 305 555 0123": the country code without its +
+        digits = "+" + digits
     ok = E164.match(digits) and digits.startswith(ALLOWED) and not PREMIUM.match(digits)
     return digits if ok else None
 
@@ -136,6 +138,69 @@ def contacts() -> dict[str, str]:
     except OSError:
         pass
     return out
+
+
+def contact_list() -> list[dict]:
+    """The contact book as the page shows it: names as he typed them, numbers spoken-style."""
+    out = []
+    try:
+        with open(CONTACTS_FILE) as f:
+            for line in f:
+                name, sep, num = line.partition(":")
+                if sep and not name.lstrip().startswith("#") and (number := _dialable(num)):
+                    out.append({"name": name.strip(), "number": number, "display": _spoken_number(number)})
+    except OSError:
+        pass
+    return out
+
+
+def _why_not(raw: str) -> str:
+    digits = re.sub(r"[^\d+]", "", raw or "")
+    if not digits:
+        return "Enter a phone number."
+    if digits.startswith("+") and not digits.startswith(ALLOWED):
+        return "Only US/Canada (+1) numbers can be called."
+    if PREMIUM.match(_dialable_unchecked(digits)):
+        return "900 and 976 numbers are premium-rate and can't be added."
+    return "That doesn't look like a full 10-digit number."
+
+
+def _dialable_unchecked(digits: str) -> str:
+    return "+1" + digits if re.fullmatch(r"\d{10}", digits) else "+" + digits if re.fullmatch(r"1\d{10}", digits) \
+        else digits
+
+
+def _write_contacts(entries: list[dict]) -> None:
+    header = ('# THURSDAY can only call "me" and the people below. One per line: Name: number (US +1 only).\n'
+              "# Managed from the web UI (Contacts); editing by hand works too.\n")
+    with open(CONTACTS_FILE, "w") as f:
+        f.write(header + "".join(f"{e['name']}: {e['number']}\n" for e in entries))
+
+
+def add_contact(name: str, raw: str) -> dict:
+    """From his web UI (admin only), never from a tool: a new or updated contact, or {"error": why}."""
+    name = re.sub(r"[\s:#]+", " ", name or "").strip()[:40]
+    if not name:
+        return {"error": "Enter a name."}
+    if name.lower() in ("me", "phone", "daniel", OWNER_NAME.lower()):
+        return {"error": f'"{name}" already means you.'}
+    number = _dialable(raw)
+    if not number:
+        return {"error": _why_not(raw)}
+    entries = [e for e in contact_list() if e["name"].lower() != name.lower()]
+    entries.append({"name": name, "number": number})
+    _write_contacts(sorted(entries, key=lambda e: e["name"].lower()))
+    logger.info("contact saved (%d in the book)", len(entries))
+    return {"name": name, "number": number, "display": _spoken_number(number)}
+
+
+def remove_contact(name: str) -> bool:
+    entries = contact_list()
+    keep = [e for e in entries if e["name"].lower() != (name or "").strip().lower()]
+    if len(keep) == len(entries):
+        return False
+    _write_contacts(keep)
+    return True
 
 
 def _number(to: str) -> str | None:

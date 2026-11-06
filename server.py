@@ -563,6 +563,32 @@ class AlarmPatch(BaseModel):
     enabled: bool
 
 
+class ContactIn(BaseModel):
+    name: str
+    number: str
+
+
+# The call allowlist (brain/contacts.txt): only he edits it, here or by hand. No tool can, so nothing said to
+# THURSDAY (on a call, in a web page) can add a number.
+@app.get("/api/contacts")
+def list_contacts(user: dict = Depends(admin_only)):
+    return telephony.contact_list()
+
+
+@app.post("/api/contacts", status_code=201)
+def save_contact(body: ContactIn, user: dict = Depends(admin_only)):
+    saved = telephony.add_contact(body.name, body.number)
+    if "error" in saved:
+        raise HTTPException(status_code=400, detail=saved["error"])
+    return saved
+
+
+@app.delete("/api/contacts/{name}", status_code=204)
+def delete_contact(name: str, user: dict = Depends(admin_only)):
+    if not telephony.remove_contact(name):
+        raise HTTPException(status_code=404)
+
+
 # Alarms ring on the satellite, which is the admin's: they're the admin's too.
 @app.get("/api/alarms")
 def list_alarms(user: dict = Depends(admin_only)):

@@ -180,3 +180,16 @@ def test_signature_with_or_without_the_port(phone):
     assert r.status_code == 200 and "<Stream" in r.text
     other = "https://evil.example.com" + path
     assert phone.post(path, data=form, headers={"X-Twilio-Signature": telephony.signature(other, form)}).status_code == 403
+
+
+def test_contact_book_add_update_remove(phone, tmp_path, monkeypatch):
+    monkeypatch.setattr(telephony, "CONTACTS_FILE", str(tmp_path / "contacts.txt"))
+    for raw in ("(305) 555-0123", "305.555.0123", "1 305 555 0123", "+1 305 555 0123"):
+        assert telephony.add_contact("Mom", raw)["number"] == "+13055550123", raw
+    assert [c["name"] for c in telephony.contact_list()] == ["Mom"]          # updated, not duplicated
+    assert telephony._number("mom") == "+13055550123"                        # callable right away
+    assert "+1" in telephony.add_contact("UK", "+44 20 7946 0958")["error"]
+    assert "premium" in telephony.add_contact("Psychic", "900 555 0123")["error"]
+    assert "10-digit" in telephony.add_contact("Short", "555 0123")["error"]
+    assert "you" in telephony.add_contact("me", "305 555 0123")["error"]
+    assert telephony.remove_contact("MOM") and telephony._number("Mom") is None

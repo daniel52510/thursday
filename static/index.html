@@ -357,6 +357,9 @@
   .alarm.off .alarm-time, .alarm.off .alarm-sub { color: var(--text-faint); }
   .alarm-sub { font: 500 10.5px/1.6 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .alarm .icon-btn svg { width: 16px; height: 16px; }
+  .contact-name { font: 400 22px/1.2 var(--serif); }
+  #contactItems { border-bottom: 1.5px solid var(--text); margin-bottom: 18px; }
+  #contactItems > :first-child { border-top: 1.5px solid var(--text); }
   .alarm-empty { font-size: 14px; color: var(--text-muted); padding: 14px 0; border-top: 1.5px solid var(--text); }
   .switch { position: relative; width: 42px; height: 26px; flex: none; border-radius: 999px; background: var(--deep); border: 1px solid var(--rule-strong); transition: background .15s var(--ease); }
   .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-faint); transition: transform .15s var(--ease), background .15s var(--ease); }
@@ -530,6 +533,7 @@
   <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   <symbol id="i-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
   <symbol id="i-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15L6 16zM10 21h4"/></symbol>
 </svg>
 
@@ -538,6 +542,7 @@
   <button class="nav-btn primary" id="newChat"><svg><use href="#i-plus"/></svg>New conversation</button>
   <button class="nav-btn" id="voiceNav"><svg><use href="#i-wave"/></svg>Voice mode</button>
   <button class="nav-btn" id="alarmsNav"><svg><use href="#i-bell"/></svg>Alarms</button>
+  <button class="nav-btn" id="contactsNav"><svg><use href="#i-phone"/></svg>Contacts</button>
   <button class="nav-btn" id="announceNav"><svg><use href="#i-speaker"/></svg>Announce</button>
   <button class="nav-btn" id="settingsNav"><svg><use href="#i-dots"/></svg>Settings</button>
   <nav class="conv-list" id="convList" aria-label="Conversations"></nav>
@@ -750,6 +755,18 @@
   </form>
 </dialog>
 
+<dialog id="contactsDialog" class="alarms">
+  <div class="alarms-head"><h2>Contacts</h2><button class="icon-btn" id="contactsClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <p>THURSDAY can only call you and the people here. Only you can add them; he can't. US and Canada numbers; the +1 is added for you.</p>
+  <div id="contactItems"></div>
+  <form id="contactForm">
+    <label class="field">Name<input id="contactName" maxlength="40" required placeholder="e.g. Mom" autocomplete="off"></label>
+    <label class="field">Number<input id="contactNumber" type="tel" required placeholder="(305) 555-0123" autocomplete="off"></label>
+    <p class="set-note" id="contactNote" aria-live="polite"></p>
+    <div class="row"><button type="submit">Add contact</button></div>
+  </form>
+</dialog>
+
 <dialog id="announceDialog">
   <form id="announceForm">
     <h2>Announce</h2>
@@ -820,7 +837,8 @@ async function api(path, opts = {}) {
 async function loadMe() {
   ME = await (await api("/api/me")).json();
   $("whoText").textContent = `${ME.display_name} · ${ME.role}`;
-  $("alarmsNav").hidden = ME.role !== "admin";         // alarms ring on the admin's satellite
+  $("alarmsNav").hidden = ME.role !== "admin";
+  $("contactsNav").hidden = ME.role !== "admin";      // his call allowlist         // alarms ring on the admin's satellite
   $("announceNav").hidden = !ME.family_memory;          // admin and family
   $("agenticTop").hidden = ME.id !== "owner";           // missions run on the owner's GPU, with his calendar
 }
@@ -976,6 +994,42 @@ $("alarmForm").onsubmit = async (e) => {
 $("alarmCancel").onclick = showAlarmList;
 $("alarmAdd").onclick = () => openAlarmForm(null);
 $("alarmsClose").onclick = () => $("alarmsDialog").close();
+
+// ---------- contacts (who THURSDAY may call) ----------
+async function loadContacts() {
+  const box = $("contactItems");
+  let list = [];
+  try { const res = await api("/api/contacts"); if (res.ok) list = await res.json(); } catch {}
+  box.innerHTML = "";
+  if (!list.length) { box.innerHTML = `<div class="alarm-empty">No contacts yet</div>`; return; }
+  for (const c of list) {
+    const row = document.createElement("div");
+    row.className = "alarm";
+    row.innerHTML = `<div class="alarm-main"><div class="contact-name"></div><div class="alarm-sub"></div></div>
+      <button class="icon-btn" aria-label="Delete contact"><svg><use href="#i-trash"/></svg></button>`;
+    row.querySelector(".contact-name").textContent = c.name;
+    row.querySelector(".alarm-sub").textContent = c.display;
+    row.querySelector("button").onclick = async () => {
+      if (!confirm(`Remove ${c.name}? THURSDAY won't be able to call them.`)) return;
+      if ((await api(`/api/contacts/${encodeURIComponent(c.name)}`, { method: "DELETE" })).ok) loadContacts();
+    };
+    box.append(row);
+  }
+}
+$("contactForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const note = $("contactNote");
+  note.textContent = ""; note.classList.remove("err");
+  const res = await api("/api/contacts", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: $("contactName").value, number: $("contactNumber").value }) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) { note.textContent = out.detail || "Couldn't save the contact."; note.classList.add("err"); return; }
+  note.textContent = `Saved ${out.name}: ${out.display}. Try "call ${out.name}".`;
+  $("contactName").value = ""; $("contactNumber").value = "";
+  loadContacts();
+};
+$("contactsClose").onclick = () => $("contactsDialog").close();
+$("contactsNav").onclick = () => { closeNav(); $("contactNote").textContent = ""; $("contactsDialog").showModal(); loadContacts(); };
 $("alarmsNav").onclick = () => { closeNav(); showAlarmList(); $("alarmsDialog").showModal(); loadAlarms(); };
 showLocation();
 detectLocation();
