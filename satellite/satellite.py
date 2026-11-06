@@ -124,7 +124,12 @@ BARGE_THRESHOLD = float(os.getenv("THURSDAY_BARGE_THRESHOLD", "0.7"))
 BARGE_SPEECH = os.getenv("THURSDAY_BARGE_SPEECH", "0") == "1"
 # Above the loud parts of the echo left after cancelling: those sit ~-61 dBFS, his voice at the mic -43 to -46.
 BARGE_SPEECH_DB = float(os.getenv("THURSDAY_BARGE_SPEECH_DB", "8"))
-BARGE_FLOOR_DBFS = float(os.getenv("THURSDAY_BARGE_FLOOR_DBFS", "-58"))  # and never below room noise
+# And never below the raw echo: at -58 the canceller's brief slips (echo -38 to -42 uncancelled) cut him
+# off mid-reply; the false barge-ins logged 2026-11-03..05 all sat 0-3 dB over a bar near -42..-48.
+BARGE_FLOOR_DBFS = float(os.getenv("THURSDAY_BARGE_FLOOR_DBFS", "-44"))
+# How many of the last BARGE_WINDOW chunks (~80 ms each) must be loud: 4 of 6 is ~320 ms of talking.
+BARGE_LOUD_CHUNKS = int(os.getenv("THURSDAY_BARGE_LOUD_CHUNKS", "4"))
+BARGE_WINDOW = int(os.getenv("THURSDAY_BARGE_WINDOW", "6"))
 BARGE_SETTLE_S = 0.5  # the start of each reply: the canceller re-settles, nothing counts
 NEAR_MISS = 0.2  # wake scores logged below the threshold, to tune it from data
 # After a reply, listen again without the wake word. The server's no-speech
@@ -743,7 +748,7 @@ class Satellite:
         # Speech barge-in (BARGE_SPEECH): the cancelled mic's level per chunk while he talks.
         self._speaking_at = 0.0
         self._residual: deque = deque(maxlen=25)  # quiet chunks of the last ~2 s: the echo that's left
-        self._loud: deque = deque(maxlen=5)       # the last 5 chunks: above the bar or not
+        self._loud: deque = deque(maxlen=BARGE_WINDOW)  # the last chunks: above the bar or not
         self._preroll: deque = deque(maxlen=16)   # the last ~1.3 s sent on after a speech barge-in
         self._barge_speech = False                # the current barge-in was speech, not the wake word
         self.stats = {"started": time.time(), "wakes": 0, "near_misses": 0, "barge_ins": 0,
@@ -938,7 +943,7 @@ class Satellite:
             await self._send(chunk)
 
     def _heard_over_reply(self, pcm: bytes) -> bool:
-        """Someone talking over the reply: 3 of the last 5 chunks (~240 ms) of the cancelled mic
+        """Someone talking over the reply: 4 of the last 6 chunks (~320 ms) of the cancelled mic
         BARGE_SPEECH_DB above the loud parts of the echo the canceller leaves."""
         if not (BARGE_SPEECH and self.aec and AEC_MODE == "on"):
             return False
@@ -957,7 +962,7 @@ class Satellite:
         self._loud.append(db > bar)
         if db <= bar:
             self._residual.append(db)
-        if sum(self._loud) >= 3:
+        if sum(self._loud) >= BARGE_LOUD_CHUNKS:
             log.info("barge-in (speech, %.0f dBFS over a %.0f dBFS bar)", db, bar)
             return True
         return False
