@@ -218,7 +218,19 @@
   .chip { display: inline-flex; align-items: center; gap: 6px; font: 500 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--rule); border-radius: 999px; padding: 4px 10px 4px 8px; }
   .chip::before { content: "▸"; color: var(--signal); }
   .chip svg { width: 12px; height: 12px; }
-  .chip.running svg { animation: spin 1s linear infinite; }
+  /* Waiting, shown as a soft light sweep rather than a spinner: tool chips while they run, and the reply before
+     its first word. Respects reduced motion. */
+  .chip.running span { background: linear-gradient(90deg, var(--text-muted) 0%, var(--text) 45%, var(--text-muted) 90%);
+    background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sweep 1.6s linear infinite; }
+  .chip.running svg { display: none; }
+  .thinking-shimmer { display: flex; flex-direction: column; gap: 9px; padding: 4px 0 2px; }
+  .thinking-shimmer i { display: block; height: 11px; border-radius: 6px; background: linear-gradient(90deg, var(--deep) 0%, var(--rule-strong) 50%, var(--deep) 100%);
+    background-size: 220% 100%; animation: sweep 1.4s ease-in-out infinite; }
+  .thinking-shimmer i:nth-child(1) { width: 72%; } .thinking-shimmer i:nth-child(2) { width: 54%; animation-delay: .12s; } .thinking-shimmer i:nth-child(3) { width: 38%; animation-delay: .24s; }
+  @keyframes sweep { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+  @media (prefers-reduced-motion: reduce) { .thinking-shimmer i, .chip.running span { animation: none; } }
+  #voiceCaption.fresh { animation: captionIn .28s var(--ease); }
+  @keyframes captionIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   .chip.failed { color: var(--signal-text); border-color: color-mix(in srgb, var(--signal) 40%, var(--rule)); }
   @keyframes spin { to { rotate: 360deg; } }
   .actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s var(--ease); align-items: center; }
@@ -943,7 +955,14 @@ async function loadMe() {
 }
 
 /* ---------------- theme ---------------- */
-function applyTheme(t) { t ? document.documentElement.dataset.theme = t : delete document.documentElement.dataset.theme; }
+function applyTheme(t) {
+  t ? document.documentElement.dataset.theme = t : delete document.documentElement.dataset.theme;
+  // The phone's status bar follows the chosen theme too, not only the system's (it used to stay mismatched).
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+    m.dataset.scheme ||= m.media.includes("dark") ? "dark" : "light";  // which system theme this tag is for
+    m.content = (t || m.dataset.scheme) === "dark" ? "#12110E" : "#F3F0E8";
+  });
+}
 applyTheme(store.get(THEME_KEY));
 // System / Light / Dark; System (no stored value) follows the OS.
 const themeBtns = document.querySelectorAll("#themeSeg button");
@@ -1419,6 +1438,7 @@ function addAssistant() {
     <div class="actions"><button class="icon-btn copy" title="Copy" aria-label="Copy"><svg><use href="#i-copy"/></svg></button><button class="icon-btn say" title="Read aloud" aria-label="Read aloud"><svg><use href="#i-speaker"/></svg></button><button class="icon-btn regen" title="Regenerate" aria-label="Regenerate"><svg><use href="#i-redo"/></svg></button><span class="meta mono"></span></div></div>`;
   thread.append(m);
   const md = m.querySelector(".md"), chips = m.querySelector(".chips");
+  md.innerHTML = `<div class="thinking-shimmer" aria-label="Thinking"><i></i><i></i><i></i></div>`;  // until the first word
   let text = "", queued = false;
   m.querySelector(".copy").onclick = (e) => copy(text, e.currentTarget);
   m.querySelector(".say").onclick = (e) => readAloud(text, e.currentTarget);
@@ -1452,7 +1472,7 @@ function addAssistant() {
     },
     finish(meta) {
       queued = false;
-      renderMd(md, text);
+      renderMd(md, text);  // replaces the shimmer, also when the reply was empty or failed
       md.classList.remove("cursor");
       decorateCode(md);
       if (meta) m.querySelector(".meta").textContent = meta;
@@ -2142,7 +2162,8 @@ const Cap = { segs: [], pending: null, cur: null, raf: 0 };
 function resetCaption(text = "") {
   cancelAnimationFrame(Cap.raf); Cap.raf = 0;
   Cap.segs = []; Cap.pending = null; Cap.cur = null;
-  vCaption.classList.remove("scrolled"); vCaption.textContent = text; vCaption.scrollTop = 0;
+  vCaption.classList.remove("scrolled", "fresh"); vCaption.textContent = text; vCaption.scrollTop = 0;
+  void vCaption.offsetWidth; vCaption.classList.add("fresh");  // a new caption fades in instead of snapping
 }
 
 function queueCaption(text, cps) {
