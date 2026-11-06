@@ -47,7 +47,7 @@ PLACED_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "calls_pl
 # Two-way calls (in progress): the call opens a Media Stream to /twilio/stream instead of <Play>ing a file.
 # Slice A only plays the rendered message over it and logs what the line hears; off until it's proven.
 TWO_WAY = os.getenv("TWILIO_TWO_WAY", "0") == "1"
-LISTEN_AFTER_S = 8  # slice A: how long the stream stays open after the message, logging the other side
+LISTEN_AFTER_S = 20  # slices A-B: how long the stream stays open after the message, hearing the other side
 CONTACTS_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "contacts.txt")
 AUDIO_TTL_S = 15 * 60
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
@@ -263,6 +263,51 @@ def _mulaw(wav: bytes) -> bytes:
     return rocky_voice.to_mulaw_8k(x, sr)
 
 
+class _CallEar:
+    """Slice B: what the other side says. 8 kHz mu-law in, 16 kHz frames through the same Silero endpointer
+    as /ws/voice, each finished utterance to STT. Logs the words and per-stage timings to judge phone-line STT."""
+
+    def __init__(self) -> None:
+        from vad import FRAME_BYTES, Endpointer, VADConfig
+        self.frame_bytes = FRAME_BYTES
+        self.endpointer = Endpointer(VADConfig.from_env())
+        self.buf = b""
+        self.tasks: set[asyncio.Task] = set()
+        self.heard: list[str] = []
+        self.http = httpx.AsyncClient()
+
+    def feed(self, mulaw: bytes) -> None:
+        import numpy as np
+        import rocky_voice
+        x = np.asarray(rocky_voice.mulaw_decode(mulaw), dtype=np.float32)
+        up = np.interp(np.arange(0, len(x), 0.5), np.arange(len(x)), x)  # 8 -> 16 kHz
+        self.buf += up.astype(np.int16).tobytes()
+        while len(self.buf) >= self.frame_bytes:
+            frame, self.buf = self.buf[:self.frame_bytes], self.buf[self.frame_bytes:]
+            if utterance := self.endpointer.feed(frame):
+                task = asyncio.create_task(self._transcribe(utterance, time.monotonic()))
+                self.tasks.add(task)
+                task.add_done_callback(self.tasks.discard)
+
+    async def _transcribe(self, pcm: bytes, ended: float) -> None:
+        import voice_ws
+        try:
+            files = {"audio": ("call.wav", voice_ws._pcm_to_wav(pcm), "audio/wav")}
+            resp = await self.http.post(f"{voice_ws.STT_BASE_URL}/transcribe", files=files, timeout=voice_ws.STT_TIMEOUT)
+            text = str(resp.json().get("text") or "").strip()
+        except Exception as exc:
+            logger.warning("call ear: STT failed (%s)", type(exc).__name__)
+            return
+        self.heard.append(text)
+        logger.info("call heard: %r (speech %d ms, stt %d ms)", text[:200], len(pcm) // 32,
+                    (time.monotonic() - ended) * 1000)
+
+    async def close(self) -> None:
+        if self.tasks:
+            await asyncio.wait(self.tasks, timeout=10)
+        await self.http.aclose()
+
+
 @router.websocket("/stream")
 async def media_stream(ws: WebSocket) -> None:
     """A two-way call's live audio (Twilio Media Streams: JSON frames, base64 8 kHz mu-law, 20 ms each).
@@ -278,6 +323,7 @@ async def media_stream(ws: WebSocket) -> None:
     import numpy as np
     import rocky_voice
     sid, played, heard, levels = None, False, 0, []
+    ear: _CallEar | None = None  # made once the message has played: nothing loads for a stream that never gets there
     try:
         while True:
             frame = json.loads(await ws.receive_text())
@@ -296,7 +342,11 @@ async def media_stream(ws: WebSocket) -> None:
                 await ws.send_json({"event": "mark", "streamSid": sid, "mark": {"name": "message_done"}})
                 logger.info("call stream: started, %.1f s of message queued", len(audio) / 8000)
             elif event == "media" and sid:
-                pcm = rocky_voice.mulaw_decode(base64.b64decode(frame["media"]["payload"]))
+                raw = base64.b64decode(frame["media"]["payload"])
+                if played:  # not during the message: an echo of it would be heard as them
+                    ear = ear or _CallEar()
+                    ear.feed(raw)
+                pcm = rocky_voice.mulaw_decode(raw)
                 levels.append(float(np.mean(np.asarray(pcm, dtype=np.float32) ** 2)))
                 heard += 1
                 if heard % 50 == 0:  # each second of the line: its level, to see the other side is heard
@@ -312,7 +362,9 @@ async def media_stream(ws: WebSocket) -> None:
                 break
     except WebSocketDisconnect:
         pass
-    logger.info("call stream: ended after %d s heard", heard // 50)
+    if ear:
+        await ear.close()
+    logger.info("call stream: ended after %d s heard, %d utterance(s)", heard // 50, len(ear.heard) if ear else 0)
     try:
         await ws.close()  # Twilio moves on to <Hangup/>
     except RuntimeError:
