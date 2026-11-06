@@ -20,6 +20,7 @@ import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
 import greetings
+import health
 import telephony
 import vault
 from memory import now_iso as memory_now
@@ -561,6 +562,38 @@ class AlarmIn(BaseModel):
 
 class AlarmPatch(BaseModel):
     enabled: bool
+
+
+# His Apple Health data (health.py): the Health Auto Export app on his iPhone POSTs here over the tailnet, with a
+# device token from Settings → Devices. Only he: owner_only checks the account, whatever the token's role.
+def owner_only(user: dict = Depends(current_user)) -> dict:
+    if user["id"] != accounts.OWNER:
+        raise HTTPException(status_code=403, detail="health data is the owner's only")
+    return user
+
+
+@app.post("/api/health/ingest")
+async def health_ingest(request: Request, user: dict = Depends(owner_only)):
+    body = await request.body()
+    if len(body) > 50_000_000:
+        raise HTTPException(status_code=413, detail="send less at once (50 MB max)")
+    try:
+        rows = health.parse_payload(json.loads(body))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=f"not a Health Auto Export / THURSDAY payload: {type(exc).__name__}")
+    new = await asyncio.to_thread(health.store, rows)
+    logging.getLogger("thursday.voice.health").info("health: %d samples received, %d new", len(rows), new)
+    return {"received": len(rows), "new": new}
+
+
+@app.get("/api/health/data")
+def health_data(user: dict = Depends(owner_only)):
+    return health.summary()
+
+
+@app.delete("/api/health/data")
+def health_delete(user: dict = Depends(owner_only)):
+    return {"deleted": health.delete_all()}
 
 
 @app.get("/api/latency")
