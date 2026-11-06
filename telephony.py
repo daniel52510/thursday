@@ -14,6 +14,7 @@ Credentials come from .env (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM) 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import base64
 import hashlib
 import hmac
@@ -50,6 +51,9 @@ TWO_WAY = os.getenv("TWILIO_TWO_WAY", "0") == "1"
 CALL_WRAP_S = int(os.getenv("TWILIO_CALL_WRAP_S", "150"))  # soft limit: he says goodbye (Twilio's TimeLimit is 180)
 CALL_IDLE_S = 20      # they've said nothing this long: goodbye
 CALL_TURNS = 12       # their turns before he wraps up whatever is happening
+# Set per voice turn by voice_ws: a call asked for on the satellite reports out loud there; one asked for from
+# his phone or the web reports only by push and in that chat (no reading it to an empty, or someone else's, room).
+FROM_SATELLITE: contextvars.ContextVar[bool] = contextvars.ContextVar("call_from_satellite", default=False)
 _briefs: dict[str, dict] = {}  # audio token -> {"message", "goal"}: everything call mode knows
 CONTACTS_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "contacts.txt")
 AUDIO_TTL_S = 15 * 60
@@ -200,7 +204,7 @@ def call_place(args: Dict[str, Any]) -> ToolResult:
     who = str(args.get("to", "")).strip()
     _briefs[token] = {"message": message, "goal": goal, "conversation": turn["conversation"],
                       "who": "you" if number == OWNER_NUMBER else re.sub(r"^(?:my|our)\s+", "", who, flags=re.I).title(),
-                      "transcript": [], "answered_by": "", "ended_by": ""}
+                      "transcript": [], "answered_by": "", "ended_by": "", "from_satellite": FROM_SATELLITE.get()}
     _pending[turn["conversation"]] = {"at": time.monotonic(), "turn": turn["turn"], "to": number, "token": token,
                                       "message": message}
     return ToolResult(ok=True, tool_name="call_place", data={
@@ -730,7 +734,8 @@ def _save_transcript(brief: dict, report: str) -> None:
 
 async def _report(brief: dict) -> None:
     """Tell him how it went: push to his phone, a line in the conversation the call came from (so "call her back"
-    works there), the transcript on disk, and out loud on a free satellite (Rocky's grammar unless he uses Tara)."""
+    works there), the transcript on disk, and out loud on a free satellite when he asked for the call there (Rocky's
+    grammar unless he uses Tara)."""
     await asyncio.sleep(1)  # the stream's end-of-call bookkeeping lands first
     try:
         report = _outcome(brief) or await _summarize(brief) or f"The call with {brief['who']} ended."
@@ -752,7 +757,7 @@ async def _report(brief: dict) -> None:
         import voice_ws
         tara = mind.voice_style(OWNER).get("voice") == "tara"
         idle = [s for s in voice_ws.SATELLITES if s.state == "idle"]
-        if idle and (time.localtime().tm_hour - 8) % 24 < 14:  # out loud 08:00-21:59 only; the push always goes
+        if brief.get("from_satellite") and idle and (time.localtime().tm_hour - 8) % 24 < 14:  # out loud 08:00-21:59 only; the push always goes
             async with httpx.AsyncClient() as http:
                 line = report if tara else eridian.translate(report)
                 audio = await voice_ws.synthesize_ahead(http, line, {"voice": "tara"} if tara else None)

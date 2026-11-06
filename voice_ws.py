@@ -54,6 +54,7 @@ import missions
 import music
 import rocky_voice
 import speaker
+import telephony
 from agent_stream import VOICE_TAG, record_cut_off, strip_voice_tags, stream_prompt, warm_cache
 from vad import FRAME_BYTES, FRAME_MS, SAMPLE_RATE, BargeIn, Endpointer, VADConfig
 
@@ -1183,6 +1184,7 @@ class Session:
             speaker = asyncio.create_task(self._speak_chunks(chunker, timing)) if chunker else None
             self._said = None
             self._turn_tools = False
+            telephony.FROM_SATELLITE.set(self.role == "satellite")  # where a call's report gets spoken
             try:
                 speak_text = ""
                 async for ev in stream_prompt(text, mode=mode, conversation_id=self._conversation_id,
