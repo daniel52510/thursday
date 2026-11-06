@@ -2106,6 +2106,7 @@ async function startAudio() {
   // leaves the browser while muted, in standby, or once voice mode is closed.
   const LIVE = new Set(["listening", "thinking", "speaking"]);
   V.micNode.port.onmessage = (e) => {
+    V.frames = (V.frames || 0) + 1;
     if (V.greetAt) maybeGreet(e.data);
     if (!(LIVE.has(V.state) && !V.muted && V.ws?.readyState === WebSocket.OPEN)) return;
     // While a greeting plays, silence goes up instead, so the server's VAD doesn't take his voice for speech.
@@ -2283,7 +2284,18 @@ async function connectVoice() {
   ws.binaryType = "arraybuffer";
   // A socket that never opens (a waking phone, a flaky network) is closed and retried, not waited on forever.
   const opening = setTimeout(() => { if (ws.readyState === WebSocket.CONNECTING) ws.close(); }, 6000);
-  ws.onopen = () => { clearTimeout(opening); $("voiceConn").textContent = ""; V.state = ""; setVoiceState("idle"); startListening(); };
+  ws.onopen = () => {
+    clearTimeout(opening); $("voiceConn").textContent = ""; V.state = ""; setVoiceState("idle"); startListening();
+    // Tell the server how this device's audio is doing at 1, 4 and 10 s (logged: "voice client: ..."), so a
+    // session that connects but never hears anything shows why.
+    for (const at of [1000, 4000, 10000]) setTimeout(() => {
+      if (V.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: "diag", at_s: at / 1000, ctx: V.ctx?.state, mic: V.mic?.getAudioTracks()[0]?.readyState,
+        mic_muted: V.mic?.getAudioTracks()[0]?.muted, frames: V.frames || 0, state: V.state, muted: V.muted,
+        app: matchMedia("(display-mode: standalone)").matches || navigator.standalone ? "home-screen" : "browser",
+        hidden: document.hidden }));
+    }, at);
+  };
   ws.onmessage = (e) => typeof e.data === "string" ? onVoiceEvent(JSON.parse(e.data)) : playReply(e.data);
   ws.onclose = (e) => {
     if (V.ws !== ws) return;

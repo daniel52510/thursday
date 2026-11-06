@@ -894,6 +894,10 @@ class Session:
                 if greetings.clips:  # this hour's wake greetings, so its first wake already has one
                     await self.ws.send_json(greetings.message())
                 self._warm()
+        elif kind == "diag":
+            # The phone's own audio state, a few times as voice mode opens: whether its audio runs, the mic is
+            # live, it's the home-screen app, how many mic frames it has sent. "Connected but deaf" explains itself.
+            logger.info("voice client: %s", " ".join(f"{k}={str(v)[:24]}" for k, v in list(msg.items())[1:10]))
         elif kind == "status" and self.role == "satellite":
             # Room, mic mute, Wi-Fi, wake stats: shown in the web UI's sidebar.
             self.sat_status = {k: v for k, v in msg.items() if k != "type"} | {"seen": time.time()}
