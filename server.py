@@ -670,12 +670,15 @@ class AlarmPatch(BaseModel):
     enabled: bool
 
 
-# His Apple Health data (health.py): the Health Auto Export app on his iPhone POSTs here over the tailnet, with a
-# device token from Settings → Devices. Only he: owner_only checks the account, whatever the token's role.
 def owner_only(user: dict = Depends(current_user)) -> dict:
-    if user["id"] != accounts.OWNER:
-        raise HTTPException(status_code=403, detail="health data is the owner's only")
+    """His own things, by account id whatever the role: Apple Health, missions (his GPU, his calendar)."""
+    if user["id"] != OWNER:
+        raise HTTPException(status_code=403, detail="that's the owner's only")
     return user
+
+
+# His Apple Health data (health.py): the Health Auto Export app on his iPhone POSTs here over the tailnet, with a
+# device token from Settings → Devices.
 
 
 @app.post("/api/health/ingest")
@@ -693,7 +696,13 @@ async def health_ingest(request: Request, user: dict = Depends(owner_only)):
     except (ValueError, TypeError, AttributeError) as exc:
         raise HTTPException(status_code=400, detail=f"not a Health Auto Export / THURSDAY payload: {type(exc).__name__}")
     new = await asyncio.to_thread(health.store, rows)
-    logging.getLogger("thursday.voice.health").info("health: %d samples received, %d new", len(rows), new)
+    # What arrived, by metric and date range (never values), so a sync that adds nothing explains itself.
+    from collections import Counter
+    kinds = ", ".join(f"{m} {n}" for m, n in Counter(r[0] for r in rows).most_common(8))
+    span = f"{min(r[1] for r in rows)[:16]} -> {max(r[1] for r in rows)[:16]} UTC" if rows else "no dates"
+    logging.getLogger("thursday.voice.health").info("health: %d samples received, %d new (%s; %s; payload keys %s)",
+                                                    len(rows), new, kinds or "none recognized", span,
+                                                    sorted((json.loads(body).get("data") or {}).keys()))
     return {"received": len(rows), "new": new}
 
 
@@ -790,13 +799,6 @@ def delete_alarm(alarm_id: str, user: dict = Depends(admin_only)):
     if not initalize_db().delete_alarm(alarm_id, user["id"]):
         raise HTTPException(status_code=404, detail="alarm not found")
     return {"deleted": alarm_id}
-
-
-def owner_only(user: dict = Depends(current_user)) -> dict:
-    # Missions run on his GPU, with his calendar: the owner's, by id (missions.py).
-    if user["id"] != OWNER:
-        raise HTTPException(status_code=403, detail="missions are the owner's only")
-    return user
 
 
 class MissionIn(BaseModel):

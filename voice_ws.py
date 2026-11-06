@@ -233,7 +233,10 @@ _debug_n = 0
 _tts_caps = {"at": 0.0, "stream": False, "rate": 24000, "engine": ""}
 
 logger = logging.getLogger("thursday.voice")
-if not logger.handlers:
+# Its own stream handler, not "any handler": diagnostics.py adds a warnings recorder to this logger, and when it
+# was imported first the old `if not logger.handlers` skipped this one, so every INFO line (turn timings, calls,
+# health uploads) silently stopped reaching `docker logs` (2026-11-06).
+if not any(type(h) is logging.StreamHandler for h in logger.handlers):
     # uvicorn only configures its own loggers; give ours a handler so the
     # per-turn timing lines reach `docker logs`.
     _handler = logging.StreamHandler()
