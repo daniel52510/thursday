@@ -374,6 +374,9 @@
   .set-list .icon-btn svg { width: 16px; height: 16px; }
   .set-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
   .set-row > input, .set-row > select { flex: 1 1 150px; width: auto; }
+  .set-text { width: 100%; resize: vertical; font: 15px/1.5 var(--sans); color: var(--text); background: var(--bg);
+              border: 1px solid var(--rule-strong); border-radius: 10px; padding: 10px 12px; }
+  .set-list .grow input { width: 100%; margin-top: 4px; }
   .set-btn { padding: 9px 18px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-weight: 500; min-height: 40px; }
   .set-btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--rule-strong); }
   .set-note { min-height: 1.4em; margin: 8px 0 0; font: 12.5px/1.5 var(--mono); color: var(--text-muted); }
@@ -2457,24 +2460,12 @@ const PANES = {
     persona.value = ME.persona_id || "";
     const youNote = note();
     persona.onchange = async () => { try { ME = await call("/api/me", jsonReq("PATCH", { persona_id: persona.value })); say(youNote, `She'll be ${ME.persona} from your next conversation.`); } catch (e) { say(youNote, e.message, true); } };
-    body.append(el("h3", { className: "set-h", textContent: "You" }),
+    body.append(el("p", { className: "set-p", textContent: "Your name, who THURSDAY is with you (persona), and the accounts he can use for you." }),
+      el("h3", { className: "set-h", textContent: "You" }),
       el("div", { className: "set-row" }, name, btn("Save name", async () => {
         try { ME = await call("/api/me", jsonReq("PATCH", { display_name: name.value })); await loadMe(); say(youNote, "Saved."); } catch (e) { say(youNote, e.message, true); }
       })),
       el("div", { className: "set-row" }, persona), youNote);
-
-    // Whose voice speaks: Rocky (off) or Tara (on). "Switch to Tara" out loud sets the same thing.
-    const voiceSw = el("button", { className: "switch", role: "switch", ariaLabel: "Tara's voice" });
-    const voiceNote = note();
-    const showVoice = (v) => voiceSw.setAttribute("aria-checked", String(v === "tara"));
-    try { showVoice((await call("/api/voice")).voice); } catch (e) { say(voiceNote, e.message, true); }
-    voiceSw.onclick = async () => {
-      const voice = voiceSw.getAttribute("aria-checked") === "true" ? "rocky" : "tara";
-      try { showVoice((await call("/api/voice", jsonReq("PUT", { voice }))).voice); say(voiceNote, `${voice === "tara" ? "Tara" : "Rocky"} speaks from the next reply.`); }
-      catch (e) { say(voiceNote, e.message, true); }
-    };
-    body.append(el("h3", { className: "set-h", textContent: "Voice" }),
-      el("div", { className: "set-row" }, el("span", { textContent: "Rocky" }), voiceSw, el("span", { textContent: "Tara" })), voiceNote);
 
     const limit = ME.daily_token_limit;
     body.append(el("h3", { className: "set-h", textContent: "Today" }),
@@ -2499,14 +2490,7 @@ const PANES = {
     }
     body.append(calNote);
 
-    body.append(el("h3", { className: "set-h", textContent: "What she remembers about you" }));
-    const facts = await call("/api/me/facts");
-    const list = el("div", { className: "set-list" });
-    for (const [k, v] of Object.entries(facts)) {
-      list.append(row(document.createTextNode(typeof v === "string" ? v : JSON.stringify(v)), k.replaceAll("_", " "),
-        iconBtn("i-trash", "Forget this", async () => { await call(`/api/me/facts/${encodeURIComponent(k)}`, { method: "DELETE" }); openSettings("account"); })));
-    }
-    body.append(Object.keys(facts).length ? list : el("p", { className: "set-p", textContent: "Nothing yet." }));
+    body.append(el("p", { className: "set-p", textContent: "What THURSDAY knows about you is under Settings → Memory." }));
 
     const cur = textIn({ type: "password", placeholder: "Current password", autocomplete: "current-password" });
     const next = textIn({ type: "password", placeholder: "New password (8+)", autocomplete: "new-password" });
@@ -2517,6 +2501,95 @@ const PANES = {
         catch (e) { say(passNote, e.message, true); }
       })), passNote,
       el("div", { className: "row" }, btn("Sign out", async () => { await fetch("/api/logout", { method: "POST" }); store.set(CONV_KEY, null); location.reload(); }, true)));
+  },
+
+  async voice(body) {
+    body.append(el("p", { className: "set-p", textContent: "Whose voice THURSDAY speaks in, everywhere: the satellite, voice mode, read aloud and phone calls. Saying \"switch to Tara\" out loud does the same." }));
+    // Whose voice speaks: Rocky (off) or Tara (on). "Switch to Tara" out loud sets the same thing.
+    const voiceSw = el("button", { className: "switch", role: "switch", ariaLabel: "Tara's voice" });
+    const voiceNote = note();
+    const showVoice = (v) => voiceSw.setAttribute("aria-checked", String(v === "tara"));
+    try { showVoice((await call("/api/voice")).voice); } catch (e) { say(voiceNote, e.message, true); }
+    voiceSw.onclick = async () => {
+      const voice = voiceSw.getAttribute("aria-checked") === "true" ? "rocky" : "tara";
+      try { showVoice((await call("/api/voice", jsonReq("PUT", { voice }))).voice); say(voiceNote, `${voice === "tara" ? "Tara" : "Rocky"} speaks from the next reply.`); }
+      catch (e) { say(voiceNote, e.message, true); }
+    };
+    body.append(el("h3", { className: "set-h", textContent: "Voice" }),
+      el("div", { className: "set-row" }, el("span", { textContent: "Rocky" }), voiceSw, el("span", { textContent: "Tara" })), voiceNote);
+
+    body.append(el("h3", { className: "set-h", textContent: "Voice ID" }),
+      el("p", { className: "set-p", textContent: "On the satellite, THURSDAY knows your voice. Anything sensitive (your calendar, health, phone calls, approvals) only works when it's you talking; anyone else in the room gets a polite no. In this app and on your phone, your login does the same job." }));
+  },
+
+  async memory(body) {
+    body.append(el("p", { className: "set-p", textContent: "What THURSDAY knows about you and how you want him to talk. Everything here stays on your Mac; edit or delete anything." }));
+    // Custom instructions: free text he follows in every reply.
+    const ins = el("textarea", { className: "set-text", rows: 4, maxLength: 1500, placeholder: "e.g. Keep answers short. Call me boss. Metric units. No sugar-coating." });
+    const insNote = note();
+    try { ins.value = (await call("/api/me/instructions")).text; } catch (e) { say(insNote, e.message, true); }
+    body.append(el("h3", { className: "set-h", textContent: "How you want him to talk" }), ins,
+      el("div", { className: "set-row" }, btn("Save", async () => {
+        try { await call("/api/me/instructions", jsonReq("PUT", { text: ins.value })); say(insNote, ins.value.trim() ? "Saved. He follows this from the next reply." : "Cleared."); }
+        catch (e) { say(insNote, e.message, true); }
+      })), insNote);
+    // Facts: key -> value, editable.
+    const facts = await call("/api/me/facts");
+    const list = el("div", { className: "set-list" }), factNote = note();
+    const pretty = (k) => k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+    const show = (v) => typeof v === "string" ? v : JSON.stringify(v);
+    for (const [k, v] of Object.entries(facts)) {
+      const edit = iconBtn("i-edit", `Edit ${pretty(k)}`, () => {
+        const inp = textIn({ value: show(v), maxLength: 500 });
+        const r = edit.parentElement;
+        r.replaceChildren(el("div", { className: "grow" }, el("b", { textContent: pretty(k) }), inp),
+          btn("Save", async () => { try { await call(`/api/me/facts/${encodeURIComponent(k)}`, jsonReq("PUT", { value: inp.value })); openSettings("memory"); } catch (e) { say(factNote, e.message, true); } }));
+        inp.focus();
+      });
+      list.append(row(pretty(k), show(v), edit, iconBtn("i-trash", `Forget ${pretty(k)}`, async () => {
+        if (!confirm(`Forget "${pretty(k)}"?`)) return;
+        try { await call(`/api/me/facts/${encodeURIComponent(k)}`, { method: "DELETE" }); openSettings("memory"); } catch (e) { say(factNote, e.message, true); }
+      })));
+    }
+    if (!Object.keys(facts).length) list.append(el("div", {}, el("span", { className: "grow", textContent: "Nothing yet. He learns as you talk, or add something below." })));
+    const nk = textIn({ placeholder: "What (e.g. Favorite team)", maxLength: 60 }), nv = textIn({ placeholder: "Value (e.g. Miami Heat)", maxLength: 500 });
+    body.append(el("h3", { className: "set-h", textContent: "What he knows about you" }), list,
+      el("div", { className: "set-row" }, nk, nv, btn("Add", async () => {
+        if (!nk.value.trim() || !nv.value.trim()) return;
+        try { await call(`/api/me/facts/${encodeURIComponent(nk.value.trim())}`, jsonReq("PUT", { value: nv.value })); openSettings("memory"); } catch (e) { say(factNote, e.message, true); }
+      })), factNote);
+    // Conversation memories: one summary per past conversation.
+    const mems = await call("/api/me/memories");
+    const mlist = el("div", { className: "set-list" }), memNote = note();
+    for (const m of mems) {
+      const when = m.happened_at ? new Date(m.happened_at).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+      mlist.append(row(m.summary || "(no summary)", when, iconBtn("i-trash", "Forget this conversation", async () => {
+        try { await call(`/api/me/memories/${encodeURIComponent(m.conversation_id)}`, { method: "DELETE" }); openSettings("memory"); } catch (e) { say(memNote, e.message, true); }
+      })));
+    }
+    if (!mems.length) mlist.append(el("div", {}, el("span", { className: "grow", textContent: "No conversation memories yet." })));
+    body.append(el("h3", { className: "set-h", textContent: "What he remembers from your conversations" }),
+      el("p", { className: "set-p", textContent: "A short note per conversation, so he can pick up where you left off. Forgetting one deletes the note, not the conversation." }),
+      mlist, memNote);
+  },
+
+  async calls(body) {
+    body.append(el("p", { className: "set-p", textContent: "THURSDAY can phone you and the people below for you: deliver a message, ask a question, place an order. He always reads the call back and waits for your yes first." }),
+      el("h3", { className: "set-h", textContent: "Safety limits" }),
+      el("p", { className: "set-p", textContent: "Only you and these contacts, US and Canada numbers only. At most 10 calls a day and 3 minutes a call. On a call he can't use any tools or share anything about you beyond the message, unless you say \"you can give them my name and number\"." }));
+    const list = el("div", { className: "set-list" }), cNote = note();
+    const contacts = await call("/api/contacts");
+    for (const c of contacts) list.append(row(c.name, c.display, iconBtn("i-trash", `Remove ${c.name}`, async () => {
+      if (!confirm(`Remove ${c.name}? THURSDAY won't be able to call them.`)) return;
+      try { await call(`/api/contacts/${encodeURIComponent(c.name)}`, { method: "DELETE" }); openSettings("calls"); } catch (e) { say(cNote, e.message, true); }
+    })));
+    if (!contacts.length) list.append(el("div", {}, el("span", { className: "grow", textContent: "No contacts yet." })));
+    const nn = textIn({ placeholder: "Name (e.g. Mom)", maxLength: 40 }), num = textIn({ type: "tel", placeholder: "(305) 555-0123" });
+    body.append(el("h3", { className: "set-h", textContent: "Who he can call" }), list,
+      el("div", { className: "set-row" }, nn, num, btn("Add", async () => {
+        try { const c = await call("/api/contacts", jsonReq("POST", { name: nn.value, number: num.value })); say(cNote, `Saved ${c.name}: ${c.display}.`); setTimeout(() => openSettings("calls"), 900); }
+        catch (e) { say(cNote, e.message, true); }
+      })), cNote);
   },
 
   async family(body) {
@@ -2623,7 +2696,8 @@ const PANES = {
 };
 
 function openSettings(tab = "account") {
-  const tabs = [["account", "Account"]];
+  const tabs = [["account", "You"], ["voice", "Voice"], ["memory", "Memory"]];
+  if (ME.role === "admin") tabs.push(["calls", "Calls"]);
   if (ME.family_memory) tabs.push(["family", "Family"]);
   if (ME.role === "admin") tabs.push(["people", "People"], ["personas", "Personas"], ["devices", "Devices"]);
   $("setTabs").replaceChildren(...tabs.map(([id, label]) => {

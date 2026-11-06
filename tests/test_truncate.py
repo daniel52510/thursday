@@ -26,3 +26,13 @@ def test_search_and_pin(tmp_path):
     assert db.search_conversations("someone-else", "pizza") == []
     assert db.pin_conversation(a, True, "owner")
     assert db.list_conversations("owner")[0]["id"] == a and db.list_conversations("owner")[0]["pinned"] == 1
+
+
+def test_instructions_are_not_facts(tmp_path):
+    db = memory.MemoryDB(str(tmp_path / "m.db"))
+    db.upsert_fact("owner", "favorite_food", "sushi")
+    db.set_instructions("owner", "Keep it short. Call me boss.")
+    assert db.instructions("owner") == "Keep it short. Call me boss."
+    assert db.prompt_facts("owner") == {"favorite_food": "sushi"}  # never listed as a fact
+    db.set_instructions("owner", "")
+    assert db.instructions("owner") == "" and "_instructions" not in db.list_facts("owner")

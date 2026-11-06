@@ -314,6 +314,10 @@ def _system_prompt(user: dict) -> str:
         system += (f"\n\nRight now you're talking with {name}, not Daniel: one of the people he has invited "
                    f"in ({user['role']}). Wherever these notes say Daniel or him, apply them to {name}. "
                    "Daniel is the friend who made your home; don't share what he or anyone else told you privately.")
+    # Last, so a change only re-reads the end of the prompt (Ollama's cache keeps everything before it).
+    if instructions := initalize_db().instructions(user["id"]).strip():
+        system += ("\n\nHow they want you to talk (their own instructions; follow them in every reply, within your "
+                   f"rules and voice above):\n{instructions[:1500]}")
     return system
 
 STYLE = {

@@ -243,7 +243,49 @@ def change_password(body: PasswordIn, user: dict = Depends(current_user)):
 
 @app.get("/api/me/facts")
 def my_facts(user: dict = Depends(current_user)):
-    return initalize_db().list_facts(user["id"])
+    return {k: v for k, v in initalize_db().list_facts(user["id"]).items() if not k.startswith("_")}
+
+
+class FactIn(BaseModel):
+    value: str = Field(min_length=1, max_length=500)
+
+
+@app.put("/api/me/facts/{key:path}")
+def set_my_fact(key: str, body: FactIn, user: dict = Depends(current_user)):
+    """Add or correct something THURSDAY knows about you (the memory page)."""
+    key = "_".join(key.lower().split())[:60]
+    if not key or key.startswith("_"):
+        raise HTTPException(status_code=422, detail="name it in a few words")
+    initalize_db().upsert_fact(user["id"], key, body.value.strip(), source="settings")
+    return {"key": key, "value": body.value.strip()}
+
+
+class InstructionsIn(BaseModel):
+    text: str = Field(max_length=1500)
+
+
+@app.get("/api/me/instructions")
+def get_instructions(user: dict = Depends(current_user)):
+    return {"text": initalize_db().instructions(user["id"])}
+
+
+@app.put("/api/me/instructions")
+def put_instructions(body: InstructionsIn, user: dict = Depends(current_user)):
+    initalize_db().set_instructions(user["id"], body.text.strip())
+    return {"text": body.text.strip()}
+
+
+@app.get("/api/me/memories")
+def my_memories(user: dict = Depends(current_user)):
+    """What he remembers from past conversations (one summary each), newest first."""
+    return initalize_db().recent_memories(None, user_id=user["id"], limit=100)
+
+
+@app.delete("/api/me/memories/{conversation_id}")
+def forget_memory(conversation_id: str, user: dict = Depends(current_user)):
+    if not initalize_db().delete_memory(conversation_id, user["id"]):
+        raise HTTPException(status_code=404, detail="memory not found")
+    return {"deleted": conversation_id}
 
 
 @app.delete("/api/me/facts/{key:path}")

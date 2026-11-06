@@ -831,4 +831,20 @@ class MemoryDB:
 
     def prompt_facts(self, user_id: str) -> Dict[str, Any]:
         """A user's facts for the prompt, without None/empty-string values."""
-        return {k: v for k, v in self.list_facts(user_id).items() if v is not None and v != ""}
+        return {k: v for k, v in self.list_facts(user_id).items()
+                if v is not None and v != "" and not k.startswith("_")}  # "_" keys: settings, not facts
+
+    # His custom instructions ("how I want you to talk"): free text, so a reserved fact, not the int settings table.
+    def instructions(self, user_id: str) -> str:
+        return str(self.get_fact("_instructions", user_id) or "")
+
+    def set_instructions(self, user_id: str, text: str) -> None:
+        if text:
+            self.upsert_fact(user_id, "_instructions", text, source="settings")
+        else:
+            self.delete_fact(user_id, "_instructions")
+
+    def delete_memory(self, conversation_id: str, user_id: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute("DELETE FROM memories WHERE conversation_id = ? AND user_id = ?",
+                                (conversation_id, user_id)).rowcount > 0
