@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
 from fastapi.staticfiles import StaticFiles
 import requests
 from pydantic import BaseModel, Field, field_validator
@@ -574,7 +575,12 @@ def owner_only(user: dict = Depends(current_user)) -> dict:
 
 @app.post("/api/health/ingest")
 async def health_ingest(request: Request, user: dict = Depends(owner_only)):
-    body = await request.body()
+    try:
+        body = await request.body()
+    except ClientDisconnect:  # the phone gave up mid-upload (a huge first sync): nothing to store, no traceback
+        logging.getLogger("thursday.voice.health").warning(
+            "health upload dropped by the phone mid-transfer: too big? Turn on batching / hourly grouping in the app")
+        return Response(status_code=400)
     if len(body) > 50_000_000:
         raise HTTPException(status_code=413, detail="send less at once (50 MB max)")
     try:

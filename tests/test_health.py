@@ -49,3 +49,27 @@ def test_shortcut_payload_with_sleep_stages():
         {"type": "steps", "start": "bad date", "value": 5},
     ]})
     assert [(r[0], r[3]) for r in rows] == [("heart_rate", 61.0), ("sleep_deep", 45.0)]
+
+
+def test_import_apple_export(tmp_path):
+    import importlib.util, zipfile
+    xml = """<?xml version="1.0"?><HealthData>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Watch" unit="count/min" startDate="2025-03-01 08:05:00 -0500" endDate="2025-03-01 08:05:00 -0500" value="60"/>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Watch" unit="count/min" startDate="2025-03-01 08:35:00 -0500" endDate="2025-03-01 08:35:00 -0500" value="80"/>
+ <Record type="HKQuantityTypeIdentifierOxygenSaturation" sourceName="Watch" unit="%" startDate="2025-03-01 03:00:00 -0500" endDate="2025-03-01 03:00:00 -0500" value="0.97"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Watch" startDate="2025-03-01 02:00:00 -0500" endDate="2025-03-01 02:30:00 -0500" value="HKCategoryValueSleepAnalysisAsleepDeep"/>
+ <Workout workoutActivityType="HKWorkoutActivityTypeRunning" sourceName="Watch" startDate="2025-03-01 17:00:00 -0500" endDate="2025-03-01 17:40:00 -0500"/>
+</HealthData>"""
+    z = tmp_path / "export.zip"
+    with zipfile.ZipFile(z, "w") as f:
+        f.writestr("apple_health_export/export.xml", xml)
+    spec = importlib.util.spec_from_file_location("imp", "scripts/import_health_export.py")
+    imp = importlib.util.module_from_spec(spec); spec.loader.exec_module(imp)
+    imp.main(str(z))
+    got = {m["metric"]: m["samples"] for m in health.summary()["metrics"]}
+    assert got == {"heart_rate": 1, "blood_oxygen": 1, "sleep_deep": 1, "workout": 1}  # 2 HR readings -> 1 hourly avg
+    import sqlite3
+    c = sqlite3.connect(health.DB)
+    assert c.execute("SELECT value FROM samples WHERE metric='heart_rate'").fetchone()[0] == 70
+    assert c.execute("SELECT value FROM samples WHERE metric='blood_oxygen'").fetchone()[0] == 97
+    assert c.execute("SELECT note FROM samples WHERE metric='workout'").fetchone()[0] == "Running"
