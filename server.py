@@ -115,6 +115,12 @@ def chat_page():
     return FileResponse("static/index.html")
 
 
+@app.get("/sw.js")
+def service_worker():
+    """At the root, so its scope covers the whole app. Never cached itself: an update reaches phones at once."""
+    return FileResponse("static/sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
 # ---------------- login ----------------
 
 class LoginIn(BaseModel):
