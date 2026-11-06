@@ -851,6 +851,7 @@ _ASKED_MISSION_GOAL = re.compile(
     re.I | re.S,
 )
 _CANCEL_PENDING = re.compile(r"^\W*(?:no|nah|nope|never\s*mind|cancel|stop|abort|forget\s+it|don'?t|not\s+now)\b", re.I)
+_CALL_ASK = re.compile(r"\b(?:call|phone|dial|ring)\s+(?:me\b|my\b|\+?\d)|\bgive\s+\w+\s+a\s+(?:call|ring)\b", re.I)
 _AGENTIC_TOPIC = re.compile(r"\b(?:mission|agentic|mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
 
 
@@ -1438,6 +1439,13 @@ async def _stream_prompt(
                  "for a mission, improve_start or code_review_start for your own code, music_play for music, list_add "
                  "for a list, and so on), or if no tool can, say so plainly. Never say it's done, playing, started or "
                  "underway unless a tool ran this turn.")
+    # "Call me and say this is a test" (2026-11-06): twice he asked first, then said "call prepared" and "dialing"
+    # with no tool run. Hold the first round until call_place runs; its result is what he reads back.
+    elif not hold_first and not executed and mode in ("voice", "chat") and _CALL_ASK.search(user_prompt):
+        hold_first = True
+        nudge = ("He's asking you to phone someone. Call call_place now with the number (or 'me') and the message, "
+                 "before asking anything; then read back who and what from its result and ask. Never say a call is "
+                 "prepared or dialing unless call_place or call_confirm ran this turn.")
     elif not hold_first and not executed and mode in ("voice", "chat") and _AGENTIC_TOPIC.search(user_prompt):
         hold_first, claims_only = True, True
         nudge = ("Never say a mission, code review, or improvement task is started, running, or underway unless "
