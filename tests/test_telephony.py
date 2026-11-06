@@ -15,6 +15,7 @@ def phone(monkeypatch, tmp_path):
                  "OWNER_NUMBER": "+15551112222"}.items():
         monkeypatch.setattr(telephony, k, v)
     monkeypatch.setattr(telephony, "_render", lambda text: b"RIFFwav")
+    monkeypatch.setattr(telephony, "_opening", lambda message, goal, name: message)  # the LLM rewrite
     monkeypatch.setattr("approvals.push", lambda *a, **k: True)
     telephony._pending.clear()
     monkeypatch.setattr(telephony, "PLACED_FILE", str(tmp_path / "calls_placed.txt"))
@@ -226,3 +227,11 @@ def test_amd_only_a_sure_voicemail_switches_a_live_call(phone, monkeypatch):
     assert posted == []
     _signed_post(phone, path, {"AnsweredBy": "machine_end_beep", "CallSid": sid})
     assert len(posted) == 1 and sid in posted[0][0] and f"/twilio/audio/{token}.wav" in posted[0][1]
+
+
+def test_report_summarizes_a_real_conversation_whatever_the_machine_verdict():
+    talked = [("assistant", "Hi Ivanna!"), ("user", "(the other person said) So do the joke.")]
+    assert telephony._outcome({"who": "Ivanna", "status": "completed", "answered_by": "machine_end_other",
+                               "transcript": talked}) is None  # summarize it
+    assert "no beep" in telephony._outcome({"who": "Ivanna", "status": "completed", "answered_by": "machine_start",
+                                            "transcript": [("assistant", "Hi")]})

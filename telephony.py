@@ -280,11 +280,13 @@ def call_place(args: Dict[str, Any]) -> ToolResult:
             "to his contacts first; you can't add anyone yourself."))
     if not message:
         return ToolResult(ok=False, tool_name="call_place", error="no_message: ask him what to say")
+    who = str(args.get("to", "")).strip()
+    name = "you" if number == OWNER_NUMBER else re.sub(r"^(?:my|our)\s+", "", who, flags=re.I).title()
+    message = _opening(message, goal, OWNER_NAME if name == "you" else name)
     token = secrets.token_urlsafe(24)
     render = _RENDER.submit(_render, message[:600])  # ready by his "yes"; call_confirm waits if it isn't
-    who = str(args.get("to", "")).strip()
     _briefs[token] = {"message": message, "goal": goal, "conversation": turn["conversation"],
-                      "who": "you" if number == OWNER_NUMBER else re.sub(r"^(?:my|our)\s+", "", who, flags=re.I).title(),
+                      "who": name,
                       "transcript": [], "answered_by": "", "ended_by": "", "from_satellite": FROM_SATELLITE.get(),
                       "share": share}
     _pending[turn["conversation"]] = {"at": time.monotonic(), "turn": turn["turn"], "to": number, "token": token,
@@ -295,6 +297,33 @@ def call_place(args: Dict[str, Any]) -> ToolResult:
         "note": "Read back who and what in one line" + (", and that you'll give them his " +
                 " and ".join(("name" if k.startswith("Name") else "number") for k in share) + " if they ask"
                 if share else "") + ", and ask if you should call. Only call_confirm after a plain yes."})
+
+
+def _opening(message: str, goal: str, name: str) -> str:
+    """What THURSDAY says the moment they pick up, said TO them. The agent's message often reads like his
+    instruction ("Hi, I'd like to tell Ivanna Miranda that she is my friend, tell her a joke...", 2026-11-06), which
+    sounds like a to-do list read aloud; one short LLM pass (~0.5 s) turns it into speech. He hears the result in
+    the read-back, so he approves what will actually be said. On any failure, the message as it was."""
+    from agent_stream import CHAT_URL, MODEL, OLLAMA_KEEP_ALIVE, OLLAMA_OPTIONS
+    first = name.split()[0] if name else ""
+    prompt = (f"THURSDAY, {OWNER_NAME}'s AI assistant, is phoning {name}. A recorded line has just said who he is. "
+              f"Write the very next thing he says to {first or 'them'}, out loud.\n"
+              f"{OWNER_NAME}'s instruction: {message}\nGoal of the call: {goal or 'deliver the message'}\n\n"
+              f"In the instruction, \"I\", \"me\" and \"my\" mean {OWNER_NAME}, not you: say it as his (\"{OWNER_NAME} "
+              "wanted me to tell you you're his friend\"). "
+              f"Talk TO them (\"you\"), first name at most once, never about them in the third person. Warm and "
+              "natural, one to three short sentences, under 45 words. Start doing the goal right away (if it's a "
+              "message, say it; if it's a joke, tell it), never announce what you're going to do or ask permission. "
+              "If it's an order or a question for a business, just ask for it politely. Only the words, no quotes.")
+    try:
+        r = httpx.post(CHAT_URL, timeout=20, json={
+            "model": MODEL, "stream": False, "think": False, "keep_alive": OLLAMA_KEEP_ALIVE, "options": OLLAMA_OPTIONS,
+            "messages": [{"role": "user", "content": prompt}]})
+        text = (r.json().get("message") or {}).get("content", "").strip().strip('"').strip()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("call opening not rewritten: %s", type(exc).__name__)
+        return message
+    return text if 3 <= len(text.split()) <= 70 else message
 
 
 def confirms_pending(conversation_id: str, said: str) -> bool:
@@ -458,12 +487,21 @@ def _shareable(asked) -> dict[str, str]:
     return out
 
 
+def _on_line(brief: dict) -> str:
+    who = brief.get("who") or ""
+    return OWNER_NAME if who in ("", "you") else who.split()[0]
+
+
 def call_prompt(brief: dict) -> str:
     """Call mode's whole world: the brief, nothing else (no memory, calendar or tools to leak or misuse)."""
     goal = brief.get("goal") or "deliver that message, answer simple questions about it, and say goodbye"
     return (
-        f"You are THURSDAY, {OWNER_NAME}'s AI assistant, on the phone with someone for him. You've already told "
-        f"them: \"{brief.get('message', '')}\"\nYour goal on this call: {goal}\n\n"
+        f"You are THURSDAY, {OWNER_NAME}'s AI assistant, on the phone with {_on_line(brief)} for him. You've "
+        f"already told them: \"{brief.get('message', '')}\"\nYour goal on this call: {goal}\n\n"
+        f"You lead this call. Do each part of the goal yourself, in order, in your next replies, without waiting "
+        "to be asked and without announcing it first (tell the joke; don't say you have one). Talk to them as "
+        "\"you\", never about them by name in the third person. If they give you a message for "
+        f"{OWNER_NAME}, repeat its gist back in a few words so they know you got it.\n\n"
         "How to sound: like a friendly, relaxed person on the phone, not a script. React to what they just said "
         "first. Use contractions, vary your wording, and never repeat a sentence you've already said on this call. "
         "Keep each reply under 30 words. Vary how replies begin: never start two the same way, and don't open with "
@@ -856,11 +894,12 @@ def _outcome(brief: dict) -> str | None:
         why = {"no-answer": "nobody picked up", "busy": "the line was busy", "failed": "the call didn't go through",
                "canceled": "the call was canceled"}[st]
         return f"I couldn't reach {who}: {why}. Want me to try again later?"
-    if by in _SURE_VOICEMAIL or (by in _VOICEMAIL and not brief.get("transcript")):
+    talked = sum(1 for role, _ in brief.get("transcript", []) if role == "user")
+    if by in _SURE_VOICEMAIL or (by in _VOICEMAIL and not talked):
         return f"{who} didn't pick up, so I left your message on their voicemail."
-    if by.startswith("machine") or by == "fax":
+    if (by.startswith("machine") or by == "fax") and not talked:
         return f"{who}'s line went to an answering machine with no beep, so I hung up without leaving a message."
-    if not brief.get("transcript") or len(brief["transcript"]) < 2:
+    if not talked:
         return f"I gave {who} your message, but they didn't say anything back."
     return None
 
