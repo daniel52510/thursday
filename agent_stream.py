@@ -856,6 +856,17 @@ _ASKED_MISSION_GOAL = re.compile(
     re.I | re.S,
 )
 _CANCEL_PENDING = re.compile(r"^\W*(?:no|nah|nope|never\s*mind|cancel|stop|abort|forget\s+it|don'?t|not\s+now)\b", re.I)
+# Tools that only read: a reply after them can still claim something no tool did (the claim guard keeps checking).
+_LOOKUP_TOOLS = {"mission_status", "get_time", "get_weather", "web_search", "calendar_events", "health_check",
+                 "list_show", "note_find", "system_status", "music_now", "light_status", "alarm_list", "watch_list",
+                 "routine_list", "approval_list", "improve_status", "project_list", "sports_scores", "launch_schedule",
+                 "code_ask"}
+# "How's my health / sleep / HRV / readiness": answered from health_check, never "I don't have your data"
+# (it said exactly that to "go over my current health markings", 2026-11-06).
+_HEALTH_ASK = re.compile(r"\b(?:my|i|i'm|am i|me)\b.{0,40}\b(?:health|sleep|slept|hrv|heart ?rate|resting|readiness|"
+                         r"recover(?:y|ed)?|steps|workouts?|vo2|weight|vitals|markings|markers|fitness|activity|"
+                         r"calories|training load)\b|\b(?:health|sleep|hrv|readiness|recovery|vitals)\b.{0,30}\b(?:my|me)\b",
+                         re.I)
 _CALL_ASK = re.compile(r"\b(?:call|phone|dial|ring)\s+(?:me\b|my\b|\+?\d)|\bgive\s+\w+\s+a\s+(?:call|ring)\b", re.I)
 _AGENTIC_TOPIC = re.compile(r"\b(?:mission|agentic|mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
 
@@ -898,7 +909,9 @@ _CLAIMED = re.compile(r",\s*(?:playing|added|saved|set|done|booked|off|on|paused
                       r"(?:a\s+|the\s+|an\s+)?(?:mission|improvement|task|code\s+review|routine|watch)|"
                       r"(?:mission|improvement\s+task|code\s+review)\s+(?:is\s+)?(?:underway|started|queued|running)|"
                       r"running\s+in\s+sandbox|you\s+watch,\s*i\s+work|"
-                      r"call\s+(?:is\s+)?(?:prepared|ready|dialing|placed|complete)|(?:i\s+am\s+)?calling\s+(?:you|them|her|him)\s+now|"
+                      r"call\s+(?:is\s+)?(?:prepared|ready|dialing|placed|complete)|"
+                      r"(?:running|doing|working\s+on)\s+(?:a\s+|the\s+|my\s+|your\s+)?(?:[\w-]+\s+){0,3}(?:research|mission)\b|"
+                      r"\b(?:research|mission|task)\s+(?:is\s+)?(?:underway|in\s+progress|running|started)\b|(?:i\s+am\s+)?calling\s+(?:you|them|her|him)\s+now|"
                       r"i\s+(?:called|dialed|prepared\s+(?:a\s+|the\s+)?call)|"
                       r"mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
 
@@ -1483,6 +1496,12 @@ async def _stream_prompt(
                  "underway unless a tool ran this turn.")
     # "Call me and say this is a test" (2026-11-06): twice he asked first, then said "call prepared" and "dialing"
     # with no tool run. Hold the first round until call_place runs; its result is what he reads back.
+    elif (not hold_first and not executed and mode in ("voice", "chat") and user["id"] == OWNER
+          and _HEALTH_ASK.search(user_prompt)):
+        hold_first = True
+        nudge = ("He's asking about his own health. Call health_check now (topic recovery for how he's doing or "
+                 "whether to train, sleep, heart, activity, workouts or weight) and answer from its result. You do "
+                 "have his Apple Watch data through that tool; never say you can't see it.")
     elif not hold_first and not executed and mode in ("voice", "chat") and _CALL_ASK.search(user_prompt):
         hold_first = True
         nudge = ("He's asking you to phone someone. Call call_place now with the number (or 'me') and the message, "
@@ -1509,6 +1528,7 @@ async def _stream_prompt(
                  "words, like a trainer would.")
 
     reply_parts: list[str] = []
+    guard_used = False
     final_round = False
     lead: str | None = None  # "" once armed: buffering the reply's start to strip a filler-style lead-in
     async with httpx.AsyncClient(timeout=httpx.Timeout(OLLAMA_TIMEOUT, connect=5)) as client:
@@ -1531,9 +1551,13 @@ async def _stream_prompt(
             # A deliberate turn is his opinion, not a lookup: no retry for skipping a tool (it doubled a 15 s think).
             hold = hold_first and round_no == 0 and not deliberate
             # Not held: still hold the first sentence until it's clear it claims nothing no tool did.
-            guard = "" if (round_no == 0 and not hold and not executed and not final_round
-                           and mode in ("voice", "chat")) else None
+            # Also after rounds that only looked things up: "SpaceX research is underway" followed a mission_status
+            # that listed nothing running (2026-11-06). Once a tool that acts has run, claims may be true.
+            guard = "" if (not guard_used and not hold and not final_round and mode in ("voice", "chat")
+                           and all(e.split(":", 1)[0] in _LOOKUP_TOOLS for e in executed)) else None
             claimed = False
+            if guard is not None:
+                guard_used = True  # one check per turn: the retry's reply goes out whatever it says
             async with client.stream("POST", CHAT_URL, json=payload) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode(errors="replace")[:300]

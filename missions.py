@@ -281,7 +281,11 @@ def mission_status(args: Dict[str, Any]) -> ToolResult:
     found = db.get_mission(str(args["mission_id"]), OWNER) if args.get("mission_id") else None
     # An id the model made up finds nothing: then it's the recent ones he means.
     missions = [found] if found else [m for m in db.list_missions(OWNER, limit=20) if m["announced_at"] != "quiet"][:5]
-    return ToolResult(ok=True, tool_name="mission_status", data={"missions": [_brief(m) for m in missions]})
+    live = [m for m in missions if m["status"] in ("queued", "running")]
+    return ToolResult(ok=True, tool_name="mission_status", data={
+        "running_now": len(live), "missions": [_brief(m) for m in missions],
+        "note": "These are his recent missions with their status." + ("" if live else
+                " None is running right now: never say one is underway. To start one, call mission_start.")})
 
 
 def mission_abort(args: Dict[str, Any]) -> ToolResult:

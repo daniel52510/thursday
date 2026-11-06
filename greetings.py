@@ -30,6 +30,7 @@ QUIET_S = 30  # nobody has talked this long before rendering uses the GPU
 
 clips: list[bytes] = []  # WAVs, the current batch
 version = 0              # bumped each batch, so the page knows to fetch the new ones
+voice = ""               # whose voice this batch is in: a Rocky/Tara switch re-renders it (run)
 
 
 def _part_of_day(now: datetime) -> str:
@@ -60,7 +61,7 @@ async def _write_lines(http: httpx.AsyncClient, tara: bool) -> list[str]:
 
 async def refresh() -> bool:
     """One new batch: write, render, keep, send. False (old batch kept) if anything fails."""
-    global clips, version
+    global clips, version, voice
     import mind
     import voice_ws
     style = {**mind.voice_style(OWNER), "volume": 1.0}  # players apply his volume themselves
@@ -78,7 +79,7 @@ async def refresh() -> bool:
     if len(new) < 3:
         logger.warning("greetings not refreshed: only %d rendered", len(new))
         return False
-    clips, version = new, version + 1
+    clips, version, voice = new, version + 1, style.get("voice", "")
     _save(new)
     logger.info("greetings refreshed: %d clips (%s)", len(new), "; ".join(lines[:3]) + " ...")
     await push_to_satellites()
@@ -94,12 +95,14 @@ def _save(batch: list[bytes]) -> None:
         for i, wav in enumerate(batch):
             with open(os.path.join(DIR, f"{i}.wav"), "wb") as f:
                 f.write(wav)
+        with open(os.path.join(DIR, "voice.txt"), "w") as f:
+            f.write(voice)
     except OSError as exc:
         logger.warning("greetings not saved: %s", exc)
 
 
 def _load_saved() -> None:
-    global clips, version
+    global clips, version, voice
     try:
         names = sorted((n for n in os.listdir(DIR) if n.endswith(".wav")), key=lambda n: int(n[:-4]))
         batch = [open(os.path.join(DIR, n), "rb").read() for n in names]
@@ -107,6 +110,10 @@ def _load_saved() -> None:
         return
     if batch:
         clips, version = batch, 1
+        try:
+            voice = open(os.path.join(DIR, "voice.txt")).read().strip()
+        except OSError:
+            voice = "?"  # saved before voices were tracked: re-render once
 
 
 def message() -> dict:
@@ -131,7 +138,9 @@ async def run() -> None:
     while True:
         await asyncio.sleep(20)
         try:
-            due = time.monotonic() - last >= (REFRESH_S if clips else 60)
+            import mind
+            switched = clips and voice and mind.voice_style(OWNER).get("voice") != voice  # he picked Rocky / Tara
+            due = switched or time.monotonic() - last >= (REFRESH_S if clips else 60)
             quiet = time.monotonic() - missions._last_activity >= QUIET_S
             if due and quiet:
                 await refresh()
