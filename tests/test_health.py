@@ -75,3 +75,13 @@ def test_import_apple_export(tmp_path):
     assert c.execute("SELECT value FROM samples WHERE metric='heart_rate'").fetchone()[0] == 70
     assert c.execute("SELECT value FROM samples WHERE metric='blood_oxygen'").fetchone()[0] == 97
     assert c.execute("SELECT note FROM samples WHERE metric='workout'").fetchone()[0] == "Running"
+
+
+def test_daily_rollup():
+    health.store(health.parse_payload(AUTO_EXPORT))
+    rows = health.daily(3650, tz="America/New_York")
+    by = {r["date"]: r for r in rows}
+    d = by["2026-11-06"]
+    assert d["steps"] == 1200 and d["hrv"] == 48.2 and d["resting_heart_rate"] == 54
+    assert d["sleep_deep"] == 66 and d["sleep_minutes"] == round((3.9 + 1.1 + 1.6) * 60)  # awake not counted
+    assert by["2026-11-05"]["workouts"][0]["type"] == "Outdoor Run"

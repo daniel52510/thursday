@@ -171,3 +171,52 @@ def delete_all() -> int:
         n = conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0]
         conn.execute("DELETE FROM samples")
     return n
+
+
+SUM = {"steps", "active_energy", "exercise_minutes", "stand_minutes", "distance", "flights", "daylight_minutes"}
+AVG = {"heart_rate", "resting_heart_rate", "walking_heart_rate", "hrv", "respiratory_rate", "blood_oxygen",
+       "wrist_temperature"}
+LAST = {"weight", "vo2max"}
+STAGES = ("sleep_core", "sleep_deep", "sleep_rem", "sleep_awake")
+
+
+def daily(days: int = 30, tz: str | None = None) -> list[dict]:
+    """One row per local day, oldest first: sums (steps, energy...), averages (HRV, resting heart rate...),
+    the latest weight / VO2 max, sleep by stage counted on the morning he woke up, and that day's workouts."""
+    from collections import defaultdict
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    zone = ZoneInfo(tz or os.getenv("THURSDAY_TZ", "America/New_York"))
+    since = (datetime.now(timezone.utc) - timedelta(days=days + 1)).isoformat()
+    with _connect() as conn:
+        rows = conn.execute("SELECT metric, start, end, value, note FROM samples WHERE start >= ? ORDER BY start",
+                            (since,)).fetchall()
+    out: dict[str, dict] = defaultdict(lambda: {"workouts": []})
+    avg: dict[tuple, list] = defaultdict(list)
+    for metric, start, end, value, note in rows:
+        when = end if metric.startswith("sleep") else start  # a night belongs to the morning he woke up
+        day = datetime.fromisoformat(when).astimezone(zone).date().isoformat()
+        d = out[day]
+        if metric in SUM:
+            d[metric] = d.get(metric, 0) + value
+        elif metric in AVG:
+            avg[(day, metric)].append(value)
+        elif metric in LAST:
+            d[metric] = value
+        elif metric in STAGES:
+            d[metric] = d.get(metric, 0) + value
+        elif metric == "workout":
+            d["workouts"].append({"type": note or "Workout", "minutes": value,
+                                  "start": datetime.fromisoformat(start).astimezone(zone).strftime("%H:%M")})
+    for (day, metric), vals in avg.items():
+        out[day][metric] = sum(vals) / len(vals)
+    today = datetime.now(zone).date()
+    result = []
+    for i in range(days - 1, -1, -1):
+        day = (today - timedelta(days=i)).isoformat()
+        d = {"date": day, **{k: (round(v, 1) if isinstance(v, float) else v) for k, v in out.get(day, {"workouts": []}).items()}}
+        asleep = sum(d.get(s, 0) for s in STAGES if s != "sleep_awake")
+        if asleep:
+            d["sleep_minutes"] = round(asleep)
+        result.append(d)
+    return result

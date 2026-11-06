@@ -365,6 +365,17 @@
   .health-row span:last-child { color: var(--text-muted); font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
   .health-h { margin: 22px 0 8px; font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); }
   .health-speed { margin: 0; font-variant-numeric: tabular-nums; }
+  dialog.body { width: min(720px, calc(100vw - 32px)); }
+  .body-sub { margin: 0; color: var(--text-muted); font-size: 13.5px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin: 16px 0 6px; }
+  .tile { padding: 12px 14px; border-radius: 12px; background: var(--deep); min-width: 0; }
+  .tile small { display: block; font: 500 10.5px/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); }
+  .tile b { display: block; font: 400 26px/1.2 var(--serif); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile span { display: block; font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+  .mini { margin-top: 18px; }
+  .mini .lat-chart svg { overflow: visible; }
+  .mini .bar { fill: var(--text); opacity: .85; }
+  .mini .bar.hot { opacity: 1; }
   .meter { display: grid; grid-template-columns: 90px 1fr 150px; align-items: center; gap: 10px; padding: 7px 0; }
   .meter b { font-weight: 500; font-size: 14px; }
   .meter .track { height: 8px; border-radius: 4px; background: var(--deep); overflow: hidden; }
@@ -563,6 +574,7 @@
   <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   <symbol id="i-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
   <symbol id="i-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></symbol>
   <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
   <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15L6 16zM10 21h4"/></symbol>
@@ -573,7 +585,8 @@
   <button class="nav-btn primary" id="newChat"><svg><use href="#i-plus"/></svg>New conversation</button>
   <button class="nav-btn" id="voiceNav"><svg><use href="#i-wave"/></svg>Voice mode</button>
   <button class="nav-btn" id="alarmsNav"><svg><use href="#i-bell"/></svg>Alarms</button>
-  <button class="nav-btn" id="healthNav"><svg><use href="#i-pulse"/></svg>Health</button>
+  <button class="nav-btn" id="bodyNav"><svg><use href="#i-heart"/></svg>Health</button>
+  <button class="nav-btn" id="healthNav"><svg><use href="#i-pulse"/></svg>System</button>
   <button class="nav-btn" id="contactsNav"><svg><use href="#i-phone"/></svg>Contacts</button>
   <button class="nav-btn" id="announceNav"><svg><use href="#i-speaker"/></svg>Announce</button>
   <button class="nav-btn" id="settingsNav"><svg><use href="#i-dots"/></svg>Settings</button>
@@ -787,8 +800,16 @@
   </form>
 </dialog>
 
+<dialog id="bodyDialog" class="alarms body">
+  <div class="alarms-head"><h2>Health</h2><button class="icon-btn" id="bodyClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <div class="lat-head"><p class="body-sub" id="bodySub">From your Apple Watch, synced by Health Auto Export.</p>
+    <div class="lat-range body-range" role="group" aria-label="Range"><button type="button" data-d="7" aria-pressed="false">7 d</button><button type="button" data-d="30" aria-pressed="true">30 d</button></div></div>
+  <div class="tiles" id="bodyTiles"></div>
+  <div id="bodyCharts"></div>
+</dialog>
+
 <dialog id="healthDialog" class="alarms">
-  <div class="alarms-head"><h2>Health</h2><button class="icon-btn" id="healthClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <div class="alarms-head"><h2>System</h2><button class="icon-btn" id="healthClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <p id="healthSummary">Checking…</p>
   <h3 class="health-h" id="macTitle">Mac Studio</h3>
   <div id="macItems"></div>
@@ -889,9 +910,10 @@ async function api(path, opts = {}) {
 async function loadMe() {
   ME = await (await api("/api/me")).json();
   $("whoText").textContent = `${ME.display_name} · ${ME.role}`;
-  $("alarmsNav").hidden = ME.role !== "admin";
-  $("contactsNav").hidden = ME.role !== "admin";
-  $("healthNav").hidden = ME.role !== "admin";      // his call allowlist         // alarms ring on the admin's satellite
+  $("alarmsNav").hidden = ME.role !== "admin";         // alarms ring on the admin's satellite
+  $("contactsNav").hidden = ME.role !== "admin";       // his call allowlist
+  $("healthNav").hidden = ME.role !== "admin";         // system status
+  $("bodyNav").hidden = ME.id !== "owner";             // his Apple Health data
   $("announceNav").hidden = !ME.family_memory;          // admin and family
   $("agenticTop").hidden = ME.id !== "owner";           // missions run on the owner's GPU, with his calendar
 }
@@ -1055,6 +1077,107 @@ function friendlyError(stage) {
             TTS: "I have a reply, but my voice isn't working. It's in the chat." })[stage]
     || "Something went wrong on my end. Try again.";
 }
+
+// ---------- his health (Apple Watch via Health Auto Export; health.py) ----------
+// Today as stat tiles (each beside its 7-day average), then one single-series chart per measure: no legends
+// (the title names the series), page ink only so both themes work, a tooltip on every bar or dot.
+let bodyDays = 30;
+const fmtMin = (m) => m == null ? "–" : `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, "0")} m`;
+const avgOf = (rows, k) => { const v = rows.map((r) => r[k]).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+async function loadBody() {
+  let rows = [];
+  try { const res = await api(`/api/health/daily?days=${bodyDays}`); if (res.ok) rows = await res.json(); } catch {}
+  const tiles = $("bodyTiles"), charts = $("bodyCharts");
+  tiles.innerHTML = ""; charts.innerHTML = "";
+  if (!rows.some((r) => Object.keys(r).length > 2)) {
+    tiles.innerHTML = `<div class="health-warn">No health data yet. Set up the REST API automation in Health Auto Export.</div>`;
+    return;
+  }
+  const today = rows[rows.length - 1], week = rows.slice(-8, -1);
+  const lastSleep = [...rows].reverse().find((r) => r.sleep_minutes);
+  const vs = (k, unit) => {  // the latest reading, beside the 7-day average
+    const a = avgOf(week, k), v = today[k] ?? [...rows].reverse().find((r) => r[k] != null)?.[k];
+    if (v == null) return ["–", "no reading yet"];
+    if (a == null) return [`${Math.round(v)} ${unit}`, ""];
+    const d = Math.round(v - a);
+    return [`${Math.round(v)} ${unit}`, d === 0 ? "same as your 7-day avg" : `${Math.abs(d)} ${unit} ${d > 0 ? "above" : "below"} your 7-day avg`];
+  };
+  const tile = (label, value, sub) => {
+    const t = document.createElement("div"); t.className = "tile";
+    t.innerHTML = "<small></small><b></b><span></span>";
+    t.children[0].textContent = label; t.children[1].textContent = value; t.children[2].textContent = sub;
+    tiles.append(t);
+  };
+  tile("Last night", fmtMin(lastSleep?.sleep_minutes), lastSleep
+    ? `deep ${Math.round(lastSleep.sleep_deep || 0)} · REM ${Math.round(lastSleep.sleep_rem || 0)} · core ${Math.round(lastSleep.sleep_core || 0)} min` : "no sleep recorded");
+  tile("Resting HR", ...vs("resting_heart_rate", "bpm"));
+  tile("HRV", ...vs("hrv", "ms"));
+  // Today until it has synced, else the latest day that has (and say which).
+  const act = today.steps != null ? today : [...rows].reverse().find((r) => r.steps != null) || today;
+  const actDay = act === today ? "today" : new Date(`${act.date}T12:00`).toLocaleDateString([], { weekday: "long" });
+  tile(`Steps · ${actDay}`, act.steps != null ? Math.round(act.steps).toLocaleString() : "–",
+    avgOf(week, "steps") ? `7-day avg ${Math.round(avgOf(week, "steps")).toLocaleString()}` : "");
+  tile(`Active energy · ${actDay}`, act.active_energy != null ? `${Math.round(act.active_energy)} kcal` : "–",
+    act.exercise_minutes ? `${Math.round(act.exercise_minutes)} exercise min` : "");
+  const label = (d) => new Date(`${d}T12:00`).toLocaleDateString([], { month: "short", day: "numeric" });
+  miniChart(charts, rows, { key: "sleep_minutes", title: "Sleep", kind: "bar", axis: (v) => `${Math.round(v / 60)} h`, fmt: fmtMin,
+    tip: (r) => [label(r.date), fmtMin(r.sleep_minutes), `deep ${Math.round(r.sleep_deep || 0)} · REM ${Math.round(r.sleep_rem || 0)} · core ${Math.round(r.sleep_core || 0)} · awake ${Math.round(r.sleep_awake || 0)} min`], label });
+  miniChart(charts, rows, { key: "hrv", title: "Heart rate variability (HRV)", kind: "line", axis: (v) => `${Math.round(v)}`, fmt: (v) => `${Math.round(v)} ms`,
+    tip: (r) => [label(r.date), `${Math.round(r.hrv)} ms average`], label });
+  miniChart(charts, rows, { key: "resting_heart_rate", title: "Resting heart rate", kind: "line", axis: (v) => `${Math.round(v)}`, fmt: (v) => `${Math.round(v)} bpm`,
+    tip: (r) => [label(r.date), `${Math.round(r.resting_heart_rate)} bpm`], label });
+  miniChart(charts, rows, { key: "steps", title: "Steps", kind: "bar", axis: (v) => v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`, fmt: (v) => Math.round(v).toLocaleString(),
+    tip: (r) => [label(r.date), `${Math.round(r.steps).toLocaleString()} steps`, r.workouts?.length ? r.workouts.map((w) => `${w.type} ${Math.round(w.minutes)} min`).join(", ") : ""], label });
+}
+function miniChart(parent, rows, o) {
+  const wrap = document.createElement("div"); wrap.className = "mini";
+  const vals = rows.map((r) => r[o.key]).filter((v) => v != null);
+  const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  wrap.innerHTML = `<h3 class="health-h"></h3><div class="lat-chart"><div class="lat-tip" hidden></div></div>`;
+  wrap.firstChild.textContent = avg == null ? `${o.title} · no data` : `${o.title} · average ${o.fmt(avg)}`;
+  parent.append(wrap);
+  if (!vals.length) return;
+  const box = wrap.querySelector(".lat-chart"), tip = box.querySelector(".lat-tip");
+  const W = Math.max(280, parent.clientWidth || 640), H = 120, L = 34, R = 6, T = 8, B = 20;
+  const NS = "http://www.w3.org/2000/svg", svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.width = `${W}px`; svg.style.height = `${H}px`;
+  svg.setAttribute("role", "img"); svg.setAttribute("aria-label", wrap.firstChild.textContent);
+  const el = (tag, a, t) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); if (t) e.textContent = t; svg.append(e); return e; };
+  const lo = o.kind === "bar" ? 0 : Math.min(...vals) * 0.9, hi = Math.max(...vals) * 1.08 || 1;
+  const step = (W - L - R) / rows.length;
+  const x = (i) => L + step * i + step / 2, y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  for (const g of [lo, (lo + hi) / 2, hi]) { el("line", { x1: L, x2: W - R, y1: y(g), y2: y(g), class: "grid" }); el("text", { x: L - 6, y: y(g) + 3, "text-anchor": "end", class: "axis" }, o.axis(g)); }
+  el("text", { x: L, y: H - 4, class: "axis" }, o.label(rows[0].date));
+  el("text", { x: W - R, y: H - 4, "text-anchor": "end", class: "axis" }, "today");
+  if (o.kind === "line") {
+    const pts = rows.map((r, i) => r[o.key] == null ? null : `${x(i)},${y(r[o.key])}`).filter(Boolean);
+    el("polyline", { points: pts.join(" "), class: "line" });
+  }
+  rows.forEach((r, i) => {
+    if (r[o.key] == null) return;
+    const bw = Math.max(3, Math.min(18, step - 4));
+    const mark = o.kind === "bar"
+      ? el("rect", { x: x(i) - bw / 2, y: y(r[o.key]), width: bw, height: Math.max(1, y(lo) - y(r[o.key])), rx: Math.min(4, bw / 2), class: "bar" })
+      : el("circle", { cx: x(i), cy: y(r[o.key]), r: 3.5, class: "pt" });
+    const hit = el("rect", { x: x(i) - step / 2, y: T, width: step, height: H - T - B, fill: "transparent", tabindex: 0 });
+    const show = () => {
+      mark.classList.add("hot"); tip.hidden = false; tip.innerHTML = "";
+      for (const t of o.tip(r).filter(Boolean)) { const d = document.createElement("div"); d.textContent = t; tip.append(d); }
+      tip.style.left = `${Math.min(Math.max(x(i), 120), W - 120)}px`; tip.style.top = `${Math.max(0, y(r[o.key]) - 70)}px`;
+    };
+    const hide = () => { mark.classList.remove("hot"); tip.hidden = true; };
+    hit.addEventListener("pointerenter", show); hit.addEventListener("focus", show);
+    hit.addEventListener("pointerleave", hide); hit.addEventListener("blur", hide);
+  });
+  box.prepend(svg);
+}
+for (const b of document.querySelectorAll(".body-range button")) b.onclick = () => {
+  bodyDays = Number(b.dataset.d);
+  for (const o of document.querySelectorAll(".body-range button")) o.setAttribute("aria-pressed", String(o === b));
+  loadBody();
+};
+$("bodyClose").onclick = () => $("bodyDialog").close();
+$("bodyNav").onclick = () => { closeNav(); $("bodyDialog").showModal(); loadBody(); };
 
 // ---------- health (is every part of THURSDAY up?) ----------
 let healthTimer = 0;
