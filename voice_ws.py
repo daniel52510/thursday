@@ -262,6 +262,33 @@ for _name in ("uvicorn.error", "uvicorn.access"):
 router = APIRouter()
 SATELLITES: set["Session"] = set()  # connected satellites, for server-initiated speech (alarms)
 RECENT_TURNS: collections.deque = collections.deque(maxlen=50)  # numeric turn timings, for diagnostics.system_status
+# Every turn's timings on disk too (brain/turns.jsonl, one JSON object a line), for the latency chart: time to first
+# audio is the number that matters (CLAUDE.md), so its history has to survive restarts. Trimmed to TURNS_KEEP lines.
+TURNS_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "turns.jsonl")
+TURNS_KEEP = 5000
+
+
+def _keep_turn(row: dict) -> None:
+    try:
+        with open(TURNS_FILE, "a") as f:
+            f.write(json.dumps(row) + "\n")
+        if os.path.getsize(TURNS_FILE) > TURNS_KEEP * 600:  # ~600 bytes a line: trim now and then, not every turn
+            with open(TURNS_FILE) as f:
+                lines = f.readlines()[-TURNS_KEEP:]
+            with open(TURNS_FILE, "w") as f:
+                f.writelines(lines)
+    except OSError as exc:
+        logger.warning("turn timing not saved: %s", exc)
+
+
+def turn_history(hours: float) -> list[dict]:
+    since = time.time() - hours * 3600
+    try:
+        with open(TURNS_FILE) as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+    except (OSError, ValueError):
+        return []
+    return [r for r in rows if r.get("at", 0) >= since]
 
 
 def same_origin(origin: str | None, host: str | None) -> bool:
@@ -1477,7 +1504,10 @@ class Session:
 
     def _log_timing(self) -> None:
         logger.info("turn timing: %s", " ".join(f"{k}={v}" for k, v in self._timing.items()))
-        RECENT_TURNS.append({"at": time.time(), **{k: v for k, v in self._timing.items() if isinstance(v, (int, float))}})
+        row = {"at": time.time(), "role": self.role,
+               **{k: v for k, v in self._timing.items() if isinstance(v, (int, float))}}
+        RECENT_TURNS.append(row)
+        _keep_turn(row)
         self._timing = None
 
     async def announce(self, *, audio: list[bytes] | None = None, prompt: str = "",

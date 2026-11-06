@@ -564,6 +564,15 @@ class AlarmPatch(BaseModel):
     enabled: bool
 
 
+@app.get("/api/latency")
+def latency(hours: float = 24, user: dict = Depends(admin_only)):
+    """Each voice turn's time to first audio (and its parts), for the health page's chart."""
+    import voice_ws
+    keys = ("speech_end_to_playback_ms", "stt_ms", "llm_ttft_ms", "tts_first_ms")
+    return [{"at": r["at"], "role": r.get("role", ""), **{k: r[k] for k in keys if k in r}}
+            for r in voice_ws.turn_history(min(max(hours, 1), 24 * 14)) if "speech_end_to_playback_ms" in r]
+
+
 @app.get("/api/health")
 def health_page(user: dict = Depends(admin_only)):
     """The health page: each service's light and detail, current problems, the last warnings, reply speed."""

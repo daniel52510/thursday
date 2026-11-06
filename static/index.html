@@ -365,6 +365,22 @@
   .health-row span:last-child { color: var(--text-muted); font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
   .health-h { margin: 22px 0 8px; font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); }
   .health-speed { margin: 0; font-variant-numeric: tabular-nums; }
+  .lat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .lat-head .health-h { flex: 1; min-width: 0; }
+  .lat-range { display: flex; flex: none; gap: 2px; }
+  .lat-range button { font: 500 11px/1 var(--mono); padding: 5px 8px; border-radius: 999px; color: var(--text-muted); white-space: nowrap; width: auto; height: auto; }
+  .lat-range button[aria-pressed="true"] { background: var(--deep); color: var(--text); }
+  .lat-chart { position: relative; }
+  .lat-chart svg { display: block; overflow: visible; }
+  .lat-chart .grid { stroke: var(--rule); stroke-width: 1; }
+  .lat-chart .axis { fill: var(--text-faint); font: 10px var(--mono); }
+  .lat-chart .target { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 4 4; }
+  .lat-chart .line { fill: none; stroke: var(--text); stroke-width: 2; stroke-linejoin: round; opacity: .35; }
+  .lat-chart .pt { fill: var(--text); stroke: var(--bg); stroke-width: 2; }
+  .lat-chart .pt.hot { r: 6; }
+  .lat-chart .empty { fill: var(--text-muted); font-size: 13px; }
+  .lat-tip { position: absolute; top: 0; padding: 6px 8px; border-radius: 8px; background: var(--inverse-bg); color: var(--inverse-text);
+             font: 11.5px/1.45 var(--mono); pointer-events: none; white-space: nowrap; transform: translateX(-50%); }
   .health-warn { padding: 8px 0; border-top: 1px solid var(--rule); font-size: 13px; overflow-wrap: anywhere; }
   .health-warn small { display: block; font: 500 10.5px/1.6 var(--mono); color: var(--text-faint); letter-spacing: .06em; }
   #contactItems { border-bottom: 1.5px solid var(--text); margin-bottom: 18px; }
@@ -772,6 +788,13 @@
   <div id="healthItems"></div>
   <h3 class="health-h">Reply speed (last 6 h)</h3>
   <p class="health-speed" id="healthSpeed"></p>
+  <div class="lat-head">
+    <h3 class="health-h" id="latTitle">Time to first audio</h3>
+    <div class="lat-range" role="group" aria-label="Range">
+      <button type="button" data-h="24" aria-pressed="true">24 h</button><button type="button" data-h="168" aria-pressed="false">7 d</button>
+    </div>
+  </div>
+  <div class="lat-chart" id="latChart"><div class="lat-tip" id="latTip" hidden></div></div>
   <h3 class="health-h">Recent warnings</h3>
   <div id="healthWarnings"></div>
 </dialog>
@@ -1055,11 +1078,75 @@ async function loadHealth() {
     w.append(d);
   }
 }
+// Time to first audio per voice turn: the number THURSDAY is judged by (CLAUDE.md). One series, no legend; the
+// dashed line is the 1 s target; hover a dot for its parts (STT, first token, TTS).
+let latHours = 24;
+async function loadLatency() {
+  let rows = [];
+  try { const res = await api(`/api/latency?hours=${latHours}`); if (res.ok) rows = await res.json(); } catch {}
+  drawLatency(rows);
+}
+function drawLatency(rows) {
+  const box = $("latChart"), tip = $("latTip");
+  box.querySelector("svg")?.remove(); tip.hidden = true;
+  const W = Math.max(280, box.clientWidth || 440), H = 170, L = 34, R = 8, T = 10, B = 22;
+  const NS = "http://www.w3.org/2000/svg", svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.style.width = `${W}px`; svg.style.height = `${H}px`;  // the box's own size (beats the icon-sized svg rule)
+  svg.setAttribute("role", "img");
+  const el = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text) e.textContent = text; svg.append(e); return e; };
+  if (!rows.length) {
+    el("text", { x: W / 2, y: H / 2, "text-anchor": "middle", class: "empty" }, "No voice turns in this range yet");
+    $("latTitle").textContent = "Time to first audio";
+    box.prepend(svg); return;
+  }
+  const v = rows.map((r) => r.speech_end_to_playback_ms).sort((a, b) => a - b);
+  const p50 = v[Math.floor(v.length / 2)], p90 = v[Math.floor(v.length * 0.9)];
+  $("latTitle").textContent = `Time to first audio · median ${(p50 / 1000).toFixed(2)} s · ${rows.length} turns · dashed: 1 s target`;
+  svg.setAttribute("aria-label", `Time to first audio, ${rows.length} turns, median ${p50} ms, 90th percentile ${p90} ms`);
+  const t0 = Date.now() / 1000 - latHours * 3600, t1 = Date.now() / 1000;
+  const top = Math.max(2000, Math.ceil(p90 * 1.15 / 1000) * 1000);
+  const x = (t) => L + (t - t0) / (t1 - t0) * (W - L - R);
+  const y = (ms) => T + (1 - Math.min(ms, top) / top) * (H - T - B);
+  for (let s = 0; s <= top; s += top > 6000 ? 2000 : 1000) {
+    el("line", { x1: L, x2: W - R, y1: y(s), y2: y(s), class: "grid" });
+    el("text", { x: L - 6, y: y(s) + 3, "text-anchor": "end", class: "axis" }, `${s / 1000} s`);
+  }
+  el("line", { x1: L, x2: W - R, y1: y(1000), y2: y(1000), class: "target" });
+  const fmtT = (t) => new Date(t * 1000).toLocaleString([], latHours > 24 ? { weekday: "short", hour: "numeric" } : { hour: "numeric", minute: "2-digit" });
+  el("text", { x: L, y: H - 6, class: "axis" }, fmtT(t0));
+  el("text", { x: W - R, y: H - 6, "text-anchor": "end", class: "axis" }, "now");
+  el("polyline", { points: rows.map((r) => `${x(r.at)},${y(r.speech_end_to_playback_ms)}`).join(" "), class: "line" });
+  for (const r of rows) {
+    const cx = x(r.at), cy = y(r.speech_end_to_playback_ms);
+    const dot = el("circle", { cx, cy, r: 4, class: "pt" });
+    const hit = el("circle", { cx, cy, r: 12, fill: "transparent", tabindex: 0 });  // bigger than the dot
+    const show = () => {
+      dot.classList.add("hot"); tip.hidden = false;
+      tip.innerHTML = "";
+      const lines = [`${fmtT(r.at)} · ${r.role || "voice"}`, `first audio ${(r.speech_end_to_playback_ms / 1000).toFixed(2)} s`,
+        `STT ${r.stt_ms ?? "–"} ms · first token ${r.llm_ttft_ms ?? "–"} ms · TTS ${r.tts_first_ms ?? "–"} ms`];
+      for (const t of lines) { const d = document.createElement("div"); d.textContent = t; tip.append(d); }
+      tip.style.left = `${Math.min(Math.max(cx, 120), W - 120)}px`;
+      tip.style.top = `${Math.max(0, cy - 70)}px`;
+    };
+    const hide = () => { dot.classList.remove("hot"); tip.hidden = true; };
+    hit.addEventListener("pointerenter", show); hit.addEventListener("focus", show);
+    hit.addEventListener("pointerleave", hide); hit.addEventListener("blur", hide);
+  }
+  box.prepend(svg);
+}
+for (const b of document.querySelectorAll(".lat-range button")) b.onclick = () => {
+  latHours = Number(b.dataset.h);
+  for (const o of document.querySelectorAll(".lat-range button")) o.setAttribute("aria-pressed", String(o === b));
+  loadLatency();
+};
+
 $("healthClose").onclick = () => $("healthDialog").close();
 $("healthDialog").addEventListener("close", () => clearInterval(healthTimer));
 $("healthNav").onclick = () => {
-  closeNav(); $("healthDialog").showModal(); loadHealth();
-  clearInterval(healthTimer); healthTimer = setInterval(loadHealth, 10000);
+  closeNav(); $("healthDialog").showModal(); loadHealth(); loadLatency();
+  clearInterval(healthTimer); healthTimer = setInterval(() => { loadHealth(); loadLatency(); }, 10000);
 };
 
 // ---------- contacts (who THURSDAY may call) ----------
