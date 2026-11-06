@@ -32,12 +32,21 @@ def test_webhook_needs_twilios_signature(phone):
     assert r.status_code == 200 and "<Hangup/>" in r.text
 
 
-def test_numbers():
-    assert telephony._number("(512) 555-0123") == "+15125550123"
-    assert telephony._number("+44 20 7946 0958") is None  # toll fraud: +1 only by default
-    assert telephony._number("+1 900 555 0123") is None   # premium rate
-    assert telephony._number("+1 (305) 555-0123") == "+13055550123"
+def test_numbers_only_from_contacts(phone, tmp_path, monkeypatch):
+    book = tmp_path / "contacts.txt"
+    book.write_text("# family\nMom: (512) 555-0123\nUK friend: +44 20 7946 0958\nHotline: +1 900 555 0123\n")
+    monkeypatch.setattr(telephony, "CONTACTS_FILE", str(book))
+    assert telephony._number("Mom") == "+15125550123"
+    assert telephony._number("my mom") == "+15125550123"
+    assert telephony._number("512 555 0123") == "+15125550123"  # a number that's on the list
+    assert telephony._number("me") == "+15551112222"
+    assert telephony._number("+1 (305) 555-0123") is None       # a fine number, but not a contact
+    assert telephony._number("UK friend") is None               # toll fraud: +1 only, even when saved
+    assert telephony._number("Hotline") is None                 # premium rate, even when saved
     assert telephony._number("call the plumber") is None
+    _turn(1, "call the plumber")
+    err = telephony.call_place({"to": "the plumber", "message": "hi"}).error
+    assert err.startswith("not_in_contacts") and "Mom" in err
 
 
 def _turn(n, said, user="daniel"):

@@ -44,6 +44,7 @@ PUBLIC = os.getenv("TWILIO_PUBLIC_URL", "").rstrip("/")  # e.g. https://<mac>.<t
 DAILY_CAP = int(os.getenv("TWILIO_DAILY_CALLS", "10"))
 # Call times on disk, one per line, so a restart can't reset the cap.
 PLACED_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "calls_placed.txt")
+CONTACTS_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "contacts.txt")
 AUDIO_TTL_S = 15 * 60
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 # Toll fraud: only these country prefixes dial (international premium lines bill per minute), never US premium-rate.
@@ -93,15 +94,40 @@ async def _signed_form(request: Request) -> dict[str, str]:
     return params
 
 
-def _number(to: str) -> str | None:
-    to = (to or "").strip()
-    if to.lower() in ("me", "my phone", "daniel", OWNER_NAME.lower()):
-        return OWNER_NUMBER or None
-    digits = re.sub(r"[^\d+]", "", to)
+def _dialable(to: str) -> str | None:
+    """A said or written number as E.164, if it's one we'd ever dial (+1 by default, never premium)."""
+    digits = re.sub(r"[^\d+]", "", to or "")
     if re.fullmatch(r"\d{10}", digits):  # a US number said without the country code
         digits = "+1" + digits
     ok = E164.match(digits) and digits.startswith(ALLOWED) and not PREMIUM.match(digits)
     return digits if ok else None
+
+
+def contacts() -> dict[str, str]:
+    """The allowlist: brain/contacts.txt, one "Name: number" per line, edited by him only (no tool writes it,
+    so nobody on a call or in a web page can add a number). Lines with a number we'd never dial are skipped."""
+    out: dict[str, str] = {}
+    try:
+        with open(CONTACTS_FILE) as f:
+            for line in f:
+                name, sep, num = line.partition(":")
+                if sep and not name.lstrip().startswith("#") and (number := _dialable(num)):
+                    out[name.strip().lower()] = number
+    except OSError:
+        pass
+    return out
+
+
+def _number(to: str) -> str | None:
+    """Only "me" or someone in contacts(): a name, or a number that's on the list."""
+    to = re.sub(r"^(?:my|our)\s+", "", (to or "").strip(), flags=re.I).lower()
+    if to in ("me", "phone", "daniel", OWNER_NAME.lower()):
+        return OWNER_NUMBER or None
+    book = contacts()
+    if to in book:
+        return book[to]
+    number = _dialable(to)
+    return number if number and number in book.values() else None
 
 
 def _render(text: str) -> bytes:
@@ -151,7 +177,10 @@ def call_place(args: Dict[str, Any]) -> ToolResult:
     number = _number(str(args.get("to", "")))
     message = str(args.get("message") or "").strip()
     if not number:
-        return ToolResult(ok=False, tool_name="call_place", error="bad_number: ask him for the full phone number")
+        names = ", ".join(n.title() for n in contacts()) or "nobody yet"
+        return ToolResult(ok=False, tool_name="call_place", error=(
+            f"not_in_contacts: you can only call him or his saved contacts ({names}). Tell him to add them "
+            "to his contacts first; you can't add anyone yourself."))
     if not message:
         return ToolResult(ok=False, tool_name="call_place", error="no_message: ask him what to say")
     try:
@@ -237,7 +266,7 @@ TOOL_SCHEMAS = [
         "it only gets the call ready. Then read back who and what from its result and ask; call_confirm dials "
         "after his yes. Never say a call is prepared unless this tool ran. A one-way message: you can't hear them yet.",
         "parameters": {"type": "object", "properties": {
-            "to": {"type": "string", "description": "Phone number with area code, or 'me' for his own phone"},
+            "to": {"type": "string", "description": "A saved contact's name ('Mom'), or 'me' for his own phone"},
             "message": {"type": "string", "description": "What to say, worded for the listener, a few sentences"}},
             "required": ["to", "message"]}}},
     {"type": "function", "function": {
