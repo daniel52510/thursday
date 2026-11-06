@@ -51,6 +51,7 @@ import missions
 import music
 import health
 import lights
+import reminders
 import notes
 import telephony
 from accounts import FAMILY, FAMILY_ROLES, OWNER
@@ -315,6 +316,8 @@ def _system_prompt(user: dict) -> str:
         system += (f"\n\nRight now you're talking with {name}, not Daniel: one of the people he has invited "
                    f"in ({user['role']}). Wherever these notes say Daniel or him, apply them to {name}. "
                    "Daniel is the friend who made your home; don't share what he or anyone else told you privately.")
+    if user["id"] == OWNER and (promises := reminders.prompt_note(user["id"])):
+        system += "\n\n" + promises
     # Last, so a change only re-reads the end of the prompt (Ollama's cache keeps everything before it).
     if instructions := initalize_db().instructions(user["id"]).strip():
         system += ("\n\nHow they want you to talk (their own instructions; follow them in every reply, within your "
@@ -453,9 +456,10 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "alarm_set",
-            "description": "Set an alarm: you wake the user yourself at that time, by voice. Use for 'wake me at 7', "
-            "'set an alarm for 6:30 on weekdays', 'remind me in 20 minutes'. Not for more minutes right after you woke "
-            "them: that's alarm_snooze. Pass time OR in_minutes. Put why they want to be up in "
+            "description": "Set a wake-up alarm: you wake the user yourself at that time, by voice on the bedroom "
+            "speaker. Only for waking up: 'wake me at 7', 'set an alarm for 6:30 on weekdays'. Anything 'remind me...' "
+            "is reminder_set (it reaches his phone too). Not for more minutes right after you woke them: that's "
+            "alarm_snooze. Pass time OR in_minutes. Put why they want to be up in "
             "note, in their words, if they said. Then tell them casually when it rings.",
             "parameters": {
                 "type": "object",
@@ -592,7 +596,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -857,7 +861,7 @@ _ASKED_MISSION_GOAL = re.compile(
 )
 _CANCEL_PENDING = re.compile(r"^\W*(?:no|nah|nope|never\s*mind|cancel|stop|abort|forget\s+it|don'?t|not\s+now)\b", re.I)
 # Tools that only read: a reply after them can still claim something no tool did (the claim guard keeps checking).
-_LOOKUP_TOOLS = {"mission_status", "get_time", "get_weather", "web_search", "calendar_events", "health_check",
+_LOOKUP_TOOLS = {"reminder_list", "mission_status", "get_time", "get_weather", "web_search", "calendar_events", "health_check",
                  "list_show", "note_find", "system_status", "music_now", "light_status", "alarm_list", "watch_list",
                  "routine_list", "approval_list", "improve_status", "project_list", "sports_scores", "launch_schedule",
                  "code_ask"}
@@ -1673,6 +1677,8 @@ async def _stream_prompt(
         return
     db.log_message(role="assistant", content=reply, conversation_id=cid)
     timing["total_ms"] = _ms(started)
+    # "I'll look into it" with nothing done: kept as a promise he'll see next time (reminders.py).
+    reminders.capture(user["id"], reply, {e.split(":", 1)[0] for e in executed}, cid)
 
     # Fact extraction is a second LLM call nobody is waiting on; run it after the reply.
     # Facts come from what the user said, not from tool output: a get_time for

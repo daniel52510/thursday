@@ -22,6 +22,7 @@ import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
 import greetings
+import reminders
 import health
 import telephony
 import vault
@@ -59,8 +60,10 @@ async def lifespan(app: FastAPI):
     on_improvements = asyncio.create_task(improvements.run_notifier())
     on_review = asyncio.create_task(improvements.start_self_review())
     on_greetings = asyncio.create_task(greetings.run())  # fresh wake greetings each hour
+    on_reminders = asyncio.create_task(reminders.run())  # due reminders: push, and out loud at home
     yield
     on_greetings.cancel()
+    on_reminders.cancel()
     on_missions.cancel()
     on_improvements.cancel()
     on_review.cancel()
