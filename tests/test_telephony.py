@@ -98,3 +98,21 @@ def test_stream_needs_signature_and_a_live_token(phone, monkeypatch):
         assert [f["event"] for f in frames] == ["media", "media", "mark"]
         ws.send_json({"event": "stop"})
     assert token not in telephony._audio  # one use
+
+
+def test_phone_encoder_has_no_seams_between_pieces():
+    import numpy as np
+    import rocky_voice
+    x = (0.3 * np.sin(np.arange(24000) * 2 * np.pi * 440 / 24000)).astype(np.float32)
+    whole = telephony._PhoneEncoder()
+    one = whole.feed(rocky_voice._write(x, 24000)) + whole.flush()
+    pieced = telephony._PhoneEncoder()
+    parts = b"".join(pieced.feed(rocky_voice._write(x[i:i + 1901], 24000)) for i in range(0, len(x), 1901))
+    assert parts + pieced.flush() == one
+
+
+def test_fillers_wait_for_real_words():
+    for filler in ("But uh", "uh", "Um...", "so", "and, uh,", "Hmm."):
+        assert telephony._FILLER.match(filler), filler
+    for words in ("Dinner is at 8.", "Okay", "No", "So dinner is at 8", "Who is this?"):
+        assert not telephony._FILLER.match(words), words
