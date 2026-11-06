@@ -895,6 +895,7 @@
     <h2>Your location</h2>
     <p>THURSDAY uses this for "here", "near me", and weather or time questions without a place. Leave it empty to detect it from this device automatically (rounded to about 1 km; the city name comes from OpenStreetMap). Type a city to pin it instead.</p>
     <input id="locInput" type="text" autocomplete="address-level2" spellcheck="false" placeholder="City, State (e.g. Plantation, FL)" maxlength="100">
+    <p class="set-note" id="locHint"></p>
     <div class="row"><button type="submit">Save</button></div>
   </form>
 </dialog>
@@ -986,8 +987,9 @@ function clientContext() {
   try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch {}
   return { timezone, location: currentLocation() };
 }
+let locProblem = "";  // why automatic location isn't working, shown instead of failing silently
 function showLocation() {
-  $("locText").textContent = currentLocation() || "Set location";
+  $("locText").textContent = currentLocation() || locProblem || "Set location";
   $("voiceLoc").textContent = `${currentLocation() || "No location"} · Web`;
 }
 // Ask the device where it is (coarse, cached by the OS), at most every 15 minutes.
@@ -997,6 +999,7 @@ function detectLocation() {
   if (store.get(LOC_KEY) || !window.isSecureContext || !navigator.geolocation) return;
   if (auto && Date.now() - auto.at < LOC_REFRESH_MS) return;
   navigator.geolocation.getCurrentPosition(async (pos) => {
+    locProblem = "";
     try {
       const { latitude: lat, longitude: lon } = pos.coords;
       const res = await api(`/api/whereami?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`);
@@ -1004,12 +1007,19 @@ function detectLocation() {
       store.set(LOC_AUTO_KEY, { name: (await res.json()).location, at: Date.now() });
       showLocation();
     } catch {}
-  }, () => {}, { enableHighAccuracy: false, maximumAge: LOC_REFRESH_MS, timeout: 15000 });
+  }, (err) => {
+    // 1: he (or iOS) said no. 2/3: no fix yet. Shown on the location button; tapping it lets him type a place.
+    locProblem = err.code === 1 ? "Location blocked: allow it in Settings" : "Location unavailable: tap to set";
+    showLocation();
+  }, { enableHighAccuracy: false, maximumAge: LOC_REFRESH_MS, timeout: 15000 });
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") detectLocation(); });
 $("locBtn").onclick = () => {
   $("locInput").value = store.get(LOC_KEY) || "";
   $("locInput").placeholder = store.get(LOC_AUTO_KEY)?.name ? `Automatic: ${store.get(LOC_AUTO_KEY).name}` : "City, State (e.g. Plantation, FL)";
+  $("locHint") && ($("locHint").textContent = locProblem
+    ? "Automatic location uses your phone's GPS (not the Mac's). To allow it: iPhone Settings → Privacy & Security → Location Services → Safari Websites → While Using the App. Or type a place here."
+    : "Leave empty to use your phone's location automatically.");
   $("locDialog").showModal();
 };
 $("locDialog").onclose = () => { store.set(LOC_KEY, $("locInput").value.trim() || null); showLocation(); detectLocation(); };
@@ -2348,7 +2358,7 @@ async function openVoice() {
   if (V.ctx.state !== "running") {  // still not allowed: the next tap on the orb resumes it (recoverAudio)
     V.state = "paused";
     vdiag("tap-orb-shown");
-    figError("Tap the orb to start", "iOS is holding the audio. One tap on the orb and voice mode starts.");
+    figError(...micProblem());
     return;
   }
   // Unlock the cue elements inside the gesture so later play() calls are allowed.
@@ -2381,7 +2391,7 @@ async function recoverAudio() {
     }
   } catch {} finally { recovering = false; }
   V.state = "paused";
-  figError("Voice paused", "iOS stopped the audio (another app, a call or the lock screen). Tap the orb to resume.");
+  figError(...micProblem());
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") recoverAudio(); });
 window.addEventListener("pageshow", () => recoverAudio());
@@ -2429,6 +2439,16 @@ function vdiag(step, extra = {}) {
       app: matchMedia("(display-mode: standalone)").matches || navigator.standalone ? "home-screen" : "browser", ...extra });
     fetch("/api/voice/diag", { method: "POST", body, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
   } catch {}
+}
+
+// What to tell him when iOS won't give voice mode the audio. A mic that comes back already "ended" is iOS
+// refusing it (no error, no prompt): seen in the home-screen app while Music / YouTube held the audio (2026-11-06).
+function micProblem() {
+  const deadMic = V.mic?.getAudioTracks()[0]?.readyState === "ended";
+  const app = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  if (deadMic) return ["iOS didn't give voice mode the microphone",
+    `Pause any music or video, then tap the orb.${app ? " Still stuck? Use THURSDAY in Safari, or swipe this app away and reopen it." : ""}`];
+  return ["Voice paused", "iOS is holding the audio (another app, a call or the lock screen). Tap the orb to resume."];
 }
 
 // A promise that gives up: iOS can leave AudioContext.resume() (and work on an interrupted context) pending forever.
