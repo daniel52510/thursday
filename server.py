@@ -219,6 +219,18 @@ def get_voice(user: dict = Depends(current_user)):
     return {"voice": "tara" if voice_style(user["id"])["voice"] == "tara" else "rocky"}
 
 
+@app.post("/api/voice/diag")
+async def voice_diag(request: Request, user: dict = Depends(current_user)):
+    """Voice mode's steps from the device itself, before any socket exists: where opening it stops."""
+    try:
+        d = json.loads((await request.body())[:2000])
+    except ValueError:
+        return Response(status_code=204)
+    logging.getLogger("thursday.voice").info("voice client step: %s",
+                                            " ".join(f"{k}={str(v)[:40]}" for k, v in list(d.items())[:12]))
+    return Response(status_code=204)
+
+
 @app.put("/api/voice")
 def set_voice(body: VoiceIn, user: dict = Depends(current_user)):
     initalize_db().set_setting(user["id"], "voice_tara", int(body.voice == "tara"))
@@ -703,6 +715,10 @@ async def health_ingest(request: Request, user: dict = Depends(owner_only)):
     logging.getLogger("thursday.voice.health").info("health: %d samples received, %d new (%s; %s; payload keys %s)",
                                                     len(rows), new, kinds or "none recognized", span,
                                                     sorted((json.loads(body).get("data") or {}).keys()))
+    if not new:  # nothing stored: say what the app sent (metric names and reading counts, never values)
+        sent = (json.loads(body).get("data") or {}).get("metrics") or []
+        logging.getLogger("thursday.voice.health").info("health: the app sent %d metric(s): %s", len(sent),
+            ", ".join(f"{m.get('name')} ({len(m.get('data') or [])})" for m in sent[:40]) or "none")
     return {"received": len(rows), "new": new}
 
 

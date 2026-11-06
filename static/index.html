@@ -2331,11 +2331,15 @@ async function openVoice() {
   // mic, the home-screen app's context was born "suspended" and never resumed (ctx=suspended, frames=0).
   if (!V.ctx || V.ctx.state === "closed") V.ctx = new AudioContext();
   const resuming = V.ctx.resume().catch(() => {});
+  vdiag("tap");
   try {
     V.opening = true;           // recoverAudio stays out of the way until voice mode is up
     await startAudio();         // a fresh mic if the last one ended, wired into that context
+    vdiag("mic");
     await withTimeout(resuming, 1500).catch(() => {});  // iOS can leave resume() pending: don't wait forever
+    vdiag("resumed");
   } catch (err) {
+    vdiag("error", { error: `${err.name}: ${err.message}` });
     V.opening = false;
     figError("Microphone unavailable", err.message);
     return;
@@ -2343,6 +2347,7 @@ async function openVoice() {
   V.opening = false;
   if (V.ctx.state !== "running") {  // still not allowed: the next tap on the orb resumes it (recoverAudio)
     V.state = "paused";
+    vdiag("tap-orb-shown");
     figError("Tap the orb to start", "iOS is holding the audio. One tap on the orb and voice mode starts.");
     return;
   }
@@ -2415,6 +2420,17 @@ function maybeGreet(frame) {
   G.until = V.ctx.currentTime + src.buffer.duration;
 }
 
+// Where voice mode gets to on this device, logged by the server ("voice client step: ..."), including steps
+// before the socket exists. Fire and forget; never in the way.
+function vdiag(step, extra = {}) {
+  try {
+    const t = V.mic?.getAudioTracks()[0];
+    const body = JSON.stringify({ step, ctx: V.ctx?.state ?? "none", mic: t?.readyState ?? "none", frames: V.frames || 0,
+      app: matchMedia("(display-mode: standalone)").matches || navigator.standalone ? "home-screen" : "browser", ...extra });
+    fetch("/api/voice/diag", { method: "POST", body, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
+  } catch {}
+}
+
 // A promise that gives up: iOS can leave AudioContext.resume() (and work on an interrupted context) pending forever.
 function withTimeout(p, ms) {
   return Promise.race([Promise.resolve(p), new Promise((_, no) => setTimeout(() => no(new Error("timeout")), ms))]);
@@ -2470,7 +2486,8 @@ function setMuted(muted) {
 $("voiceOrbBtn").onclick = () => {
   if (V.state === "paused" || (V.ctx && V.ctx.state !== "running")) {
     V.ctx?.resume().catch(() => {});  // inside the tap, before any await: the gesture iOS wants for audio
-    recoverAudio(); return;
+    vdiag("orb-tap");
+    recoverAudio().then(() => vdiag("orb-tap-after")); return;
   }
   if (V.state === "speaking" || V.state === "thinking") interrupt();
   else if (V.muted) setMuted(false);
