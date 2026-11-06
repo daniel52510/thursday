@@ -18,6 +18,7 @@ import approvals
 import improvements
 import calendar_tool
 import missions
+import telephony
 import vault
 from memory import now_iso as memory_now
 from accounts import FAMILY, FAMILY_ROLES, OWNER, LoginThrottle, public
@@ -64,6 +65,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(voice_router)
+app.include_router(telephony.router)  # /twilio/*: the only paths Funnel makes public
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
 class StreamChatIn(BaseModel):

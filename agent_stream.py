@@ -51,6 +51,7 @@ import missions
 import music
 import lights
 import notes
+import telephony
 from accounts import FAMILY, FAMILY_ROLES, OWNER
 from episodic import recall_note
 from calendar_tool import CREATE_INTENT as _CALENDAR_ADD, DELETE_INTENT as _CALENDAR_DELETE, TURN as calendar_turn, confirms_pending, plain_yes
@@ -586,7 +587,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -1071,7 +1072,7 @@ def _build_messages(
 _REMEMBERED_TOOLS = {"list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "alarm_set",
                      "alarm_cancel", "alarm_snooze", "calendar_create", "calendar_delete", "calendar_confirm",
                      "mission_start", "mission_abort", "watch_start", "watch_stop", "approval_list", "approval_decide",
-                     "routine_start", "routine_stop", "send_to_phone", "improve_start",
+                     "routine_start", "routine_stop", "send_to_phone", "improve_start", "call_place", "call_confirm",
                      "light_set"}
 
 
@@ -1325,6 +1326,11 @@ async def _stream_prompt(
         result = await run_and_record("calendar_confirm", {})
         yield {"type": "tool_result", "name": "calendar_confirm", "ok": result.ok}
         executed.add("calendar_confirm:{}")
+    elif telephony.confirms_pending(cid, user_prompt):  # same for a call read back last turn
+        yield {"type": "tool", "name": "call_confirm", "args": {}}
+        result = await run_and_record("call_confirm", {})
+        yield {"type": "tool_result", "name": "call_confirm", "ok": result.ok}
+        executed.add("call_confirm:{}")
     # Same for a mission (or routine) read back last turn: his yes starts it here.
     elif held := missions.confirms_pending(cid, user_prompt):
         yield {"type": "tool", "name": held, "args": {"confirmed": True}}

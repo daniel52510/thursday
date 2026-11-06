@@ -156,7 +156,8 @@ def identify(pcm16: bytes, prints: dict[str, np.ndarray] | None = None) -> dict:
 # session), 18 unknown, the ones checked all leftover audio from a since-fixed self-interrupt, not people.
 SENSITIVE = {"calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "approval_list",
              "approval_decide", "send_to_phone", "improve_start", "code_review_start", "engineer_pass_now",
-             "mission_start", "routine_start", "watch_start", "note_find", "note_delete", "alarm_cancel"}
+             "mission_start", "routine_start", "watch_start", "note_find", "note_delete", "alarm_cancel",
+             "call_place", "call_confirm"}
 CURRENT: contextvars.ContextVar = contextvars.ContextVar("speaker_check", default=None)  # this turn's identify task
 
 
