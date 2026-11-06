@@ -116,3 +116,39 @@ def test_fillers_wait_for_real_words():
         assert telephony._FILLER.match(filler), filler
     for words in ("Dinner is at 8.", "Okay", "No", "So dinner is at 8", "Who is this?"):
         assert not telephony._FILLER.match(words), words
+
+
+def _signed_post(phone, path, form):
+    sig = telephony.signature(PUBLIC + path, form)
+    return phone.post(path, data=form, headers={"X-Twilio-Signature": sig})
+
+
+def test_answer_picks_stream_or_voicemail_and_needs_signature(phone):
+    token = telephony._keep_audio(b"RIFFwav")
+    telephony._briefs[token] = {"who": "Mom", "message": "hi", "transcript": []}
+    path = f"/twilio/answer?token={token}"
+    assert phone.post(path, data={"AnsweredBy": "human"}).status_code == 403
+    assert "<Stream" in _signed_post(phone, path, {"AnsweredBy": "human"}).text
+    vm = _signed_post(phone, path, {"AnsweredBy": "machine_end_beep"}).text
+    assert f"/twilio/audio/{token}.wav" in vm and "<Stream" not in vm
+    assert "<Hangup/>" in _signed_post(phone, "/twilio/answer?token=guess", {"AnsweredBy": "human"}).text
+
+
+def test_status_starts_one_report(phone, monkeypatch):
+    seen = []
+
+    async def fake_report(brief):
+        seen.append(brief)
+    monkeypatch.setattr(telephony, "_report", fake_report)
+    telephony._briefs["T1"] = {"who": "Mom", "message": "hi", "transcript": [], "answered_by": ""}
+    assert phone.post("/twilio/status?token=T1", data={"CallStatus": "no-answer"}).status_code == 403
+    assert _signed_post(phone, "/twilio/status?token=T1", {"CallStatus": "no-answer", "CallDuration": "0"}).status_code == 204
+    assert seen and seen[0]["status"] == "no-answer" and "T1" not in telephony._briefs
+
+
+def test_outcomes_without_a_conversation():
+    base = {"who": "Mom", "transcript": [], "answered_by": ""}
+    assert "nobody picked up" in telephony._outcome({**base, "status": "no-answer"})
+    assert "voicemail" in telephony._outcome({**base, "status": "completed", "answered_by": "machine_end_beep"})
+    talked = [("assistant", "hi"), ("user", "(the other person said) dinner is at 8")]
+    assert telephony._outcome({**base, "status": "completed", "answered_by": "human", "transcript": talked}) is None
