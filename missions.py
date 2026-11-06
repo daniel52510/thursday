@@ -721,6 +721,35 @@ async def _wait_quiet(mid: str | None = None) -> None:
     while time.monotonic() - _last_activity < QUIET_S or _runner_busy():  # a code job already running goes first
         _check_abort(mid)
         await asyncio.sleep(1)
+    await _wait_for_memory(mid)
+
+
+# Loading the 31b (~20 GB) next to the always-loaded chat model while memory is short is what pushed swap to
+# 99% and hung Ollama on 2026-11-05. The runner waits for room; missions do too (they didn't, until 2026-11-06).
+NEED_GB = float(os.getenv("MISSION_NEED_GB", "20"))
+HOSTMEM = Path(os.getenv("HOSTMEM_FILE", "/hostmem/host-mem.json"))
+
+
+async def _wait_for_memory(mid: str | None = None) -> None:
+    """Until the Mac has room for the mission model; at once if it's already loaded or there's no fresh reading."""
+    said = False
+    async with httpx.AsyncClient(timeout=5) as http:
+        while True:
+            try:
+                loaded = (await http.get(CHAT_URL.replace("/api/chat", "/api/ps"))).json().get("models", [])
+                if any(m.get("name") == MODEL for m in loaded):
+                    return
+                mem = json.loads(HOSTMEM.read_text())
+            except (httpx.HTTPError, OSError, ValueError):
+                return  # no reading: go ahead, as before
+            if time.time() - mem.get("at", 0) > 60 or (mem.get("available_gb", 0) >= NEED_GB
+                                                        and mem.get("pressure", 1) == 1):
+                return
+            if not said:
+                logger.info("mission waiting for memory: %s GB free, need %.0f", mem.get("available_gb"), NEED_GB)
+                said = True
+            _check_abort(mid)
+            await asyncio.sleep(15)
 
 
 async def _call_model(http: httpx.AsyncClient, messages: list[dict], tools: list[dict],
