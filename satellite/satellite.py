@@ -99,6 +99,10 @@ WAKE_MODEL = os.getenv("THURSDAY_WAKE_MODEL", str(HERE / "models" / "hey_thursda
 # 0.5 woke reliably only for Daniel; others likely land just under it. Lowered together with
 # the VAD gate and noise suppression below, which keep TV/music false wakes down.
 WAKE_THRESHOLD = float(os.getenv("THURSDAY_WAKE_THRESHOLD", "0.4"))
+# Frames in a row (~80 ms each) at or above the threshold before waking. One frame woke him for
+# nothing: 2026-11-04..06 most wakes (scores 0.50-0.92, six of them 00:28-06:34) heard no request.
+# A spoken "Hey THURSDAY" holds its score over several frames; a noise spike doesn't.
+WAKE_FRAMES = int(os.getenv("THURSDAY_WAKE_FRAMES", "2"))
 # openWakeWord's Silero VAD gate: wake scores only count while someone is actually speaking.
 # Off by default: on this mic, far speech is quiet enough that Silero stays unsure and the
 # gate zeroed real wakes (0.00 gated vs 0.97 ungated on the same clip). False wakes are
@@ -744,6 +748,7 @@ class Satellite:
         self._last_mic = time.monotonic()
         self._last_offline_note = 0.0
         self._near_logged = 0.0
+        self._wake_run = 0  # frames in a row at or above WAKE_THRESHOLD
         self._barge_max = 0.0  # loudest wake score heard over her own voice this turn
         # Speech barge-in (BARGE_SPEECH): the cancelled mic's level per chunk while he talks.
         self._speaking_at = 0.0
@@ -892,8 +897,12 @@ class Satellite:
                 continue
             if self.state == "wake":
                 score = await self._wake_score(chunk)
-                if score >= WAKE_THRESHOLD:
-                    log.info("wake (score %.2f)", score)
+                self._wake_run = self._wake_run + 1 if score >= WAKE_THRESHOLD else 0
+                if 0 < self._wake_run < WAKE_FRAMES:
+                    continue
+                if self._wake_run:
+                    self._wake_run = 0
+                    log.info("wake (score %.2f, %d frames)", score, WAKE_FRAMES)
                     self._wake_scores.append(round(score, 2))
                     await self._wake_up()
                 elif score >= NEAR_MISS and time.monotonic() - self._near_logged > 2:
