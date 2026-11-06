@@ -41,7 +41,9 @@ TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 FROM = os.getenv("TWILIO_FROM", "")
 OWNER_NUMBER = os.getenv("TWILIO_OWNER_NUMBER", "")  # "call me"
 PUBLIC = os.getenv("TWILIO_PUBLIC_URL", "").rstrip("/")  # e.g. https://<mac>.<tailnet>.ts.net:8443
-DAILY_CAP = int(os.getenv("TWILIO_DAILY_CALLS", "10"))  # in memory: a restart resets it
+DAILY_CAP = int(os.getenv("TWILIO_DAILY_CALLS", "10"))
+# Call times on disk, one per line, so a restart can't reset the cap.
+PLACED_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "calls_placed.txt")
 AUDIO_TTL_S = 15 * 60
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 # Toll fraud: only these country prefixes dial (international premium lines bill per minute), never US premium-rate.
@@ -50,7 +52,23 @@ PREMIUM = re.compile(r"^\+1(900|976)")
 
 _audio: dict[str, tuple[float, bytes]] = {}  # token -> (expires, wav)
 _pending: dict[str, dict] = {}               # conversation -> prepared call
-_placed: list[float] = []                    # call times, for the daily cap
+
+
+def _calls_today(now: float) -> list[float]:
+    try:
+        with open(PLACED_FILE) as f:
+            times = [float(line) for line in f if line.strip()]
+    except (OSError, ValueError):
+        times = []
+    return [t for t in times if now - t < 86400]
+
+
+def _record_call(times: list[float]) -> None:
+    try:
+        with open(PLACED_FILE, "w") as f:
+            f.write("".join(f"{t}\n" for t in times))
+    except OSError as exc:
+        logger.warning("call count not saved: %s", exc)
 router = APIRouter(prefix="/twilio")
 
 
@@ -171,8 +189,8 @@ def call_confirm(args: Dict[str, Any]) -> ToolResult:
                           error="not_confirmed: not a plain yes; if he changed details, call_place again")
     del _pending[turn["conversation"]]
     now = time.time()
-    _placed[:] = [t for t in _placed if now - t < 86400]
-    if len(_placed) >= DAILY_CAP:
+    placed = _calls_today(now)
+    if len(placed) >= DAILY_CAP:
         return ToolResult(ok=False, tool_name="call_confirm", error=f"daily_cap: {DAILY_CAP} calls a day")
     twiml = f"<Response><Play>{escape(PUBLIC)}/twilio/audio/{pending['token']}.wav</Play></Response>"
     try:
@@ -185,7 +203,7 @@ def call_confirm(args: Dict[str, Any]) -> ToolResult:
         detail = (r.json().get("message") if "json" in r.headers.get("content-type", "") else "") or r.status_code
         logger.warning("twilio refused the call: %s", detail)
         return ToolResult(ok=False, tool_name="call_confirm", error=f"twilio_refused: {detail}")
-    _placed.append(now)
+    _record_call(placed + [now])
     logger.info("call placed to %s…%s", pending["to"][:5], pending["to"][-2:])
     return ToolResult(ok=True, tool_name="call_confirm", data={"status": "calling", "to": pending["to"]})
 

@@ -10,14 +10,14 @@ PUBLIC = "https://mac.example.ts.net:8443"
 
 
 @pytest.fixture
-def phone(monkeypatch):
+def phone(monkeypatch, tmp_path):
     for k, v in {"SID": "AC1", "TOKEN": "secret", "FROM": "+15550000000", "PUBLIC": PUBLIC,
                  "OWNER_NUMBER": "+15551112222"}.items():
         monkeypatch.setattr(telephony, k, v)
     monkeypatch.setattr(telephony, "_render", lambda text: b"RIFFwav")
     monkeypatch.setattr("approvals.push", lambda *a, **k: True)
     telephony._pending.clear()
-    telephony._placed.clear()
+    monkeypatch.setattr(telephony, "PLACED_FILE", str(tmp_path / "calls_placed.txt"))
     app = FastAPI()
     app.include_router(telephony.router)
     return TestClient(app)
