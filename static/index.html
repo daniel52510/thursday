@@ -2015,7 +2015,8 @@ async function startAudio() {
   // One context at the device rate (Firefox refuses a 16 kHz context fed by a
   // 48 kHz mic); the worklet averages down to 16 kHz frames itself.
   V.ctx = new AudioContext();
-  V.ctx.onstatechange = () => { if (V.open && V.ctx?.state !== "running") setTimeout(recoverAudio, 500); };
+  const ctx = V.ctx;  // only this context's own changes count: closing a stale one isn't "iOS took the audio"
+  ctx.onstatechange = () => { if (V.open && !V.opening && V.ctx === ctx && ctx.state === "interrupted") setTimeout(recoverAudio, 500); };
   const workletSrc = `
     class Pcm16 extends AudioWorkletProcessor {
       constructor() { super(); this.step = sampleRate / ${TARGET_RATE}; this.acc = 0; this.cnt = 0; this.pos = 0;
@@ -2308,6 +2309,7 @@ async function openVoice() {
     return;
   }
   try {
+    V.opening = true;           // recoverAudio stays out of the way until voice mode is up
     await startAudio();         // mic and audio output need this click as the user gesture
     // The home-screen app stays in memory: its old context is often "interrupted" (a call, other audio, the
     // background), and iOS can leave resume() pending forever, which kept voice mode on "Connecting" while Safari,
@@ -2320,9 +2322,11 @@ async function openVoice() {
       await withTimeout(V.ctx.resume(), 1500).catch(() => {});
     }
   } catch (err) {
+    V.opening = false;
     figError("Microphone unavailable", err.message);
     return;
   }
+  V.opening = false;
   // Unlock the cue elements inside the gesture so later play() calls are allowed.
   for (const a of [ping, thinking]) { a.muted = true; a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; }); }
   if (!V.raf) animateOrb();
@@ -2337,7 +2341,7 @@ async function openVoice() {
 // When the browser wants a tap for that, the orb asks for one and its tap runs this again.
 let recovering = false;
 async function recoverAudio() {
-  if (!V.open || !V.ctx || recovering) return;
+  if (!V.open || !V.ctx || recovering || V.opening) return;
   recovering = true;
   try {
     if (V.mic?.getAudioTracks()[0]?.readyState !== "live") {
@@ -2354,7 +2358,7 @@ async function recoverAudio() {
     }
   } catch {} finally { recovering = false; }
   V.state = "paused";
-  figError("Voice paused", "Your phone took the audio for a call. Tap the orb to pick up again.");
+  figError("Voice paused", "iOS stopped the audio (another app, a call or the lock screen). Tap the orb to resume.");
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") recoverAudio(); });
 window.addEventListener("pageshow", () => recoverAudio());
@@ -2446,7 +2450,10 @@ function setMuted(muted) {
 }
 
 $("voiceOrbBtn").onclick = () => {
-  if (V.state === "paused" || (V.ctx && V.ctx.state !== "running")) { recoverAudio(); return; }  // a tap is the gesture it needed
+  if (V.state === "paused" || (V.ctx && V.ctx.state !== "running")) {
+    V.ctx?.resume().catch(() => {});  // inside the tap, before any await: the gesture iOS wants for audio
+    recoverAudio(); return;
+  }
   if (V.state === "speaking" || V.state === "thinking") interrupt();
   else if (V.muted) setMuted(false);
   else if (V.state === "listening") setMuted(true);
