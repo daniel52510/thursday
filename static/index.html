@@ -1446,7 +1446,11 @@ function setVoiceState(next) {
   syncTalk();
   // The ping marks the start of a conversation (opening voice mode, tapping to
   // talk, unmuting). Follow-up turns go back to listening silently, like a call.
-  if (next === "listening" && V.cue) { V.cue = false; ping.currentTime = 0; ping.play().catch(() => {}); }
+  if (next === "listening" && V.cue) {
+    V.cue = false;
+    if (G.bufs.length) V.greetAt = performance.now() + GREET_WAIT_MS;  // the mic decides: a pause gets a greeting
+    else { ping.currentTime = 0; ping.play().catch(() => {}); }
+  }
   // No looping cue while she thinks: the server speaks a short filler in her own
   // voice when she reaches for a tool or a reply is slow to start.
   if (next === "idle") {
@@ -1602,7 +1606,12 @@ async function startAudio() {
   // Stream during a turn too, so talking over her stops her (barge-in). Nothing
   // leaves the browser while muted, in standby, or once voice mode is closed.
   const LIVE = new Set(["listening", "thinking", "speaking"]);
-  V.micNode.port.onmessage = (e) => { if (LIVE.has(V.state) && !V.muted && V.ws?.readyState === WebSocket.OPEN) V.ws.send(e.data); };
+  V.micNode.port.onmessage = (e) => {
+    if (V.greetAt) maybeGreet(e.data);
+    if (!(LIVE.has(V.state) && !V.muted && V.ws?.readyState === WebSocket.OPEN)) return;
+    // While a greeting plays, silence goes up instead, so the server's VAD doesn't take his voice for speech.
+    V.ws.send(V.ctx.currentTime < G.until ? new ArrayBuffer(e.data.byteLength) : e.data);
+  };
   mic.connect(V.micNode);
   const mute = V.ctx.createGain(); mute.gain.value = 0;
   V.micNode.connect(mute).connect(V.ctx.destination);  // keeps the worklet pulled in every browser
@@ -1808,6 +1817,7 @@ async function openVoice() {
   for (const a of [ping, thinking]) { a.muted = true; a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; }); }
   if (!V.raf) animateOrb();
   keepAwake();
+  await loadGreetings();  // usually cached: a few ms; the first open of the hour fetches ~8 short clips
   connectVoice();
 }
 
@@ -1838,6 +1848,40 @@ async function recoverAudio() {
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") recoverAudio(); });
 window.addEventListener("pageshow", () => recoverAudio());
+
+// Wake greetings ("Hey Daniel, what's up?") instead of the ping: this hour's batch from the server (greetings.py),
+// decoded once into Web Audio (already unlocked by the tap that opened voice mode). Spoken only if he pauses:
+// talking within GREET_WAIT_MS of the mic opening means he's already asking, so no greeting and no ping.
+const GREET_WAIT_MS = 450, GREET_SPEECH_DBFS = -45;
+const G = { version: 0, bufs: [], last: -1, until: 0 };
+async function loadGreetings() {
+  try {
+    const j = await (await fetch("/api/greetings")).json();
+    if (!j.count || j.version === G.version || !V.ctx) return;
+    G.bufs = await Promise.all(Array.from({ length: j.count }, async (_, i) =>
+      V.ctx.decodeAudioData(await (await fetch(`/api/greetings/${j.version}/${i}.wav`)).arrayBuffer())));
+    G.version = j.version;
+  } catch {}
+}
+setInterval(() => V.open && loadGreetings(), 10 * 60 * 1000);
+
+function maybeGreet(frame) {
+  const x = new Int16Array(frame);
+  let sum = 0; for (let i = 0; i < x.length; i++) sum += x[i] * x[i];
+  const db = 10 * Math.log10(sum / Math.max(1, x.length) / 32768 / 32768 + 1e-12);
+  if (db > GREET_SPEECH_DBFS) { V.greetAt = 0; return; }   // already talking
+  if (performance.now() < V.greetAt) return;
+  V.greetAt = 0;
+  if (!G.bufs.length || V.state !== "listening") return;
+  let pick = Math.floor(Math.random() * G.bufs.length);
+  if (pick === G.last && G.bufs.length > 1) pick = (pick + 1) % G.bufs.length;
+  G.last = pick;
+  const src = V.ctx.createBufferSource();
+  src.buffer = G.bufs[pick];
+  src.connect(V.out || V.ctx.destination);
+  src.start();
+  G.until = V.ctx.currentTime + src.buffer.duration;
+}
 
 // Keep the phone screen on during a voice conversation (where supported).
 let wakeLock = null;

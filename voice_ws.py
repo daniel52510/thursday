@@ -867,6 +867,9 @@ class Session:
                 SATELLITES.add(self)
                 logger.info("satellite registered (%d connected, min_dbfs=%.1f)",
                             len(SATELLITES), self.endpointer.cfg.min_dbfs)
+                import greetings
+                if greetings.clips:  # this hour's wake greetings, so its first wake already has one
+                    await self.ws.send_json(greetings.message())
                 self._warm()
         elif kind == "status" and self.role == "satellite":
             # Room, mic mute, Wi-Fi, wake stats: shown in the web UI's sidebar.

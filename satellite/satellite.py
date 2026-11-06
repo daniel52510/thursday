@@ -20,6 +20,7 @@ interrupt, hold to mute the mic.
     THURSDAY_WS=ws://<mac-ip>:8000/ws/voice venv/bin/python satellite.py
 """
 import asyncio
+import base64
 import ctypes
 import fcntl
 import io
@@ -27,6 +28,7 @@ import math
 import json
 import logging
 import os
+import random
 import struct
 import subprocess
 import sys
@@ -154,6 +156,12 @@ CONTEXT = {
 }
 SOUNDS = HERE / "sounds"
 PING_WAV = SOUNDS / "thursday-ping.wav"
+# A spoken greeting instead of the ping ("Hey Daniel, what's up?"), from the Mac's hourly batch (greetings.py), but
+# only when he pauses after the wake word: still talking at GREET_WAIT_S ("Hey THURSDAY, what's the weather?") means
+# no greeting and no ping, so nothing he says is lost under it. The first GREET_TAIL_S is the wake word's own tail.
+GREET_WAIT_S = float(os.getenv("THURSDAY_GREET_WAIT_MS", "450")) / 1000
+GREET_TAIL_S = 0.15
+GREET_SPEECH_DBFS = float(os.getenv("THURSDAY_GREET_SPEECH_DBFS", "-48"))
 THINKING_WAV = SOUNDS / "thursday-thinking.wav"
 ALARM_WAV = SOUNDS / "thursday-alarm.wav"
 CLOSE_WAV = SOUNDS / "thursday-close.wav"      # a follow-up window ended
@@ -162,6 +170,13 @@ ERROR_WAV = SOUNDS / "thursday-error.wav"      # a turn failed on the server
 MIC_OFF_WAV = SOUNDS / "thursday-mic-off.wav"
 MIC_ON_WAV = SOUNDS / "thursday-mic-on.wav"
 BACKCHANNEL_CLIPS = {"mm", "right", "go-on", "copy"}
+
+
+def _dbfs(pcm: bytes) -> float:
+    if _CORE:
+        return float(_CORE.sat_dbfs(pcm, len(pcm) // 2))
+    x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    return 10 * math.log10(float(np.mean(x * x)) / 32768 ** 2 + 1e-12) if len(x) else -120.0
 
 
 def voice_clip(path: Path, voice: str) -> Path:
@@ -562,6 +577,11 @@ class Player:
         """Start a sound without waiting for it to finish."""
         self._replace(_scaled(self._load(path), night_gain() * self.voice_gain if gain is None else gain))
 
+    async def play_wav(self, wav: bytes, gain: float | None = None) -> None:
+        """A clip from memory (the Mac's greetings), like play_file."""
+        rate, pcm = _wav_pcm(wav)
+        self._replace(_scaled(self._to_rate(pcm, rate), night_gain() * self.voice_gain if gain is None else gain))
+
     async def play_file_and_wait(self, path: Path, gain: float | None = None) -> None:
         await self.play_file(path, gain)
         await self._drained()
@@ -754,6 +774,9 @@ class Satellite:
         self._speaking_at = 0.0
         self._residual: deque = deque(maxlen=25)  # quiet chunks of the last ~2 s: the echo that's left
         self._loud: deque = deque(maxlen=BARGE_WINDOW)  # the last chunks: above the bar or not
+        self.greetings: list[bytes] = []  # WAVs from the Mac (greetings.py); empty: the ping
+        self._greet_at = 0.0                 # listening, deciding: greet at this time unless he keeps talking
+        self._last_greeting = -1
         self._preroll: deque = deque(maxlen=16)   # the last ~1.3 s sent on after a speech barge-in
         self._barge_speech = False                # the current barge-in was speech, not the wake word
         self.stats = {"started": time.time(), "wakes": 0, "near_misses": 0, "barge_ins": 0,
@@ -913,6 +936,8 @@ class Satellite:
             elif self.state == "listening":
                 if min(self._mic_anchors) + self._mic_samples / SAMPLE_RATE < self._woke_at:
                     continue  # recorded before this window opened (a backlog): may be his own voice
+                if self._greet_at:
+                    await self._maybe_greet(chunk)
                 # The speaker sits next to the mics: send silence while the ping
                 # plays so the server's VAD doesn't take the chime for speech.
                 await self._send(SILENCE if self.player.is_playing() else chunk)
@@ -944,12 +969,26 @@ class Satellite:
         self._failed = False
         self.state = "listening"
         if not follow_up:
-            await self.player.play_file(PING_WAV)
+            if self.greetings:
+                self._greet_at = time.monotonic() + GREET_WAIT_S  # decided in the mic loop: pause -> greet
+            else:
+                await self.player.play_file(PING_WAV)
         # chunked: one WAV per sentence, so the first sentence plays while the rest is synthesized.
         await self._send({"type": "start", "chunked": True, "context": CONTEXT,
                           "follow_up": follow_up, "barge_speech": bool(preroll)})
         for chunk in preroll or ():  # what they'd already said when they cut in
             await self._send(chunk)
+
+    async def _maybe_greet(self, chunk: bytes) -> None:
+        now = time.monotonic()
+        if now - self._woke_at >= GREET_TAIL_S and _dbfs(chunk) > GREET_SPEECH_DBFS:
+            self._greet_at = 0.0
+            log.info("kept talking after the wake word: no greeting")
+        elif now >= self._greet_at:
+            self._greet_at = 0.0
+            pick = random.choice([i for i in range(len(self.greetings)) if i != self._last_greeting] or [0])
+            self._last_greeting = pick
+            await self.player.play_wav(self.greetings[pick])
 
     def _heard_over_reply(self, pcm: bytes) -> bool:
         """Someone talking over the reply: 4 of the last 6 chunks (~320 ms) of the cancelled mic
@@ -1048,6 +1087,9 @@ class Satellite:
             kind = ev.get("type")
             if kind == "state":
                 await self._on_state(ev["state"])
+            elif kind == "greetings":  # the Mac's batch for this hour (greetings.py)
+                self.greetings = [base64.b64decode(c) for c in ev.get("clips") or []]
+                log.info("greetings: %d clips", len(self.greetings))
             elif kind == "voice":  # his voice volume, for the cues and clips (alarms stay at full volume)
                 self.player.voice_gain = max(0.1, min(1.0, float(ev.get("volume", 1.0))))
                 self.voice = str(ev.get("name") or self.voice)

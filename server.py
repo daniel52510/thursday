@@ -18,6 +18,7 @@ import approvals
 import improvements
 import calendar_tool
 import missions
+import greetings
 import telephony
 import vault
 from memory import now_iso as memory_now
@@ -54,7 +55,9 @@ async def lifespan(app: FastAPI):
     on_improvements = asyncio.create_task(improvements.run_notifier())
     on_review = asyncio.create_task(improvements.start_self_review())
     asyncio.create_task(warm_phone_disclosure())  # Rocky's call opening, ready before any call
+    on_greetings = asyncio.create_task(greetings.run())  # fresh wake greetings each hour
     yield
+    on_greetings.cancel()
     on_missions.cancel()
     on_improvements.cancel()
     on_review.cancel()
@@ -189,6 +192,19 @@ class VoiceIn(BaseModel):
 
 # Whose voice speaks to this user (mind.voice_style): the UI's Tara/Rocky toggle. "switch to Tara" by voice
 # sets the same setting (mind.voice_setting).
+@app.get("/api/greetings")
+def greetings_index(user: dict = Depends(current_user)):
+    """The current batch of wake greetings: the page fetches /api/greetings/<version>/<i>.wav when version changes."""
+    return {"version": greetings.version, "count": len(greetings.clips)}
+
+
+@app.get("/api/greetings/{version}/{i}.wav")
+def greeting_clip(version: int, i: int, user: dict = Depends(current_user)):
+    if version != greetings.version or not 0 <= i < len(greetings.clips):
+        raise HTTPException(status_code=404)
+    return Response(greetings.clips[i], media_type="audio/wav", headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.get("/api/voice")
 def get_voice(user: dict = Depends(current_user)):
     return {"voice": "tara" if voice_style(user["id"])["voice"] == "tara" else "rocky"}
