@@ -33,6 +33,7 @@ htmlcov/
 # Local secrets / env files
 .env
 .env.*
+!.env.example
 
 # SQLite (if you store local memory/db)
 *.sqlite3
