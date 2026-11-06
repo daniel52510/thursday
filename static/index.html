@@ -1508,9 +1508,12 @@ async function startAudio() {
     // doesn't pump speaker bleed or room hiss up into the VAD.
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false },
   });
+  V.mic = stream;
+  stream.getAudioTracks()[0]?.addEventListener("ended", () => recoverAudio());
   // One context at the device rate (Firefox refuses a 16 kHz context fed by a
   // 48 kHz mic); the worklet averages down to 16 kHz frames itself.
   V.ctx = new AudioContext();
+  V.ctx.onstatechange = () => { if (V.open && V.ctx?.state !== "running") setTimeout(recoverAudio, 500); };
   const workletSrc = `
     class Pcm16 extends AudioWorkletProcessor {
       constructor() { super(); this.step = sampleRate / ${TARGET_RATE}; this.acc = 0; this.cnt = 0; this.pos = 0;
@@ -1808,6 +1811,34 @@ async function openVoice() {
   connectVoice();
 }
 
+// A phone call on this iPhone (THURSDAY calling it, too) takes the audio: the context goes "interrupted" and the
+// mic track can end, so voice mode came back connected but deaf (2026-11-06). Once the page has its audio back:
+// a dead mic gets a fresh one (and a new context), an interrupted context is resumed, a dropped socket reconnects.
+// When the browser wants a tap for that, the orb asks for one and its tap runs this again.
+let recovering = false;
+async function recoverAudio() {
+  if (!V.open || !V.ctx || recovering) return;
+  recovering = true;
+  try {
+    if (V.mic?.getAudioTracks()[0]?.readyState !== "live") {
+      stopReplyAudio();
+      try { await V.ctx.close(); } catch {}
+      V.ctx = null;
+      await startAudio();
+    }
+    if (V.ctx.state !== "running") await V.ctx.resume();
+    if (V.ctx.state === "running") {
+      if (!V.ws) connectVoice();
+      else if (V.state === "offline" || V.state === "paused") { V.state = ""; setVoiceState("idle"); startListening(); }
+      return;
+    }
+  } catch {} finally { recovering = false; }
+  V.state = "paused";
+  figError("Voice paused", "Your phone took the audio for a call. Tap the orb to pick up again.");
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") recoverAudio(); });
+window.addEventListener("pageshow", () => recoverAudio());
+
 // Keep the phone screen on during a voice conversation (where supported).
 let wakeLock = null;
 async function keepAwake() {
@@ -1856,6 +1887,7 @@ function setMuted(muted) {
 }
 
 $("voiceOrbBtn").onclick = () => {
+  if (V.state === "paused" || (V.ctx && V.ctx.state !== "running")) { recoverAudio(); return; }  // a tap is the gesture it needed
   if (V.state === "speaking" || V.state === "thinking") interrupt();
   else if (V.muted) setMuted(false);
   else if (V.state === "listening") setMuted(true);
