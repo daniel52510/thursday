@@ -2187,6 +2187,7 @@ async function startAudio() {
 function startListening() {
   if (V.ws?.readyState !== WebSocket.OPEN || V.state !== "idle" || V.muted || V.interrupting) return;
   setVoiceState("listening");  // start streaming now; the server confirms with the same state
+  if (V.tapAt) { vdiag("listening"); V.tapAt = 0; }  // tap-to-listening, once per open
   V.ws.send(JSON.stringify({ type: "start", chunked: true, conversation_id: conversationId, context: clientContext() }));
 }
 
@@ -2345,7 +2346,9 @@ async function connectVoice() {
   // A socket that never opens (a waking phone, a flaky network) is closed and retried, not waited on forever.
   const opening = setTimeout(() => { if (ws.readyState === WebSocket.CONNECTING) ws.close(); }, 6000);
   ws.onopen = () => {
-    clearTimeout(opening); $("voiceConn").textContent = ""; V.state = ""; setVoiceState("idle"); startListening();
+    clearTimeout(opening); $("voiceConn").textContent = ""; V.state = ""; setVoiceState("idle");
+    vdiag("ws-open");
+    if (V.ctx?.state === "running" && !V.opening) startListening();  // else openVoice starts it once the mic is up
     // Tell the server how this device's audio is doing at 1, 4 and 10 s (logged: "voice client: ..."), so a
     // session that connects but never hears anything shows why.
     for (const at of [1000, 4000, 10000]) setTimeout(() => {
@@ -2384,7 +2387,11 @@ async function openVoice() {
   // mic, the home-screen app's context was born "suspended" and never resumed (ctx=suspended, frames=0).
   if (!V.ctx || V.ctx.state === "closed") V.ctx = new AudioContext();
   const resuming = V.ctx.resume().catch(() => {});
+  V.tapAt = performance.now();
   vdiag("tap");
+  // Connect while the mic is being set up (iOS's mic prompt and setup took ~3 s): the two overlap, and the
+  // server is ready by the time the mic is. Listening starts once both are (startListening checks the socket).
+  if (!V.ws) connectVoice();
   try {
     V.opening = true;           // recoverAudio stays out of the way until voice mode is up
     await startAudio();         // a fresh mic if the last one ended, wired into that context
@@ -2409,7 +2416,8 @@ async function openVoice() {
   if (!V.raf) animateOrb();
   keepAwake();
   loadGreetings();  // in the background: never between the tap and the connection (the ping covers its absence)
-  connectVoice();
+  if (!V.ws) connectVoice();
+  else if (V.ws.readyState === WebSocket.OPEN && V.state === "idle") startListening();  // connected first: go
 }
 
 // A phone call on this iPhone (THURSDAY calling it, too) takes the audio: the context goes "interrupted" and the
@@ -2442,7 +2450,7 @@ window.addEventListener("pageshow", () => recoverAudio());
 // Wake greetings ("Hey Daniel, what's up?") instead of the ping: this hour's batch from the server (greetings.py),
 // decoded once into Web Audio (already unlocked by the tap that opened voice mode). Spoken only if he pauses:
 // talking within GREET_WAIT_MS of the mic opening means he's already asking, so no greeting and no ping.
-const GREET_WAIT_MS = 450, GREET_SPEECH_DBFS = -45;
+const GREET_WAIT_MS = 300, GREET_SPEECH_DBFS = -45;
 const G = { version: 0, bufs: [], last: -1, until: 0 };
 async function loadGreetings() {
   try {
@@ -2478,7 +2486,8 @@ function maybeGreet(frame) {
 function vdiag(step, extra = {}) {
   try {
     const t = V.mic?.getAudioTracks()[0];
-    const body = JSON.stringify({ step, ctx: V.ctx?.state ?? "none", mic: t?.readyState ?? "none", frames: V.frames || 0,
+    const body = JSON.stringify({ step, ms: V.tapAt ? Math.round(performance.now() - V.tapAt) : -1,
+      ctx: V.ctx?.state ?? "none", mic: t?.readyState ?? "none", frames: V.frames || 0,
       app: matchMedia("(display-mode: standalone)").matches || navigator.standalone ? "home-screen" : "browser", ...extra });
     fetch("/api/voice/diag", { method: "POST", body, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
   } catch {}
