@@ -1114,7 +1114,10 @@ class Session:
                 if barge_fallback:
                     await self.set_state("idle")
                     return
-                await self._fail("STT", "no speech recognized", input_desc, started)
+                # A mumble or a false wake isn't a failure: end the turn quietly (the satellite's close
+                # sound), not "something breaks on my side" (it did, until 2026-11-06).
+                logger.info("no speech recognized; back to idle")
+                await self.set_state("idle")
                 return
             self.heard_at = time.monotonic()
             self._log_partials_vs(text)

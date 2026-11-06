@@ -29,6 +29,10 @@ LINES = {
     "error": "Something breaks on my side. Try again, please.",
     "mic-off": "Microphone off. I do not listen now.",
     "mic-on": "Listening again. Good, good.",
+    # Which part failed (voice_ws._fail's stage), so he knows what's wrong, not just that something is.
+    "error-llm": "My brain does not answer right now. Try again in one minute.",
+    "error-stt": "I cannot hear words right now. Try again, please.",
+    "error-tts": "My voice breaks. I still work. Try again, please.",
 }
 # Short, never a question: they must not sound like he's taking the floor.
 BACKCHANNELS = {"bc-mm": "Mm.", "bc-right": "Yes.", "bc-go-on": "Go on.", "bc-copy": "Understand."}
@@ -39,6 +43,9 @@ TARA_LINES = {
     "error": "Sorry, something went wrong on my end. Try that again?",
     "mic-off": "Okay, mic's off. I'm not listening.",
     "mic-on": "I'm back, listening.",
+    "error-llm": "My brain isn't answering right now. Give it a minute?",
+    "error-stt": "Sorry, I couldn't make out any words. Try again?",
+    "error-tts": "My voice glitched, sorry. Try that again?",
 }
 TARA_BACKCHANNELS = {"bc-mm": "Mm-hm.", "bc-right": "Right.", "bc-go-on": "Go on.", "bc-copy": "Okay."}
 BC_TAKES = 3      # takes vary a lot in length and level; keep the median-length one

@@ -1124,7 +1124,7 @@ class Satellite:
             elif kind == "reply":
                 log.info("reply: %s", ev.get("text", ""))
             elif kind == "error":
-                self._failed = True
+                self._failed = str(ev.get("stage") or "").lower() or True
                 log.error("%s error: %s", ev.get("stage"), ev.get("message"))
 
     async def _on_state(self, state: str) -> None:
@@ -1154,7 +1154,10 @@ class Satellite:
             await self.stop_playback()
             self._enter_wake()
             if self._failed:
-                await self.player.play_file(voice_clip(ERROR_WAV, self.voice))
+                # Which part failed, when there's a clip for it (make_sat_lines.py); else the general one.
+                stage_wav = SOUNDS / f"thursday-error-{self._failed}.wav" if isinstance(self._failed, str) else None
+                await self.player.play_file(voice_clip(stage_wav if stage_wav and stage_wav.exists() else ERROR_WAV,
+                                                       self.voice))
             # From "thinking" with no reply and no error: the server heard "nevermind" / "I'm good"
             # and ended the conversation (voice_ws._CLOSER). Same sound either way.
             elif was in ("listening", "thinking") and not self.muted:

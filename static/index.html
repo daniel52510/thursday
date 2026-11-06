@@ -1017,6 +1017,14 @@ $("alarmCancel").onclick = showAlarmList;
 $("alarmAdd").onclick = () => openAlarmForm(null);
 $("alarmsClose").onclick = () => $("alarmsDialog").close();
 
+// Which part failed, in words; the raw stage and message stay in the chat for debugging.
+function friendlyError(stage) {
+  return ({ STT: "I couldn't hear that: speech-to-text isn't answering. Try again in a moment.",
+            LLM: "My brain isn't answering right now (the language model). Give it a minute.",
+            TTS: "I have a reply, but my voice isn't working. It's in the chat." })[stage]
+    || "Something went wrong on my end. Try again.";
+}
+
 // ---------- health (is every part of THURSDAY up?) ----------
 let healthTimer = 0;
 async function loadHealth() {
@@ -1776,7 +1784,7 @@ function onVoiceEvent(ev) {
     if (/^(mission|watch|routine|improve)_|^code_review_start$/.test(ev.name)) refreshMissions();
   }
   else if (ev.type === "reply") { V.replyText = ev.text; if (voiceView) { voiceView.el.querySelectorAll(".chip.running").forEach(() => voiceView.toolDone("", true)); voiceView.set(ev.text); voiceView.finish(); } }
-  else if (ev.type === "error") { resetCaption(`${ev.stage}: ${ev.message}`); voiceView?.error(`${ev.stage} failed: ${ev.message}`); voiceView = null; }
+  else if (ev.type === "error") { resetCaption(friendlyError(ev.stage)); voiceView?.error(`${friendlyError(ev.stage)} (${ev.stage}: ${ev.message})`); voiceView = null; }
 }
 
 // Live captions. Each "caption" event carries the text of the WAVs that follow it.
