@@ -25,6 +25,7 @@ import re
 import secrets
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict
 from urllib.parse import parse_qsl
 from xml.sax.saxutils import escape
@@ -243,12 +244,17 @@ def _render(text: str) -> bytes:
     return rocky_voice._write(y, 8000)
 
 
-def _keep_audio(wav: bytes) -> str:
+# The call's audio renders here while he hears the read-back: rendering first held his reply ~10 s (2026-11-06).
+_RENDER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="call-audio")
+RENDER_WAIT_S = 45
+
+
+def _keep_audio(wav: bytes, token: str | None = None) -> str:
     now = time.time()
     for k in [k for k, (exp, _) in _audio.items() if exp < now]:
         del _audio[k]
         _briefs.pop(k, None)
-    token = secrets.token_urlsafe(24)
+    token = token or secrets.token_urlsafe(24)
     _audio[token] = (now + AUDIO_TTL_S, wav)
     return token
 
@@ -274,18 +280,15 @@ def call_place(args: Dict[str, Any]) -> ToolResult:
             "to his contacts first; you can't add anyone yourself."))
     if not message:
         return ToolResult(ok=False, tool_name="call_place", error="no_message: ask him what to say")
-    try:
-        token = _keep_audio(_render(message[:600]))
-    except Exception as exc:
-        logger.warning("call audio not rendered: %s", exc)
-        return ToolResult(ok=False, tool_name="call_place", error="voice_server_down")
+    token = secrets.token_urlsafe(24)
+    render = _RENDER.submit(_render, message[:600])  # ready by his "yes"; call_confirm waits if it isn't
     who = str(args.get("to", "")).strip()
     _briefs[token] = {"message": message, "goal": goal, "conversation": turn["conversation"],
                       "who": "you" if number == OWNER_NUMBER else re.sub(r"^(?:my|our)\s+", "", who, flags=re.I).title(),
                       "transcript": [], "answered_by": "", "ended_by": "", "from_satellite": FROM_SATELLITE.get(),
                       "share": share}
     _pending[turn["conversation"]] = {"at": time.monotonic(), "turn": turn["turn"], "to": number, "token": token,
-                                      "message": message}
+                                      "message": message, "render": render}
     return ToolResult(ok=True, tool_name="call_place", data={
         "status": "waiting_for_his_ok", "to": number, "will_say": message, **({"goal": goal} if goal else {}),
         **({"will_share_if_asked": list(share)} if share else {}),
@@ -316,6 +319,11 @@ def call_confirm(args: Dict[str, Any]) -> ToolResult:
         return ToolResult(ok=False, tool_name="call_confirm",
                           error="not_confirmed: not a plain yes; if he changed details, call_place again")
     del _pending[turn["conversation"]]
+    try:
+        _keep_audio(pending["render"].result(timeout=RENDER_WAIT_S), pending["token"])
+    except Exception as exc:
+        logger.warning("call audio not rendered: %s", exc)
+        return ToolResult(ok=False, tool_name="call_confirm", error="voice_server_down: the call wasn't placed")
     now = time.time()
     placed = _calls_today(now)
     if len(placed) >= DAILY_CAP:
@@ -412,6 +420,9 @@ class _CallEar:
 
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
+# "Oh, perfect." "Oh, sure." "Oh, that's for Daniel." (2026-11-06 pizza call): the same opener every reply is what
+# sounds scripted. The prompt asks for variety; this drops an interjection that repeats the last reply's anyway.
+_OPENER = re.compile(r"^(oh|ah|ha|hey|well|okay|ok|so|great|perfect|sure|alright)\b[,!.]?\s*", re.I)
 # The reply's first piece goes to TTS at its first clause (as /ws/voice does): TTS time grows with the text,
 # and a 100-character first sentence cost ~2 s before any audio on 2026-11-06.
 _FIRST_CLAUSE = re.compile(r"(?<=[,;:—])\s+")
@@ -450,7 +461,9 @@ def call_prompt(brief: dict) -> str:
         f"them: \"{brief.get('message', '')}\"\nYour goal on this call: {goal}\n\n"
         "How to sound: like a friendly, relaxed person on the phone, not a script. React to what they just said "
         "first. Use contractions, vary your wording, and never repeat a sentence you've already said on this call. "
-        "Keep each reply under 30 words, and start it with a short reaction (\"Ha, fair question,\" / \"Oh, perfect,\"). "
+        "Keep each reply under 30 words. Vary how replies begin: never start two the same way, and don't open with "
+        "\"Oh\". If they ask something you already told them, just answer it again plainly (\"A large, please.\"), "
+        "without pointing out that you said it. "
         "No lists, symbols or emojis.\n"
         "Small talk is fine: if they ask about you, answer briefly and honestly as an AI (you don't eat, sleep or "
         "walk on beaches), with a little warmth or humor, then steer gently back to the goal.\n\n"
@@ -544,6 +557,7 @@ class _Call:
         self.speech_at: float | None = None  # when their current speech started, for BARGE_S
         self.acks = [_phone_clip(p) for p in _ACKS if os.path.exists(p)]
         self.acked = 0
+        self.last_opener = ""  # the interjection the last reply opened with (_OPENER)
 
     async def send_audio(self, mulaw: bytes) -> None:
         for i in range(0, len(mulaw), 8000):  # 1 s per frame; Twilio queues and plays them in order
@@ -614,6 +628,13 @@ class _Call:
         async def speak(sentence: str) -> None:
             nonlocal first
             sentence = sentence.replace(END_TAG, "").strip()
+            if not said and (m := _OPENER.match(sentence)):
+                if m.group(1).lower() == self.last_opener and len(sentence) > m.end():
+                    sentence = sentence[m.end()][0].upper() + sentence[m.end() + 1:]
+                else:
+                    self.last_opener = m.group(1).lower()
+            elif not said:
+                self.last_opener = ""
             if not sentence:
                 return
             nonlocal tts_ms

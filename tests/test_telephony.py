@@ -193,3 +193,10 @@ def test_contact_book_add_update_remove(phone, tmp_path, monkeypatch):
     assert "10-digit" in telephony.add_contact("Short", "555 0123")["error"]
     assert "you" in telephony.add_contact("me", "305 555 0123")["error"]
     assert telephony.remove_contact("MOM") and telephony._number("Mom") is None
+
+
+def test_same_opener_twice_is_dropped():
+    m = telephony._OPENER.match("Oh, perfect, a large it is.")
+    assert m and m.group(1) == "Oh"
+    assert not telephony._OPENER.match("A large, please.")
+    assert not telephony._OPENER.match("Ohio is far.")
