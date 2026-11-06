@@ -63,7 +63,9 @@ def test_import_apple_export(tmp_path):
     z = tmp_path / "export.zip"
     with zipfile.ZipFile(z, "w") as f:
         f.writestr("apple_health_export/export.xml", xml)
-    spec = importlib.util.spec_from_file_location("imp", "scripts/import_health_export.py")
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "imp", Path(__file__).resolve().parent.parent / "scripts" / "import_health_export.py")
     imp = importlib.util.module_from_spec(spec); spec.loader.exec_module(imp)
     imp.main(str(z))
     got = {m["metric"]: m["samples"] for m in health.summary()["metrics"]}
