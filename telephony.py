@@ -161,7 +161,8 @@ def call_confirm(args: Dict[str, Any]) -> ToolResult:
     pending = _pending.get(turn["conversation"]) if turn else None
     if not pending or time.monotonic() - pending["at"] > PENDING_TTL_S:
         _pending.pop((turn or {}).get("conversation"), None)
-        return ToolResult(ok=False, tool_name="call_confirm", error="nothing_to_confirm")
+        return ToolResult(ok=False, tool_name="call_confirm",
+                          error="nothing_to_confirm: call_place never ran; run call_place now, then ask him again")
     if pending["turn"] == turn["turn"]:
         return ToolResult(ok=False, tool_name="call_confirm", error="not_confirmed: ask him first and wait")
     said = turn["user_said"]
@@ -214,8 +215,9 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "call_place",
         "description": "Phone someone for him and speak a message in your voice ('call my mom and tell her I'm "
-        "running late', 'call me'). Only prepares the call: read back who and what and ask him; it dials only "
-        "through call_confirm after his yes. A one-way message: you can't hear them yet.",
+        "running late', 'call me'). Run it RIGHT AWAY when he asks, before asking him anything: it dials nothing, "
+        "it only gets the call ready. Then read back who and what from its result and ask; call_confirm dials "
+        "after his yes. Never say a call is prepared unless this tool ran. A one-way message: you can't hear them yet.",
         "parameters": {"type": "object", "properties": {
             "to": {"type": "string", "description": "Phone number with area code, or 'me' for his own phone"},
             "message": {"type": "string", "description": "What to say, worded for the listener, a few sentences"}},
