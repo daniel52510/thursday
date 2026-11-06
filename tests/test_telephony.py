@@ -78,3 +78,23 @@ def test_dials_only_after_a_plain_yes_next_turn(phone, monkeypatch):
 def test_not_his_voice_account_no_call(phone):
     _turn(1, "call 5125550123", user="guest")
     assert telephony.call_place({"to": "5125550123", "message": "hi"}).error == "calls_are_daniels_only"
+
+
+def test_stream_needs_signature_and_a_live_token(phone, monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect):  # forged handshake: closed before anything is accepted
+        with phone.websocket_connect("/twilio/stream", headers={"X-Twilio-Signature": "forged"}) as ws:
+            ws.receive_text()
+    sig = {"X-Twilio-Signature": telephony.signature(telephony._stream_url(), {})}
+    with phone.websocket_connect("/twilio/stream", headers=sig) as ws:  # signed, but no call token: nothing played
+        ws.send_json({"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"token": "guess"}}})
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+    monkeypatch.setattr(telephony, "_mulaw", lambda wav: b"\xff" * 12000)
+    token = telephony._keep_audio(b"RIFFwav")
+    with phone.websocket_connect("/twilio/stream", headers=sig) as ws:
+        ws.send_json({"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"token": token}}})
+        frames = [ws.receive_json() for _ in range(3)]
+        assert [f["event"] for f in frames] == ["media", "media", "mark"]
+        ws.send_json({"event": "stop"})
+    assert token not in telephony._audio  # one use

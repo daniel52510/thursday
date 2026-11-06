@@ -29,7 +29,7 @@ from urllib.parse import parse_qsl
 from xml.sax.saxutils import escape
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 
 from accounts import OWNER, OWNER_NAME
 from calendar_tool import PENDING_TTL_S, TURN, _HEDGE, _YES
@@ -44,6 +44,10 @@ PUBLIC = os.getenv("TWILIO_PUBLIC_URL", "").rstrip("/")  # e.g. https://<mac>.<t
 DAILY_CAP = int(os.getenv("TWILIO_DAILY_CALLS", "10"))
 # Call times on disk, one per line, so a restart can't reset the cap.
 PLACED_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "calls_placed.txt")
+# Two-way calls (in progress): the call opens a Media Stream to /twilio/stream instead of <Play>ing a file.
+# Slice A only plays the rendered message over it and logs what the line hears; off until it's proven.
+TWO_WAY = os.getenv("TWILIO_TWO_WAY", "0") == "1"
+LISTEN_AFTER_S = 8  # slice A: how long the stream stays open after the message, logging the other side
 CONTACTS_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "contacts.txt")
 AUDIO_TTL_S = 15 * 60
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
@@ -221,7 +225,11 @@ def call_confirm(args: Dict[str, Any]) -> ToolResult:
     placed = _calls_today(now)
     if len(placed) >= DAILY_CAP:
         return ToolResult(ok=False, tool_name="call_confirm", error=f"daily_cap: {DAILY_CAP} calls a day")
-    twiml = f"<Response><Play>{escape(PUBLIC)}/twilio/audio/{pending['token']}.wav</Play></Response>"
+    if TWO_WAY:
+        twiml = (f'<Response><Connect><Stream url="{escape(_stream_url())}">'
+                 f'<Parameter name="token" value="{pending["token"]}"/></Stream></Connect><Hangup/></Response>')
+    else:
+        twiml = f"<Response><Play>{escape(PUBLIC)}/twilio/audio/{pending['token']}.wav</Play></Response>"
     try:
         r = httpx.post(f"https://api.twilio.com/2010-04-01/Accounts/{SID}/Calls.json", auth=(SID, TOKEN), timeout=10,
                        data={"To": pending["to"], "From": FROM, "Twiml": twiml,
@@ -243,6 +251,72 @@ def audio(token: str) -> Response:
     if not item or item[0] < time.time():
         raise HTTPException(status_code=404)
     return Response(item[1], media_type="audio/wav")
+
+
+def _stream_url() -> str:
+    return "wss://" + PUBLIC.split("://", 1)[-1] + "/twilio/stream"
+
+
+def _mulaw(wav: bytes) -> bytes:
+    import rocky_voice
+    x, sr = rocky_voice._read(wav)
+    return rocky_voice.to_mulaw_8k(x, sr)
+
+
+@router.websocket("/stream")
+async def media_stream(ws: WebSocket) -> None:
+    """A two-way call's live audio (Twilio Media Streams: JSON frames, base64 8 kHz mu-law, 20 ms each).
+    Twilio signs the handshake like a webhook (URL, no params); the first "start" frame must also carry a live
+    audio token from call_confirm, so a forged stream can't get anything played or heard."""
+    got = ws.headers.get("x-twilio-signature", "")
+    if not (TOKEN and PUBLIC and got and hmac.compare_digest(got, signature(_stream_url(), {}))):
+        logger.warning("twilio stream refused: bad or missing signature")
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    import json
+    import numpy as np
+    import rocky_voice
+    sid, played, heard, levels = None, False, 0, []
+    try:
+        while True:
+            frame = json.loads(await ws.receive_text())
+            event = frame.get("event")
+            if event == "start":
+                start = frame.get("start") or {}
+                sid = start.get("streamSid")
+                item = _audio.pop((start.get("customParameters") or {}).get("token", ""), None)
+                if not item or item[0] < time.time():
+                    logger.warning("twilio stream refused: no live call token")
+                    break
+                audio = await asyncio.to_thread(_mulaw, item[1])
+                for i in range(0, len(audio), 8000):  # 1 s per frame; Twilio queues and plays them in order
+                    await ws.send_json({"event": "media", "streamSid": sid,
+                                        "media": {"payload": base64.b64encode(audio[i:i + 8000]).decode()}})
+                await ws.send_json({"event": "mark", "streamSid": sid, "mark": {"name": "message_done"}})
+                logger.info("call stream: started, %.1f s of message queued", len(audio) / 8000)
+            elif event == "media" and sid:
+                pcm = rocky_voice.mulaw_decode(base64.b64decode(frame["media"]["payload"]))
+                levels.append(float(np.mean(np.asarray(pcm, dtype=np.float32) ** 2)))
+                heard += 1
+                if heard % 50 == 0:  # each second of the line: its level, to see the other side is heard
+                    db = 10 * np.log10(np.mean(levels) / 32768 ** 2 + 1e-12)
+                    logger.info("call stream: %ds, line %.0f dBFS%s", heard // 50, db, " (after message)" if played else "")
+                    levels.clear()
+                if played and time.monotonic() - played > LISTEN_AFTER_S:
+                    break
+            elif event == "mark" and (frame.get("mark") or {}).get("name") == "message_done":
+                played = time.monotonic()
+                logger.info("call stream: message played; listening %d s", LISTEN_AFTER_S)
+            elif event == "stop":
+                break
+    except WebSocketDisconnect:
+        pass
+    logger.info("call stream: ended after %d s heard", heard // 50)
+    try:
+        await ws.close()  # Twilio moves on to <Hangup/>
+    except RuntimeError:
+        pass
 
 
 @router.post("/voice")
