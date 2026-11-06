@@ -2280,7 +2280,9 @@ async function connectVoice() {
   const ws = new WebSocket(`${proto}://${location.host}/ws/voice`);  // the login cookie rides along
   V.ws = ws;
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { $("voiceConn").textContent = ""; V.state = ""; setVoiceState("idle"); startListening(); };
+  // A socket that never opens (a waking phone, a flaky network) is closed and retried, not waited on forever.
+  const opening = setTimeout(() => { if (ws.readyState === WebSocket.CONNECTING) ws.close(); }, 6000);
+  ws.onopen = () => { clearTimeout(opening); $("voiceConn").textContent = ""; V.state = ""; setVoiceState("idle"); startListening(); };
   ws.onmessage = (e) => typeof e.data === "string" ? onVoiceEvent(JSON.parse(e.data)) : playReply(e.data);
   ws.onclose = (e) => {
     if (V.ws !== ws) return;
@@ -2307,7 +2309,16 @@ async function openVoice() {
   }
   try {
     await startAudio();         // mic and audio output need this click as the user gesture
-    await V.ctx.resume();
+    // The home-screen app stays in memory: its old context is often "interrupted" (a call, other audio, the
+    // background), and iOS can leave resume() pending forever, which kept voice mode on "Connecting" while Safari,
+    // reloading fresh, connected at once. Give it 1.5 s, then start over with a new context and mic.
+    await withTimeout(V.ctx.resume(), 1500).catch(() => {});
+    if (V.ctx.state !== "running") {
+      try { V.mic?.getTracks().forEach((t) => t.stop()); await withTimeout(V.ctx.close(), 500); } catch {}
+      V.ctx = null;
+      await startAudio();
+      await withTimeout(V.ctx.resume(), 1500).catch(() => {});
+    }
   } catch (err) {
     figError("Microphone unavailable", err.message);
     return;
@@ -2316,7 +2327,7 @@ async function openVoice() {
   for (const a of [ping, thinking]) { a.muted = true; a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; }); }
   if (!V.raf) animateOrb();
   keepAwake();
-  await loadGreetings();  // usually cached: a few ms; the first open of the hour fetches ~8 short clips
+  loadGreetings();  // in the background: never between the tap and the connection (the ping covers its absence)
   connectVoice();
 }
 
@@ -2335,7 +2346,7 @@ async function recoverAudio() {
       V.ctx = null;
       await startAudio();
     }
-    if (V.ctx.state !== "running") await V.ctx.resume();
+    if (V.ctx.state !== "running") await withTimeout(V.ctx.resume(), 1500).catch(() => {});
     if (V.ctx.state === "running") {
       if (!V.ws) connectVoice();
       else if (V.state === "offline" || V.state === "paused") { V.state = ""; setVoiceState("idle"); startListening(); }
@@ -2380,6 +2391,11 @@ function maybeGreet(frame) {
   src.connect(V.out || V.ctx.destination);
   src.start();
   G.until = V.ctx.currentTime + src.buffer.duration;
+}
+
+// A promise that gives up: iOS can leave AudioContext.resume() (and work on an interrupted context) pending forever.
+function withTimeout(p, ms) {
+  return Promise.race([Promise.resolve(p), new Promise((_, no) => setTimeout(() => no(new Error("timeout")), ms))]);
 }
 
 // Keep the phone screen on during a voice conversation (where supported).
