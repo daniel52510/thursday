@@ -358,6 +358,15 @@
   .alarm-sub { font: 500 10.5px/1.6 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .alarm .icon-btn svg { width: 16px; height: 16px; }
   .contact-name { font: 400 22px/1.2 var(--serif); }
+  #healthItems { border-bottom: 1.5px solid var(--text); }
+  #healthItems > :first-child { border-top: 1.5px solid var(--text); }
+  .health-row { display: flex; align-items: baseline; gap: 10px; padding: 11px 0; border-top: 1px solid var(--rule); }
+  .health-row b { font-weight: 500; flex: none; width: 140px; }
+  .health-row span:last-child { color: var(--text-muted); font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
+  .health-h { margin: 22px 0 8px; font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); }
+  .health-speed { margin: 0; font-variant-numeric: tabular-nums; }
+  .health-warn { padding: 8px 0; border-top: 1px solid var(--rule); font-size: 13px; overflow-wrap: anywhere; }
+  .health-warn small { display: block; font: 500 10.5px/1.6 var(--mono); color: var(--text-faint); letter-spacing: .06em; }
   #contactItems { border-bottom: 1.5px solid var(--text); margin-bottom: 18px; }
   #contactItems > :first-child { border-top: 1.5px solid var(--text); }
   .alarm-empty { font-size: 14px; color: var(--text-muted); padding: 14px 0; border-top: 1.5px solid var(--text); }
@@ -533,6 +542,7 @@
   <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   <symbol id="i-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
   <symbol id="i-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
   <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15L6 16zM10 21h4"/></symbol>
 </svg>
@@ -542,6 +552,7 @@
   <button class="nav-btn primary" id="newChat"><svg><use href="#i-plus"/></svg>New conversation</button>
   <button class="nav-btn" id="voiceNav"><svg><use href="#i-wave"/></svg>Voice mode</button>
   <button class="nav-btn" id="alarmsNav"><svg><use href="#i-bell"/></svg>Alarms</button>
+  <button class="nav-btn" id="healthNav"><svg><use href="#i-pulse"/></svg>Health</button>
   <button class="nav-btn" id="contactsNav"><svg><use href="#i-phone"/></svg>Contacts</button>
   <button class="nav-btn" id="announceNav"><svg><use href="#i-speaker"/></svg>Announce</button>
   <button class="nav-btn" id="settingsNav"><svg><use href="#i-dots"/></svg>Settings</button>
@@ -755,6 +766,16 @@
   </form>
 </dialog>
 
+<dialog id="healthDialog" class="alarms">
+  <div class="alarms-head"><h2>Health</h2><button class="icon-btn" id="healthClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <p id="healthSummary">Checking…</p>
+  <div id="healthItems"></div>
+  <h3 class="health-h">Reply speed (last 6 h)</h3>
+  <p class="health-speed" id="healthSpeed"></p>
+  <h3 class="health-h">Recent warnings</h3>
+  <div id="healthWarnings"></div>
+</dialog>
+
 <dialog id="contactsDialog" class="alarms">
   <div class="alarms-head"><h2>Contacts</h2><button class="icon-btn" id="contactsClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <p>THURSDAY can only call you and the people here. Only you can add them; he can't. US and Canada numbers; the +1 is added for you.</p>
@@ -838,7 +859,8 @@ async function loadMe() {
   ME = await (await api("/api/me")).json();
   $("whoText").textContent = `${ME.display_name} · ${ME.role}`;
   $("alarmsNav").hidden = ME.role !== "admin";
-  $("contactsNav").hidden = ME.role !== "admin";      // his call allowlist         // alarms ring on the admin's satellite
+  $("contactsNav").hidden = ME.role !== "admin";
+  $("healthNav").hidden = ME.role !== "admin";      // his call allowlist         // alarms ring on the admin's satellite
   $("announceNav").hidden = !ME.family_memory;          // admin and family
   $("agenticTop").hidden = ME.id !== "owner";           // missions run on the owner's GPU, with his calendar
 }
@@ -994,6 +1016,43 @@ $("alarmForm").onsubmit = async (e) => {
 $("alarmCancel").onclick = showAlarmList;
 $("alarmAdd").onclick = () => openAlarmForm(null);
 $("alarmsClose").onclick = () => $("alarmsDialog").close();
+
+// ---------- health (is every part of THURSDAY up?) ----------
+let healthTimer = 0;
+async function loadHealth() {
+  let h;
+  try { const res = await api("/api/health"); if (!res.ok) throw 0; h = await res.json(); }
+  catch { $("healthSummary").textContent = "Couldn't reach THURSDAY's core."; return; }
+  const down = h.services.filter((x) => !x.ok);
+  $("healthSummary").textContent = h.problems.length ? h.problems.join(" · ")
+    : down.length ? `${down.length} part(s) need a look.` : "Everything is up.";
+  const box = $("healthItems"); box.innerHTML = "";
+  for (const sv of h.services) {
+    const row = document.createElement("div"); row.className = "health-row";
+    row.innerHTML = `<span class="dot ${sv.ok ? "on" : "bad"}"></span><b></b><span></span>`;
+    row.children[1].textContent = sv.name; row.children[2].textContent = sv.detail;
+    box.append(row);
+  }
+  const t = h.recent_turns || {};
+  $("healthSpeed").textContent = t.count_6h
+    ? `${t.count_6h} turns · first audio ${t.p50_to_first_audio_ms ?? "–"} ms · first token ${t.p50_first_token_ms ?? "–"} ms · STT ${t.p50_stt_ms ?? "–"} ms (medians)`
+    : "No voice turns in the last 6 hours.";
+  const w = $("healthWarnings"); w.innerHTML = "";
+  if (!h.recent_warnings.length) w.innerHTML = `<div class="health-warn">None since the last restart.</div>`;
+  for (const x of [...h.recent_warnings].reverse()) {
+    const d = document.createElement("div"); d.className = "health-warn";
+    d.innerHTML = "<small></small><span></span>";
+    d.children[0].textContent = `${new Date(x.at * 1000).toLocaleTimeString()} · ${x.level} · ${x.where}`;
+    d.children[1].textContent = x.message;
+    w.append(d);
+  }
+}
+$("healthClose").onclick = () => $("healthDialog").close();
+$("healthDialog").addEventListener("close", () => clearInterval(healthTimer));
+$("healthNav").onclick = () => {
+  closeNav(); $("healthDialog").showModal(); loadHealth();
+  clearInterval(healthTimer); healthTimer = setInterval(loadHealth, 10000);
+};
 
 // ---------- contacts (who THURSDAY may call) ----------
 async function loadContacts() {

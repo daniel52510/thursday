@@ -7,6 +7,8 @@ self-improvement runner, the brain disk, and recent turn latency. "How are you d
 from __future__ import annotations
 
 import json
+import logging
+from collections import deque
 import os
 import shutil
 import statistics
@@ -24,6 +26,24 @@ OLLAMA_BASE = OLLAMA_URL.split("/api/")[0]
 HOSTMEM = Path(os.getenv("HOSTMEM_FILE", "/hostmem/host-mem.json"))
 RUNNER_OUT = Path(os.getenv("REPO_DIR", "/repo")) / "runner-out"
 BRAIN = Path(os.getenv("THURSDAY_BRAIN_DIR", "brain"))
+
+
+# The last warnings and errors THURSDAY logged, newest last, for the health page: the "why" behind a red dot.
+RECENT_WARNINGS: deque = deque(maxlen=20)
+
+
+class _Remember(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            RECENT_WARNINGS.append({"at": record.created, "level": record.levelname,
+                                    "where": record.name.removeprefix("thursday."), "message": record.getMessage()[:300]})
+        except Exception:
+            pass
+
+
+_remember = _Remember(level=logging.WARNING)
+for _name in ("thursday", "thursday.voice"):  # thursday.voice doesn't propagate (its own handler)
+    logging.getLogger(_name).addHandler(_remember)
 
 
 def _get(url: str) -> tuple[bool, Any]:
@@ -49,6 +69,17 @@ def _p50(rows: list[dict], key: str) -> int | None:
 def system_status(args: Dict[str, Any]) -> ToolResult:
     if (TURN.get() or {}).get("user") != OWNER:
         return ToolResult(ok=False, tool_name="system_status", error="diagnostics_are_daniels_only")
+    data = snapshot()
+    data.pop("services", None), data.pop("recent_warnings", None)  # the page's; out loud he needs the summary
+    return ToolResult(ok=True, tool_name="system_status", data={**data,
+        "note": "Your own health check. Say what's wrong first (problems), then the one or two numbers that matter, "
+                "in 2-3 sentences. If nothing's wrong, say so and give the reply speed. No lists out loud."})
+
+
+def snapshot() -> dict:
+    """Everything system_status says, plus a per-service list for the health page (/api/health)."""
+    import approvals
+    import telephony
     import voice_ws  # here: voice_ws imports the tools
     problems: list[str] = []
 
@@ -90,7 +121,28 @@ def system_status(args: Dict[str, Any]) -> ToolResult:
     if (turns["p50_to_first_audio_ms"] or 0) > 2500:
         problems.append(f"replies are slow: {turns['p50_to_first_audio_ms']} ms to first audio (median)")
 
-    return ToolResult(ok=True, tool_name="system_status", data={
+    ntfy_ok = bool(approvals.NTFY_URL) and _get(f"{approvals.NTFY_URL}/v1/health")[0]
+    calls_on = telephony.configured()
+    sat_detail = ", ".join(s["state"] for s in sats) if sats else "none connected"
+    services = [
+        {"name": "Language model", "ok": ok, "detail": ", ".join(f"{m['name']} ({m['gb']} GB)" for m in models)
+         or ("nothing loaded" if ok else f"Ollama isn't answering ({ps})")},
+        {"name": "Voice (TTS)", "ok": tts_ok, "detail": f"{tts.get('engine', '')} {tts.get('voice', '')}".strip()
+         if isinstance(tts, dict) else "down"},
+        {"name": "Speech to text", "ok": stt_ok, "detail": "up" if stt_ok else "down"},
+        {"name": "Satellite", "ok": bool(sats), "detail": sat_detail},
+        {"name": "Phone calls", "ok": calls_on, "detail": ("two-way" if telephony.TWO_WAY else "one-way")
+         if calls_on else "off (TWILIO_PUBLIC_URL not set)"},
+        {"name": "Push (ntfy)", "ok": ntfy_ok, "detail": "up" if ntfy_ok else "down or not set up"},
+        {"name": "Mac memory", "ok": bool(memory) and memory["pressure"] == "normal",
+         "detail": f"{memory['available_gb']} GB free, pressure {memory['pressure']}" if memory else "no reading"},
+        {"name": "Brain disk", "ok": disk.free > 5e9, "detail": f"{round(disk.free / 1e9, 1)} GB free"},
+    ]
+    if not ntfy_ok and approvals.NTFY_URL:
+        problems.append("push notifications (ntfy) are down")
+    return {
+        "services": services,
+        "recent_warnings": list(RECENT_WARNINGS),
         "problems": problems,
         "ollama": {"up": ok, "loaded": models},
         "mac_memory": memory,
@@ -101,6 +153,5 @@ def system_status(args: Dict[str, Any]) -> ToolResult:
         "runner": {"queued_jobs": queue, "busy": busy is not None and busy < 120},
         "brain_disk_free_gb": round(disk.free / 1e9, 1),
         "recent_turns": turns,
-        "note": "Your own health check. Say what's wrong first (problems), then the one or two numbers that matter, "
-                "in 2-3 sentences. If nothing's wrong, say so and give the reply speed. No lists out loud."})
+    }
 

@@ -18,6 +18,7 @@ import approvals
 import improvements
 import calendar_tool
 import missions
+import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
 import greetings
 import telephony
 import vault
@@ -561,6 +562,12 @@ class AlarmIn(BaseModel):
 
 class AlarmPatch(BaseModel):
     enabled: bool
+
+
+@app.get("/api/health")
+def health_page(user: dict = Depends(admin_only)):
+    """The health page: each service's light and detail, current problems, the last warnings, reply speed."""
+    return diagnostics.snapshot()
 
 
 class ContactIn(BaseModel):
