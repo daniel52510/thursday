@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.requests import ClientDisconnect
@@ -530,6 +531,46 @@ def delete_conversation(conversation_id: str, user: dict = Depends(current_user)
     if not initalize_db().delete_conversation(conversation_id, user["id"]):
         raise HTTPException(status_code=404, detail="conversation not found")
     return {"deleted": conversation_id}
+
+
+class TruncateIn(BaseModel):
+    from_user_turn: int
+
+
+@app.post("/api/conversations/{conversation_id}/truncate")
+def truncate_conversation(conversation_id: str, body: TruncateIn, user: dict = Depends(current_user)):
+    """Regenerate and edit-and-resend: drop his Nth message and all after it; the page then sends again."""
+    deleted = initalize_db().truncate_conversation(conversation_id, user["id"], body.from_user_turn)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="no such message")
+    return {"deleted": deleted}
+
+
+class SpeakIn(BaseModel):
+    text: str
+
+
+@app.post("/api/speak")
+async def speak(body: SpeakIn, user: dict = Depends(current_user)):
+    """Read aloud: a reply in his current voice, as one WAV (sentence-sized TTS pieces joined)."""
+    import io, wave
+    import mind
+    text = " ".join(body.text.split())[:4000]
+    if not text:
+        raise HTTPException(status_code=422, detail="nothing to say")
+    async with httpx.AsyncClient() as http:
+        parts = await synthesize_ahead(http, text, mind.voice_style(user["id"]))
+    if not parts:
+        raise HTTPException(status_code=503, detail="the voice server isn't answering")
+    out, rate = io.BytesIO(), None
+    with wave.open(out, "wb") as w:
+        for part in parts:
+            with wave.open(io.BytesIO(part)) as r:
+                if rate is None:
+                    rate = r.getframerate()
+                    w.setnchannels(r.getnchannels()); w.setsampwidth(r.getsampwidth()); w.setframerate(rate)
+                w.writeframes(r.readframes(r.getnframes()))
+    return Response(out.getvalue(), media_type="audio/wav")
 
 
 class AlarmIn(BaseModel):

@@ -305,6 +305,19 @@ class MemoryDB:
             cur = conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
         return cur.rowcount > 0
 
+    def truncate_conversation(self, conversation_id: str, user_id: str, from_user_turn: int) -> int | None:
+        """Regenerate / edit-and-resend: delete his from_user_turn-th message (0-based, his own messages only) and
+        everything after it, tool calls included. None if there's no such conversation or turn."""
+        if not self.get_conversation(conversation_id, user_id) or from_user_turn < 0:
+            return None
+        with self._connect() as conn:
+            row = conn.execute("SELECT id FROM messages WHERE conversation_id = ? AND role = 'user' "
+                               "ORDER BY id LIMIT 1 OFFSET ?", (conversation_id, from_user_turn)).fetchone()
+            if not row:
+                return None
+            cur = conn.execute("DELETE FROM messages WHERE conversation_id = ? AND id >= ?", (conversation_id, row[0]))
+        return cur.rowcount
+
     def set_memory_note(self, conversation_id: str, note: str) -> None:
         with self._connect() as conn:
             conn.execute("UPDATE conversations SET memory_note = ? WHERE id = ?", (note, conversation_id))

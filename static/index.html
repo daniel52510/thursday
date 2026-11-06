@@ -211,6 +211,13 @@
   .actions .icon-btn { width: 30px; height: 30px; }
   .actions .icon-btn svg { width: 16px; height: 16px; }
   .actions .meta { margin-left: 6px; }
+  .msg.user .actions { justify-content: flex-end; }
+  .actions .icon-btn.on { color: var(--text); background: var(--deep); }
+  .msg.assistant:not(:last-child) .regen { display: none; }  /* regenerate: the latest reply only */
+  .edit-box { width: min(560px, 100%); display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+  .edit-box textarea { width: 100%; min-height: 70px; resize: vertical; font: 16px/1.5 var(--sans); color: var(--text);
+    background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 14px; padding: 10px 14px; }
+  .edit-box .row { display: flex; gap: 8px; }
   .error-note { color: var(--signal-text); font-size: 14px; }
 
   /* ---------- composer ---------- */
@@ -574,6 +581,7 @@
   <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   <symbol id="i-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
   <symbol id="i-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></symbol>
   <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></symbol>
   <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
   <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></symbol>
@@ -1379,9 +1387,10 @@ function addUser(text, viaVoice) {
   setEmpty(false);
   const m = document.createElement("div");
   m.className = "msg user";
-  m.innerHTML = `<div class="body"></div>`;
+  m.innerHTML = `<div class="body"></div><div class="actions"><button class="icon-btn edit" title="Edit" aria-label="Edit and resend"><svg><use href="#i-edit"/></svg></button></div>`;
   m.firstChild.textContent = text;
   if (viaVoice) m.insertAdjacentHTML("beforeend", `<div class="via mono"><svg><use href="#i-mic"/></svg>voice</div>`);
+  m.querySelector(".edit").onclick = () => editMessage(m);
   thread.append(m);
   scrollDown(true);
 }
@@ -1391,11 +1400,13 @@ function addAssistant() {
   const m = document.createElement("div");
   m.className = "msg assistant";
   m.innerHTML = `<svg class="mark" aria-hidden="true"><use href="#mark-sm"/></svg><div class="col"><div class="chips"></div><div class="md"></div>
-    <div class="actions"><button class="icon-btn copy" title="Copy" aria-label="Copy"><svg><use href="#i-copy"/></svg></button><span class="meta mono"></span></div></div>`;
+    <div class="actions"><button class="icon-btn copy" title="Copy" aria-label="Copy"><svg><use href="#i-copy"/></svg></button><button class="icon-btn say" title="Read aloud" aria-label="Read aloud"><svg><use href="#i-speaker"/></svg></button><button class="icon-btn regen" title="Regenerate" aria-label="Regenerate"><svg><use href="#i-redo"/></svg></button><span class="meta mono"></span></div></div>`;
   thread.append(m);
   const md = m.querySelector(".md"), chips = m.querySelector(".chips");
   let text = "", queued = false;
   m.querySelector(".copy").onclick = (e) => copy(text, e.currentTarget);
+  m.querySelector(".say").onclick = (e) => readAloud(text, e.currentTarget);
+  m.querySelector(".regen").onclick = () => regenerate(m);
   const view = {
     el: m,
     append(delta) {
@@ -1455,6 +1466,54 @@ const TOOL_LABELS = {
 
 function fmtMs(ms) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`; }
 function showLatency(label) { $("statusLatency").textContent = label; }
+
+/* ---------------- message actions: edit and resend, regenerate, read aloud ---------------- */
+// Edit and regenerate rewind the conversation on the server (his Nth message and everything after it), then
+// send again: the history the model sees matches the screen. Not while a reply is still streaming.
+const userIndex = (m) => [...thread.querySelectorAll(".msg.user")].indexOf(m);
+async function rewindTo(m) {
+  if (controller || !conversationId) return false;
+  const res = await api(`/api/conversations/${encodeURIComponent(conversationId)}/truncate`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from_user_turn: userIndex(m) }) });
+  if (!res.ok) { alert("Couldn't rewind the conversation."); return false; }
+  while (m.nextSibling) m.nextSibling.remove();
+  m.remove();
+  return true;
+}
+function editMessage(m) {
+  if (controller) return;
+  const body = m.querySelector(".body"), old = body.textContent;
+  const box = document.createElement("div"); box.className = "edit-box";
+  box.innerHTML = `<textarea aria-label="Edit message"></textarea><div class="row"><button type="button" class="secondary">Cancel</button><button type="button">Send</button></div>`;
+  const ta = box.querySelector("textarea"); ta.value = old;
+  const original = [...m.childNodes];
+  m.replaceChildren(box); ta.focus(); ta.setSelectionRange(old.length, old.length);
+  const [cancel, save] = box.querySelectorAll("button");
+  cancel.onclick = () => m.replaceChildren(...original);
+  const go = async () => { const t = ta.value.trim(); if (t && await rewindTo(m)) send(t); };
+  save.onclick = go;
+  ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } else if (e.key === "Escape") cancel.click(); };
+}
+async function regenerate(a) {
+  let u = a.previousElementSibling;
+  while (u && !u.classList.contains("user")) u = u.previousElementSibling;
+  if (!u) return;
+  const t = u.querySelector(".body")?.textContent;
+  if (t && await rewindTo(u)) send(t);
+}
+let speaking = null;  // { audio, btn } while a reply is read aloud
+async function readAloud(text, btn) {
+  if (speaking) { const was = speaking.btn; speaking.audio.pause(); speaking.btn.classList.remove("on"); speaking = null; if (was === btn) return; }
+  btn.classList.add("on");
+  try {
+    const res = await api("/api/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    if (!res.ok) throw new Error();
+    const audio = new Audio(URL.createObjectURL(await res.blob()));
+    speaking = { audio, btn };
+    audio.onended = () => { btn.classList.remove("on"); if (speaking?.audio === audio) speaking = null; };
+    await audio.play();
+  } catch { btn.classList.remove("on"); alert("My voice isn't answering right now."); }
+}
 
 /* ---------------- chat (SSE over fetch) ---------------- */
 const input = $("input"), sendBtn = $("sendBtn");
