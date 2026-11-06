@@ -317,8 +317,10 @@
   .vfig .b, .vfig .bl, .vfig .spot { transition: fill .25s var(--ease); }
   .vfig .planet { transform-box: view-box; transform-origin: 378px 110px; transform: scale(calc(1 + var(--level) * .06)); transition: transform .08s linear; }
   .vfig .bands { transform-box: view-box; transform-origin: 378px 110px; }
-  .vfig .wave { fill: none; stroke: url(#vfig-wave-grad); stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round;
-                opacity: 0; transition: opacity .35s var(--ease); }
+  .vfig .wave { opacity: 0; transition: opacity .35s var(--ease); }
+  .vfig .wave path { fill: url(#vfig-wave-grad); stroke: none; }
+  .vfig .wave .w0 { opacity: .28; } .vfig .wave .w1 { opacity: .42; } .vfig .wave .w2 { opacity: .7; }
+  .vfig .wave .wline { fill: none; stroke: url(#vfig-wave-grad); stroke-width: 1.5; opacity: .9; }
   #voice[data-state="speaking"] .vfig .wave { opacity: 1; }
   .vfig .ring { fill: none; stroke: var(--text-faint); stroke-width: 1.5; opacity: 0; vector-effect: non-scaling-stroke; transform-box: fill-box; transform-origin: center; }
   .vfig .orbiting { display: none; }
@@ -765,19 +767,20 @@
   </div>
   <div class="stage">
     <!-- The trajectory figure (DESIGN.md sections 5 and 8). data-state on #voice drives it. -->
-    <svg class="vfig" id="vfig" viewBox="238 -30 280 280" aria-hidden="true">
+    <svg class="vfig" id="vfig" viewBox="238 -30 280 300" aria-hidden="true">
       <defs><clipPath id="vfig-clip"><circle cx="378" cy="110" r="46"/></clipPath>
         <!-- a gradient, not a blur filter: only its opacity changes per frame, which stays cheap -->
         <radialGradient id="vfig-halo"><stop offset=".55" stop-color="var(--signal)" stop-opacity=".45"/><stop offset="1" stop-color="var(--signal)" stop-opacity="0"/></radialGradient>
         <radialGradient id="vfig-aura"><stop offset=".3" stop-color="var(--band-light)" stop-opacity=".7"/><stop offset=".62" stop-color="var(--signal)" stop-opacity=".25"/><stop offset="1" stop-color="var(--signal)" stop-opacity="0"/></radialGradient></defs>
       <circle class="aura" cx="378" cy="110" r="138"/>
       <!-- her voice as a line under the planet while she speaks (animateOrb draws it); the trajectory colours -->
-      <linearGradient id="vfig-wave-grad" gradientUnits="userSpaceOnUse" x1="268" y1="0" x2="488" y2="0">
+      <linearGradient id="vfig-wave-grad" gradientUnits="userSpaceOnUse" x1="262" y1="0" x2="494" y2="0">
         <stop offset="0" stop-color="var(--stripe-blue)" stop-opacity="0"/><stop offset=".12" stop-color="var(--stripe-blue)"/>
         <stop offset=".32" stop-color="var(--stripe-green)"/><stop offset=".5" stop-color="var(--stripe-amber)"/>
         <stop offset=".68" stop-color="var(--stripe-orange)"/><stop offset=".88" stop-color="var(--stripe-red)"/>
         <stop offset="1" stop-color="var(--stripe-red)" stop-opacity="0"/></linearGradient>
-      <path class="wave" id="vfig-wave" d="M 268 222 H 488"/>
+      <!-- three translucent ribbons, mirrored around the line, drifting at different speeds (drawWave) -->
+      <g class="wave" id="vfig-wave"><path class="w0"/><path class="w1"/><path class="w2"/><path class="wline"/></g>
       <g><circle class="ring" cx="378" cy="110" r="30"/><circle class="ring" cx="378" cy="110" r="30"/><circle class="ring" cx="378" cy="110" r="30"/></g>
       <g class="planet">
         <circle class="halo" cx="378" cy="110" r="84"/>
@@ -2004,25 +2007,35 @@ function bandMeter(ctx, node) {
 
 
 const calm = matchMedia("(prefers-reduced-motion: reduce)");
-// Her voice as one smooth line under the planet (ChatGPT style, in the trajectory colours): five sines, one per
-// frequency band of her voice (blue = lows ... red = highs), summed and tapered at both ends. Flat when she's quiet.
-const vWave = document.getElementById("vfig-wave");
-let wavePeak = 0;
+// Her voice under the planet, ChatGPT style: three translucent rainbow ribbons mirrored around a line, each a mix
+// of sines drifting at its own speed. Their height follows her loudness (fast rise, smooth fall) and each ribbon
+// leans on a different part of her voice (lows, mids, highs), so it breathes with what she says. Flat when quiet.
+const vWave = [...document.querySelectorAll("#vfig-wave path")];
+let wavePeak = 0, waveAmp = 0;
 function drawWave(bands, t) {
-  const N = 56, x0 = 268, w = 220, y0 = 222;
+  const N = 64, x0 = 262, w = 232, y0 = 228;
   const speaking = V.state === "speaking";
-  wavePeak = speaking ? Math.max(...bands) : wavePeak * 0.9;  // eases flat after she stops
-  let d = "";
-  for (let i = 0; i <= N; i++) {
-    const u = i / N, env = Math.sin(Math.PI * u) ** 1.5;  // pinned at the ends, full in the middle
-    let y = 0;
-    for (let b = 0; b < 5; b++) {
-      const amp = (speaking ? bands[b] : wavePeak) * (10 - b * 1.2);
-      y += amp * Math.sin(u * Math.PI * (2 + b * 1.6) + t * (2.2 + b * 1.1) + b);
+  const loud = speaking ? Math.min(1, (bands[0] + bands[1] + bands[2] + bands[3] + bands[4]) / 5 * 2.2) : 0;
+  waveAmp += (loud - waveAmp) * (loud > waveAmp ? 0.45 : 0.08);
+  wavePeak = waveAmp;
+  const layers = [
+    { amp: 34 * (0.35 + bands[0] * 0.65), f: 1.6, sp: 1.1, ph: 0 },            // lows: wide, slow
+    { amp: 26 * (0.35 + bands[2] * 0.65), f: 2.6, sp: 1.9, ph: 2.1 },          // mids
+    { amp: 18 * (0.35 + Math.max(bands[3], bands[4]) * 0.65), f: 3.8, sp: 2.8, ph: 4.2 },  // highs: tight, quick
+  ];
+  layers.forEach((L, k) => {
+    let top = "", bottom = "";
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, env = Math.sin(Math.PI * u) ** 2;  // full in the middle, pinned at the ends
+      const h = waveAmp * L.amp * env * (0.6 + 0.4 * Math.sin(u * Math.PI * L.f * 2 + t * L.sp + L.ph))
+              * (0.75 + 0.25 * Math.sin(u * 9 - t * 3.1 + k));
+      const x = (x0 + u * w).toFixed(1);
+      top += `${i ? "L" : "M"} ${x} ${(y0 - Math.max(0.6, h)).toFixed(2)} `;
+      bottom = `L ${x} ${(y0 + Math.max(0.6, h * 0.85)).toFixed(2)} ` + bottom;
     }
-    d += `${i ? "L" : "M"} ${(x0 + u * w).toFixed(1)} ${(y0 + y * env).toFixed(2)} `;
-  }
-  vWave.setAttribute("d", d);
+    vWave[k].setAttribute("d", top + bottom + "Z");
+  });
+  vWave[3].setAttribute("d", `M ${x0} ${y0} H ${x0 + w}`);
 }
 
 function animateOrb() {
