@@ -109,6 +109,10 @@ class BargeIn:
         self._need = _frames(int(_env_float("BARGE_MS", 352)))
         self.min_dbfs = _env_float("BARGE_MIN_DBFS", -40.0)
         self.margin_db = _env_float("BARGE_SPEECH_DB", 8.0)
+        # The start of each reply only measures her echo, never counts as him: with no echo floor learned yet the bar
+        # sat at BARGE_MIN_DBFS, and on a phone's loudspeaker her own first words cleared it (cut off 6 words in,
+        # 2026-11-06). The satellite has the same settle (satellite.py BARGE_SETTLE_S).
+        self._settle_frames = _frames(int(_env_float("BARGE_SETTLE_MS", 600)))
         # Everything since just before the speech began, handed to the endpointer on a trigger.
         self._recent: deque[bytes] = deque(maxlen=_frames(cfg.preroll_ms) + self._need)
         self._residual: deque[float] = deque(maxlen=40)
@@ -120,11 +124,16 @@ class BargeIn:
         self._residual.clear()
         self._run = 0
         self._miss = 0
+        self._settle = self._settle_frames
 
     def feed(self, frame: bytes) -> list[bytes] | None:
         """The buffered speech once the user has clearly started talking."""
         self._recent.append(frame)
         db = _frame_dbfs(frame)
+        if self._settle > 0:
+            self._settle -= 1
+            self._residual.append(db)
+            return None
         bar = max(
             self.min_dbfs,
             float(np.percentile(self._residual, 85)) + self.margin_db if len(self._residual) >= 5 else self.min_dbfs,

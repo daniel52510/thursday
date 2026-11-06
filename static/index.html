@@ -317,6 +317,9 @@
   .vfig .b, .vfig .bl, .vfig .spot { transition: fill .25s var(--ease); }
   .vfig .planet { transform-box: view-box; transform-origin: 378px 110px; transform: scale(calc(1 + var(--level) * .06)); transition: transform .08s linear; }
   .vfig .bands { transform-box: view-box; transform-origin: 378px 110px; }
+  .vfig .wave { fill: none; stroke: url(#vfig-wave-grad); stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round;
+                opacity: 0; transition: opacity .35s var(--ease); }
+  #voice[data-state="speaking"] .vfig .wave { opacity: 1; }
   .vfig .ring { fill: none; stroke: var(--text-faint); stroke-width: 1.5; opacity: 0; vector-effect: non-scaling-stroke; transform-box: fill-box; transform-origin: center; }
   .vfig .orbiting { display: none; }
 
@@ -768,6 +771,13 @@
         <radialGradient id="vfig-halo"><stop offset=".55" stop-color="var(--signal)" stop-opacity=".45"/><stop offset="1" stop-color="var(--signal)" stop-opacity="0"/></radialGradient>
         <radialGradient id="vfig-aura"><stop offset=".3" stop-color="var(--band-light)" stop-opacity=".7"/><stop offset=".62" stop-color="var(--signal)" stop-opacity=".25"/><stop offset="1" stop-color="var(--signal)" stop-opacity="0"/></radialGradient></defs>
       <circle class="aura" cx="378" cy="110" r="138"/>
+      <!-- her voice as a line under the planet while she speaks (animateOrb draws it); the trajectory colours -->
+      <linearGradient id="vfig-wave-grad" gradientUnits="userSpaceOnUse" x1="268" y1="0" x2="488" y2="0">
+        <stop offset="0" stop-color="var(--stripe-blue)" stop-opacity="0"/><stop offset=".12" stop-color="var(--stripe-blue)"/>
+        <stop offset=".32" stop-color="var(--stripe-green)"/><stop offset=".5" stop-color="var(--stripe-amber)"/>
+        <stop offset=".68" stop-color="var(--stripe-orange)"/><stop offset=".88" stop-color="var(--stripe-red)"/>
+        <stop offset="1" stop-color="var(--stripe-red)" stop-opacity="0"/></linearGradient>
+      <path class="wave" id="vfig-wave" d="M 268 222 H 488"/>
       <g><circle class="ring" cx="378" cy="110" r="30"/><circle class="ring" cx="378" cy="110" r="30"/><circle class="ring" cx="378" cy="110" r="30"/></g>
       <g class="planet">
         <circle class="halo" cx="378" cy="110" r="84"/>
@@ -1994,6 +2004,27 @@ function bandMeter(ctx, node) {
 
 
 const calm = matchMedia("(prefers-reduced-motion: reduce)");
+// Her voice as one smooth line under the planet (ChatGPT style, in the trajectory colours): five sines, one per
+// frequency band of her voice (blue = lows ... red = highs), summed and tapered at both ends. Flat when she's quiet.
+const vWave = document.getElementById("vfig-wave");
+let wavePeak = 0;
+function drawWave(bands, t) {
+  const N = 56, x0 = 268, w = 220, y0 = 222;
+  const speaking = V.state === "speaking";
+  wavePeak = speaking ? Math.max(...bands) : wavePeak * 0.9;  // eases flat after she stops
+  let d = "";
+  for (let i = 0; i <= N; i++) {
+    const u = i / N, env = Math.sin(Math.PI * u) ** 1.5;  // pinned at the ends, full in the middle
+    let y = 0;
+    for (let b = 0; b < 5; b++) {
+      const amp = (speaking ? bands[b] : wavePeak) * (10 - b * 1.2);
+      y += amp * Math.sin(u * Math.PI * (2 + b * 1.6) + t * (2.2 + b * 1.1) + b);
+    }
+    d += `${i ? "L" : "M"} ${(x0 + u * w).toFixed(1)} ${(y0 + y * env).toFixed(2)} `;
+  }
+  vWave.setAttribute("d", d);
+}
+
 function animateOrb() {
   const sm = new Float32Array(5);
   const tick = () => {
@@ -2006,6 +2037,7 @@ function animateOrb() {
       sum += sm[i];
     }
     vFig.style.setProperty("--level", Math.min(1, (sum / 5) * 1.6).toFixed(3));  // one level: the planet hums with it
+    if (V.state === "speaking" || wavePeak > 0.01) drawWave(sm, performance.now() / 1000);
     V.raf = requestAnimationFrame(tick);
   };
   V.raf = requestAnimationFrame(tick);

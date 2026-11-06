@@ -822,6 +822,8 @@ class Session:
 
     async def set_state(self, state: str) -> None:
         was, self.state = self.state, state
+        if state == "speaking" and was != "speaking" and self.barge:
+            self.barge.reset()  # her voice starts now: the settle window measures its echo before anything counts
         if state in ("thinking", "speaking") or (state == "listening" and self.role == "satellite"):
             missions.touch()  # keep the GPU for the voice while anyone's mid-conversation
         if state == "thinking" and self.role == "satellite":
