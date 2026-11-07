@@ -133,7 +133,8 @@ def calendar_events(args: Dict[str, Any]) -> ToolResult:
     Returns events sorted by start: title, start, end, all_day, location, calendar.
     """
     try:
-        tz = ZoneInfo(str(args.get("timezone") or os.getenv("THURSDAY_TIMEZONE") or "UTC"))
+        # His home timezone when the request carried none (Siri, the proactive loop): UTC read 8 pm as "1 in the morning".
+        tz = ZoneInfo(str(args.get("timezone") or os.getenv("THURSDAY_TIMEZONE") or os.getenv("THURSDAY_TZ") or "UTC"))
     except ZoneInfoNotFoundError:
         return ToolResult(ok=False, tool_name="calendar_events", error="unknown_timezone")
     try:

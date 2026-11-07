@@ -298,7 +298,7 @@ def health_check(args: dict) -> "ToolResult":
     workouts = [{"date": d["date"], **w} for d in recent for w in d.get("workouts", [])]
     data = {"topic": topic, "days": span, "averages_vs_previous_weeks": summary, "per_day": per_day[-14:],
             "workouts": workouts, "readiness_today": readiness(days),
-            "units": {"sleep_*": "minutes", "hrv": "ms", "resting_heart_rate": "bpm", "active_energy": "kcal",
+            "units": {"sleep_*": "minutes (say sleep as hours and minutes: '6 hours 40 minutes')", "hrv": "ms", "resting_heart_rate": "bpm", "active_energy": "kcal",
                       "distance": "km", "weight": "kg (say pounds if he uses them: x 2.2046)"},
             "note": "You're his trainer and coach, not a doctor. Lead with what matters for today, compare with his own "
                     "baseline, then one concrete suggestion (train hard, keep it easy, sleep earlier...). Never "

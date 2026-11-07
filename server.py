@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -22,6 +23,7 @@ import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
 import greetings
+import proactive
 import reminders
 import health
 import telephony
@@ -29,7 +31,7 @@ import vault
 from memory import now_iso as memory_now
 from accounts import FAMILY, FAMILY_ROLES, OWNER, LoginThrottle, public
 from agent_loop import MODEL, URL as OLLAMA_URL, initalize_db, preload_model
-from agent_stream import stream_prompt
+from agent_stream import stream_prompt, strip_voice_tags
 from alarms import run_scheduler as run_alarm_scheduler
 from episodic import run_memory_writer
 from mind import run_reflection, voice_style
@@ -61,9 +63,11 @@ async def lifespan(app: FastAPI):
     on_review = asyncio.create_task(improvements.start_self_review())
     on_greetings = asyncio.create_task(greetings.run())  # fresh wake greetings each hour
     on_reminders = asyncio.create_task(reminders.run())  # due reminders: push, and out loud at home
+    on_proactive = asyncio.create_task(proactive.run())  # he speaks first: calendar, workouts, health, evening
     yield
     on_greetings.cancel()
     on_reminders.cancel()
+    on_proactive.cancel()
     on_missions.cancel()
     on_improvements.cancel()
     on_review.cancel()
@@ -220,6 +224,36 @@ def greeting_clip(version: int, i: int, user: dict = Depends(current_user)):
 @app.get("/api/voice")
 def get_voice(user: dict = Depends(current_user)):
     return {"voice": "tara" if voice_style(user["id"])["voice"] == "tara" else "rocky"}
+
+
+class AskIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    conversation_id: str | None = None
+
+
+_siri_threads: dict[str, tuple[str, float]] = {}  # user -> (conversation, last used): follow-ups keep context
+
+
+@app.post("/api/ask")
+async def ask(body: AskIn, user: dict = Depends(current_user)):
+    """One question, one spoken-style answer: the Siri Shortcut ("Hey Siri, THURSDAY") on iPhone, Apple Watch and
+    CarPlay sends what he said here with a device token and speaks the reply. Follow-ups within 10 minutes stay in
+    the same conversation."""
+    cid = body.conversation_id
+    if not cid and (last := _siri_threads.get(user["id"])) and time.time() - last[1] < 600:
+        cid = last[0]
+    parts, reply = [], ""
+    context = {"timezone": os.getenv("THURSDAY_TZ", "America/New_York")}  # Siri sends no page context
+    async for ev in stream_prompt(body.text, "voice", conversation_id=cid, context=context, user=user):
+        if ev["type"] == "conversation":
+            cid = ev["id"]
+        elif ev["type"] == "delta":
+            parts.append(ev["text"])
+        elif ev["type"] == "done":
+            reply = ev.get("reply") or ""
+    _siri_threads[user["id"]] = (cid, time.time())
+    text = strip_voice_tags(reply or "".join(parts)).strip()
+    return {"reply": text or "Sorry, I didn't get anything back.", "conversation_id": cid}
 
 
 @app.post("/api/voice/diag")
