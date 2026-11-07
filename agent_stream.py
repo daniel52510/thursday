@@ -51,7 +51,9 @@ import missions
 import music
 import health
 import lights
+import gmail_tool
 import reminders
+import trainer
 import notes
 import telephony
 from accounts import FAMILY, FAMILY_ROLES, OWNER
@@ -596,7 +598,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + gmail_tool.TOOL_SCHEMAS + trainer.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -861,7 +863,8 @@ _ASKED_MISSION_GOAL = re.compile(
 )
 _CANCEL_PENDING = re.compile(r"^\W*(?:no|nah|nope|never\s*mind|cancel|stop|abort|forget\s+it|don'?t|not\s+now)\b", re.I)
 # Tools that only read: a reply after them can still claim something no tool did (the claim guard keeps checking).
-_LOOKUP_TOOLS = {"reminder_list", "mission_status", "get_time", "get_weather", "web_search", "calendar_events", "health_check",
+_LOOKUP_TOOLS = {"reminder_list", "email_inbox", "email_search", "email_read", "training_today", "training_plan",
+                 "mission_status", "get_time", "get_weather", "web_search", "calendar_events", "health_check",
                  "list_show", "note_find", "system_status", "music_now", "light_status", "alarm_list", "watch_list",
                  "routine_list", "approval_list", "improve_status", "project_list", "sports_scores", "launch_schedule",
                  "code_ask"}
@@ -1503,9 +1506,10 @@ async def _stream_prompt(
     elif (not hold_first and not executed and mode in ("voice", "chat") and user["id"] == OWNER
           and _HEALTH_ASK.search(user_prompt)):
         hold_first = True
-        nudge = ("He's asking about his own health. Call health_check now (topic recovery for how he's doing or "
-                 "whether to train, sleep, heart, activity, workouts or weight) and answer from its result. You do "
-                 "have his Apple Watch data through that tool; never say you can't see it.")
+        nudge = ("He's asking about his own health or training. Call the tool now: training_today for today's or "
+                 "tomorrow's workout, training_plan for the program or what to eat, otherwise health_check (topic "
+                 "recovery for how he's doing, sleep, heart, activity, workouts or weight). Answer from its result. "
+                 "You do have his Apple Watch data and his training plan through those tools; never say you can't.")
     elif not hold_first and not executed and mode in ("voice", "chat") and _CALL_ASK.search(user_prompt):
         hold_first = True
         nudge = ("He's asking you to phone someone. Call call_place now with the number (or 'me') and the message, "
@@ -1522,14 +1526,15 @@ async def _stream_prompt(
     if mode == "briefing":
         hold_first = True
         nudge = ("Call the tools for each topic first (calendar_events for today, get_weather, web_search for "
-                 "news, and health_check with topic recovery and days 1 for how he slept and his readiness) and "
+                 "news, health_check with topic recovery and days 1 for how he slept and his readiness, and "
+                 "training_today for today's session) and "
                  "write the briefing only from their results; never from memory. Health: one sentence, readiness "
                  "and sleep, plus what it means for training today.")
     elif mode == "wake":
         hold_first = True
         nudge = ("Call calendar_events for today first (and get_weather if his location is known, and health_check "
-                 "with topic recovery and days 1); then wake him. Mention how he slept and his readiness in a few "
-                 "words, like a trainer would.")
+                 "with topic recovery and days 1, and training_today); then wake him. Mention how he slept, his "
+                 "readiness and today's session in a few words, like a trainer would.")
 
     reply_parts: list[str] = []
     guard_used = False

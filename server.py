@@ -22,6 +22,7 @@ import improvements
 import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
+import gmail_tool
 import greetings
 import proactive
 import reminders
@@ -105,6 +106,13 @@ def current_user(request: Request) -> dict:
     return user
 
 
+def owner_only(user: dict = Depends(current_user)) -> dict:
+    """His own things, by account id whatever the role: Apple Health, Gmail, missions (his GPU, his calendar)."""
+    if user["id"] != OWNER:
+        raise HTTPException(status_code=403, detail="that's the owner's only")
+    return user
+
+
 def require(*roles: str):
     def check(user: dict = Depends(current_user)) -> dict:
         if user["role"] not in roles:
@@ -176,7 +184,7 @@ def _me(user: dict) -> dict:
         "tokens_today": acc.tokens_today(user["id"]),
         "family_memory": user["role"] in FAMILY_ROLES,
         "vault": box.available,
-        "credentials": {"apple_calendar": calendar_tool.CREDENTIAL in creds},
+        "credentials": {"apple_calendar": calendar_tool.CREDENTIAL in creds, "gmail": gmail_tool.CREDENTIAL in creds},
     }
 
 
@@ -363,6 +371,31 @@ async def save_apple_calendar(body: AppleCalendarIn, user: dict = Depends(curren
     box.set(user["id"], calendar_tool.CREDENTIAL, {"username": body.username.strip(), "app_password": body.app_password.strip()})
     calendar_tool.forget(user["id"])
     return {"ok": True, "calendars": len(calendars)}
+
+
+class GmailIn(BaseModel):
+    username: str = Field(min_length=3, max_length=200)      # his Gmail address
+    app_password: str = Field(min_length=16, max_length=40)  # myaccount.google.com/apppasswords (16 letters)
+
+
+@app.put("/api/me/credentials/gmail")
+async def save_gmail(body: GmailIn, user: dict = Depends(owner_only)):
+    box = vault.shared()
+    if not box.available:
+        raise HTTPException(status_code=503, detail="the vault isn't set up on the server")
+    try:  # check them against Gmail before keeping them
+        await asyncio.wait_for(asyncio.to_thread(gmail_tool.check, body.username.strip(), body.app_password.strip()), 20)
+    except Exception as exc:
+        logger.info("gmail check failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=400, detail="Gmail didn't accept those: check the address and the app password")
+    box.set(user["id"], gmail_tool.CREDENTIAL, {"username": body.username.strip(), "app_password": body.app_password.strip()})
+    return {"ok": True}
+
+
+@app.delete("/api/me/credentials/gmail")
+def remove_gmail(user: dict = Depends(owner_only)):
+    vault.shared().delete(user["id"], gmail_tool.CREDENTIAL)
+    return {"ok": True}
 
 
 @app.delete("/api/me/credentials/apple_calendar")
@@ -717,13 +750,6 @@ class AlarmIn(BaseModel):
 
 class AlarmPatch(BaseModel):
     enabled: bool
-
-
-def owner_only(user: dict = Depends(current_user)) -> dict:
-    """His own things, by account id whatever the role: Apple Health, missions (his GPU, his calendar)."""
-    if user["id"] != OWNER:
-        raise HTTPException(status_code=403, detail="that's the owner's only")
-    return user
 
 
 # His Apple Health data (health.py): the Health Auto Export app on his iPhone POSTs here over the tailnet, with a

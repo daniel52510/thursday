@@ -2630,6 +2630,28 @@ const PANES = {
     }
     body.append(calNote);
 
+    // Gmail: read-only plus drafts (gmail_tool.py), with a Google app password kept in the vault.
+    if (ME.id === "owner") {
+      body.append(el("h3", { className: "set-h", textContent: "Gmail" }));
+      const gNote = note();
+      if (!ME.vault) {
+        body.append(el("p", { className: "set-p", textContent: "Saving credentials is off: the server has no vault key." }));
+      } else if (ME.credentials.gmail) {
+        body.append(el("p", { className: "set-p", textContent: "Connected. THURSDAY can read your inbox and save drafts to your Gmail Drafts. He never sends." }),
+          el("div", { className: "set-row" }, btn("Disconnect", async () => { await call("/api/me/credentials/gmail", { method: "DELETE" }); await loadMe(); openSettings("account"); }, true)));
+      } else {
+        const gu = textIn({ type: "email", placeholder: "you@gmail.com", autocomplete: "username" });
+        const gp = textIn({ type: "password", placeholder: "16-letter app password", autocomplete: "off" });
+        body.append(el("p", { className: "set-p", textContent: "Make an app password at myaccount.google.com/apppasswords (it needs 2-Step Verification on), then paste it here. Read-only plus drafts: THURSDAY never sends mail." }),
+          el("div", { className: "set-row" }, gu, gp, btn("Connect", async () => {
+            say(gNote, "Checking with Gmail…");
+            try { await call("/api/me/credentials/gmail", jsonReq("PUT", { username: gu.value, app_password: gp.value })); await loadMe(); openSettings("account"); }
+            catch (e) { say(gNote, e.message, true); }
+          })));
+      }
+      body.append(gNote);
+    }
+
     body.append(el("p", { className: "set-p", textContent: "What THURSDAY knows about you is under Settings → Memory." }));
 
     const cur = textIn({ type: "password", placeholder: "Current password", autocomplete: "current-password" });
