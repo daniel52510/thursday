@@ -250,13 +250,44 @@ async def welcome_rule(now: datetime) -> None:
         logger.info("proactive: welcomed him home after %.1f h", hours)
 
 
+async def followup_rule(now: datetime) -> None:
+    """He's home, it's daytime, and something in his life just happened: ask how it went, out loud, once."""
+    import presence
+    import reminders
+    from accounts import OWNER
+    if not 10 <= now.hour < 21 or presence.phone() != "home" or presence.asleep(now):
+        return
+    for f in reminders.due_followups(OWNER)[:1]:
+        if not _first_time(f"followup:{f['id']}"):
+            continue
+        try:
+            import mind
+            import voice_ws
+            style = mind.voice_style(OWNER)
+            line = f"Hey, how did {f['event']} go?"
+            if style.get("voice") != "tara":
+                import eridian
+                line = eridian.translate(line)
+            async with httpx.AsyncClient() as http:
+                audio = await voice_ws.synthesize_ahead(http, line, style)
+            for sat in [s for s in voice_ws.SATELLITES if s.state == "idle"]:
+                # In the conversation where he mentioned it, so his answer has the context.
+                if audio and await sat.announce(audio=audio, conversation_id=f["conversation"], cue="announce"):
+                    with reminders._connect() as conn:
+                        conn.execute("UPDATE followups SET status = 'asked' WHERE id = ?", (f["id"],))
+                    logger.info("proactive: asked how %s went", f["id"])
+                    break
+        except Exception as exc:
+            logger.warning("proactive: follow-up not asked (%s)", type(exc).__name__)
+
+
 async def run() -> None:
     """Every couple of minutes, each rule looks once. A rule's failure never stops the others."""
     from accounts import OWNER  # noqa: F401  (owner-only: everything here is his)
     await asyncio.sleep(30)
     while True:
         now = datetime.now(_zone())
-        for rule in (_release_held, welcome_rule, calendar_rule, workout_rule, health_rule, evening_rule):
+        for rule in (_release_held, welcome_rule, followup_rule, calendar_rule, workout_rule, health_rule, evening_rule):
             try:
                 await (rule() if rule is _release_held else rule(now))
             except asyncio.CancelledError:

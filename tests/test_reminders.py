@@ -71,3 +71,26 @@ def test_due_reminder_is_delivered_once(monkeypatch):
         task.cancel()
     asyncio.run(one_tick())
     assert sent == ["Oven"]
+
+
+def test_life_followups(monkeypatch):
+    import httpx, json
+    calls = []
+
+    class R:
+        def __init__(self, content): self.content = content
+        def json(self): return {"message": {"content": self.content}}
+
+    def fake_post(url, **k):
+        calls.append(k["json"]["messages"][0]["content"])
+        return R(json.dumps({"event": "the job interview", "date": "2026-11-12"}))
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(reminders, "_now", lambda: datetime(2026, 11, 9, 15, 0, tzinfo=timezone.utc))
+    reminders.maybe_followup("owner", "The weather is nice today", "c1")             # no event word: no LLM call
+    assert calls == []
+    reminders.maybe_followup("owner", "I have a job interview on Thursday, wish me luck", "c1")
+    assert len(calls) == 1 and reminders.due_followups("owner") == []              # not due until the day after
+    monkeypatch.setattr(reminders, "_now", lambda: datetime(2026, 11, 13, 15, 0, tzinfo=timezone.utc))
+    due = reminders.due_followups("owner")
+    assert [r["event"] for r in due] == ["the job interview"] and "how one went" in reminders.followup_note("owner")
+    assert reminders.followup_done({"id": due[0]["id"]}).ok and reminders.followup_note("owner") == ""

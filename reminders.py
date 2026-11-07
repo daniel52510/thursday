@@ -33,7 +33,9 @@ def _connect() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS reminders (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL,
             due TEXT NOT NULL, created TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', conversation TEXT);
         CREATE TABLE IF NOT EXISTS promises (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL,
-            created TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', conversation TEXT);""")
+            created TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', conversation TEXT);
+        CREATE TABLE IF NOT EXISTS followups (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, event TEXT NOT NULL,
+            on_day TEXT NOT NULL, ask_after TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', conversation TEXT);""")
     return conn
 
 
@@ -283,3 +285,87 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object", "properties": {
             "id": {"type": "string"}, "dropped": {"type": "boolean"}}, "required": ["id"]}}},
 ]
+
+
+# ---------------------------------------------------------------- life follow-ups
+# "I have an interview Thursday" → on Friday, "how did the interview go?". The FRIDAY trait of remembering his life.
+# A cheap pattern gate first (an event word and a time word); only then one short LLM call, after the reply.
+_EVENT = re.compile(r"\b(interview|exam|test|appointment|doctor|dentist|surgery|date|presentation|meeting with|"
+                    r"flight|trip|game|match|race|wedding|party|birthday|concert|audition|deadline|move|moving|"
+                    r"first day|review|pitch|launch|recital|tryout|competition|hearing|closing)\b", re.I)
+_WHEN = re.compile(r"\b(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|"
+                   r"this week|this weekend|next month|on the \d|in \d+ days?)\b", re.I)
+
+
+def maybe_followup(user_id: str, said: str, conversation: str | None) -> None:
+    """Background, after a reply: a future life event he mentioned becomes a follow-up for the day after."""
+    from accounts import OWNER
+    if user_id != OWNER or not (_EVENT.search(said or "") and _WHEN.search(said or "")):
+        return
+    import httpx
+    from agent_stream import CHAT_URL, MODEL, OLLAMA_KEEP_ALIVE, OLLAMA_OPTIONS
+    today = _now().astimezone(_zone())
+    prompt = (f"Today is {today.strftime('%A %Y-%m-%d')}. He said: \"{said[:400]}\"\n"
+              "If he mentions an upcoming event in his own life (an interview, exam, appointment, trip, game...), "
+              'answer with JSON {"event": "<3-6 words, e.g. the job interview at Google>", "date": "YYYY-MM-DD"}; '
+              'otherwise {"event": null}. Only events still to come. JSON only.')
+    try:
+        r = httpx.post(CHAT_URL, timeout=30, json={"model": MODEL, "stream": False, "think": False, "format": "json",
+                                                   "keep_alive": OLLAMA_KEEP_ALIVE, "options": OLLAMA_OPTIONS,
+                                                   "messages": [{"role": "user", "content": prompt}]})
+        import json
+        out = json.loads((r.json().get("message") or {}).get("content") or "{}")
+        event, day = str(out.get("event") or "").strip(), datetime.strptime(str(out.get("date")), "%Y-%m-%d").date()
+    except Exception:
+        return
+    if not event or not (today.date() <= day <= today.date() + timedelta(days=90)):
+        return
+    ask_after = datetime.combine(day + timedelta(days=1), datetime.min.time(), _zone()).replace(hour=9)
+    with _connect() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS followups (id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+            event TEXT NOT NULL, on_day TEXT NOT NULL, ask_after TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+            conversation TEXT)""")
+        if conn.execute("SELECT 1 FROM followups WHERE user_id = ? AND on_day = ? AND event = ?",
+                        (user_id, day.isoformat(), event)).fetchone():
+            return
+        conn.execute("INSERT INTO followups(id, user_id, event, on_day, ask_after, conversation) VALUES (?,?,?,?,?,?)",
+                     (uuid.uuid4().hex[:8], user_id, event, day.isoformat(),
+                      ask_after.astimezone(timezone.utc).isoformat(), conversation))
+    logger.info("follow-up noted for %s", day.isoformat())
+
+
+def due_followups(user_id: str) -> list[sqlite3.Row]:
+    try:
+        with _connect() as conn:
+            return conn.execute("SELECT * FROM followups WHERE user_id = ? AND status = 'open' AND ask_after <= ? "
+                                "ORDER BY ask_after LIMIT 3", (user_id, _now().isoformat())).fetchall()
+    except sqlite3.Error:
+        return []
+
+
+def followup_done(args: Dict[str, Any]):
+    from tools import ToolResult
+    turn, err = _owner_turn("followup_done")
+    if err:
+        return err
+    with _connect() as conn:
+        n = conn.execute("UPDATE followups SET status = 'asked' WHERE id = ? AND user_id = ?",
+                         (str(args.get("id") or ""), turn["user"])).rowcount
+    return ToolResult(ok=bool(n), tool_name="followup_done", data={"closed": n},
+                      **({} if n else {"error": "no_followup_with_that_id"}))
+
+
+def followup_note(user_id: str) -> str:
+    rows = due_followups(user_id)
+    if not rows:
+        return ""
+    items = "\n".join(f"- [{r['id']}] {r['event']} (was {datetime.fromisoformat(r['on_day']).strftime('%A %b %-d')})"
+                      for r in rows)
+    return ("Things in his life that just happened. Early in this conversation, ask how one went, warmly and in "
+            "your own words (once, not as a checklist), then call followup_done with its id:\n" + items)
+
+
+TOOL_SCHEMAS.append({"type": "function", "function": {
+    "name": "followup_done",
+    "description": "Mark a life follow-up from your notes as asked (you asked him how it went).",
+    "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}})

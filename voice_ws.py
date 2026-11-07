@@ -1245,6 +1245,8 @@ class Session:
                             self._said = []
                         if chunker:
                             chunker.feed(ev["text"])
+                    elif ev["type"] == "gesture":  # body language: the device acts it out (voice orb now, Reachy later)
+                        await self.ws.send_json({"type": "body", "gesture": ev["name"]})
                     elif ev["type"] == "deliberating":
                         if chunker and mode not in ("briefing", "wake"):
                             await self._say_filler("_deliberate", timing)

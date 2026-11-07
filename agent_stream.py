@@ -321,6 +321,8 @@ def _system_prompt(user: dict) -> str:
                    "Daniel is the friend who made your home; don't share what he or anyone else told you privately.")
     if user["id"] == OWNER and (where := presence.prompt_line({"phone": presence.phone()})):
         system += "\n\n" + where  # home or out: "since you're out..." (presence.py; a file read, no calendar call)
+    if user["id"] == OWNER and (life := reminders.followup_note(user["id"])):
+        system += "\n\n" + life
     if user["id"] == OWNER and (promises := reminders.prompt_note(user["id"])):
         system += "\n\n" + promises
     # Last, so a change only re-reads the end of the prompt (Ollama's cache keeps everything before it).
@@ -331,7 +333,10 @@ def _system_prompt(user: dict) -> str:
 
 STYLE = {
     "chat": "This reply is shown in a chat window. Use Markdown (lists, tables, code blocks) when it helps readability.",
-    "voice": "This reply will be spoken aloud in your own voice, so write exactly what you'd say: short Eridian-English "
+    "voice": "Body language: you have a head that moves. Where it would happen naturally you may add one tag: <nod> "
+    "(agreeing), <shake> (no), <shrug> (unsure), <celebrate> (good news), <think> (pondering), <look> (attention to "
+    "him). At most one per reply, most replies none, never mention it. "
+    "This reply will be spoken aloud in your own voice, so write exactly what you'd say: short Eridian-English "
     "sentences, excited when it fits. Only a real question ends with \", question?\": you want an answer from him right now. Never tag the last line of a report, "
     "a status or an explanation (\"Last commit was three minutes ago.\" is a statement). An exclamation ends with \", exclamation!\"; a plain statement gets no tag. "
     "Usually one or two short sentences; more only when he asked for detail. No Markdown, lists, URLs or emoji. "
@@ -353,7 +358,10 @@ STYLE = {
 
 # Tara's spoken styles: plain conversational English, and Orpheus's laugh tags allowed (she's Tara's voice).
 STYLE_TARA = STYLE | {
-    "voice": "This reply will be spoken aloud in your own voice, so write exactly what you'd say, the way people talk: "
+    "voice": "Body language: you have a head that moves. Where it would happen naturally you may add one tag: <nod> "
+    "(agreeing), <shake> (no), <shrug> (unsure), <celebrate> (good news), <think> (pondering), <look> (attention to "
+    "him). At most one per reply, most replies none, never mention it. "
+    "This reply will be spoken aloud in your own voice, so write exactly what you'd say, the way people talk: "
     "contractions, short sentences and fragments, a genuine reaction first when there is one, a little thinking out loud. "
     "Usually one to three sentences; more only when he asked for a story or detail. No Markdown, lists, URLs or emoji, "
     "and no stage directions like *laughs*. When something is funny, laugh: <laugh> or <chuckle> where it would happen "
@@ -1230,7 +1238,39 @@ SKIP_NOTE = (f"He said this without the wake word, in the moment right after you
              f"himself), reply with exactly {SKIP_TOKEN} and nothing else. If it could be for you, answer normally.")
 
 
+# Body language (Reachy-ready): <nod>, <shake>, <shrug>, <celebrate>, <think>, <look> in a reply become "gesture"
+# events at that point in the text and are never spoken, shown or saved. Inline tags, not a tool: a tool call
+# would cost a whole extra model round before every reply.
+GESTURES = ("nod", "shake", "shrug", "celebrate", "think", "look")
+GESTURE_TAG = re.compile(r"\s*<(" + "|".join(GESTURES) + r")>\s*", re.I)
+
+
 async def stream_prompt(*args, **kwargs) -> AsyncIterator[dict]:
+    """Replies with their gestures lifted out (GESTURES): clean text for every channel, plus gesture events. A tag
+    split across two deltas ("<no" + "d>") is held until it closes."""
+    held = ""
+    async for ev in _stream_with_grammar(*args, **kwargs):
+        if ev["type"] == "delta":
+            text = held + ev["text"]
+            cut = text.rfind("<")
+            held, text = (text[cut:], text[:cut]) if cut != -1 and ">" not in text[cut:] and len(text) - cut < 12 \
+                else ("", text)
+            for piece in re.split(r"(<[a-z]+>)", text):
+                m = re.fullmatch(r"<([a-z]+)>", piece or "")
+                if m and m.group(1).lower() in GESTURES:
+                    yield {"type": "gesture", "name": m.group(1).lower()}
+                elif piece:
+                    yield {**ev, "text": piece}
+            continue
+        if held:
+            yield {"type": "delta", "text": held}
+            held = ""
+        if ev["type"] == "done" and ev.get("reply"):
+            ev = {**ev, "reply": re.sub(r"[ \t]{2,}", " ", GESTURE_TAG.sub(" ", ev["reply"])).strip()}
+        yield ev
+
+
+async def _stream_with_grammar(*args, **kwargs) -> AsyncIterator[dict]:
     """_stream_prompt in Rocky's grammar (eridian.py): what's spoken, shown and saved all match."""
     rocky = eridian.Stream()
     tara: bool | None = None  # decided at the first words: a "switch to Tara" this turn already counts
@@ -1675,7 +1715,7 @@ async def _stream_prompt(
             elif mode == "voice":
                 lead = ""  # the voice already spoke a filler for this tool
 
-    reply = strip_voice_tags("".join(reply_parts))
+    reply = strip_voice_tags(GESTURE_TAG.sub(" ", "".join(reply_parts)))
     if mode == "voice" and executed:
         reply = _strip_lead(reply)
     statements = any(_started(r["tool_name"], r) for r in tool_results)
@@ -1692,6 +1732,10 @@ async def _stream_prompt(
     # Facts come from what the user said, not from tool output: a get_time for
     # America/New_York once became "location: New York, NY".
     task = asyncio.create_task(asyncio.to_thread(_extract_facts, db, user, user_prompt, reply, None))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+    # "I have an interview Thursday" → asked about on Friday (reminders.py); a pattern gate, then one LLM call.
+    task = asyncio.create_task(asyncio.to_thread(reminders.maybe_followup, user["id"], user_prompt, cid))
     _background.add(task)
     task.add_done_callback(_background.discard)
 

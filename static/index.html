@@ -317,6 +317,19 @@
   .vfig .b, .vfig .bl, .vfig .spot { transition: fill .25s var(--ease); }
   .vfig .planet { transform-box: view-box; transform-origin: 378px 110px; transform: scale(calc(1 + var(--level) * .06)); transition: transform .08s linear; }
   .vfig .bands { transform-box: view-box; transform-origin: 378px 110px; }
+  /* body language (gesture events): the whole figure moves, like a head */
+  .vfig.g-nod { animation: gNod .9s var(--ease); }
+  .vfig.g-shake { animation: gShake .8s var(--ease); }
+  .vfig.g-shrug { animation: gShrug 1.2s var(--ease); }
+  .vfig.g-celebrate { animation: gCelebrate 1s var(--ease); }
+  .vfig.g-think { animation: gThink 1.6s var(--ease); }
+  .vfig.g-look { animation: gLook 1s var(--ease); }
+  @keyframes gNod { 0%, 100% { transform: none; } 30% { transform: translateY(10px) rotate(2deg); } 60% { transform: translateY(-3px); } }
+  @keyframes gShake { 0%, 100% { transform: none; } 20% { transform: translateX(-12px) rotate(-3deg); } 50% { transform: translateX(10px) rotate(3deg); } 75% { transform: translateX(-5px); } }
+  @keyframes gShrug { 0%, 100% { transform: none; } 30%, 60% { transform: rotate(-8deg) translateY(-4px); } }
+  @keyframes gCelebrate { 0%, 100% { transform: none; } 25% { transform: translateY(-14px) scale(1.06); } 50% { transform: translateY(0) scale(.98); } 70% { transform: translateY(-6px) scale(1.03); } }
+  @keyframes gThink { 0%, 100% { transform: none; } 25%, 80% { transform: rotate(7deg) translateX(4px); } }
+  @keyframes gLook { 0%, 100% { transform: none; } 35%, 70% { transform: scale(1.07) translateY(4px); } }
   .vfig .wave { opacity: 0; transition: opacity .35s var(--ease); }
   .vfig .wave path { fill: url(#vfig-wave-grad); stroke: none; }
   .vfig .wave .w0 { opacity: .28; } .vfig .wave .w1 { opacity: .42; } .vfig .wave .w2 { opacity: .7; }
@@ -2224,6 +2237,7 @@ function onVoiceEvent(ev) {
     if (/^(mission|watch|routine|improve)_|^code_review_start$/.test(ev.name)) refreshMissions();
   }
   else if (ev.type === "reply") { V.replyText = ev.text; if (voiceView) { voiceView.el.querySelectorAll(".chip.running").forEach(() => voiceView.toolDone("", true)); voiceView.set(ev.text); voiceView.finish(); } }
+  else if (ev.type === "body") gesture(ev.gesture);
   else if (ev.type === "error") { resetCaption(friendlyError(ev.stage)); voiceView?.error(`${friendlyError(ev.stage)} (${ev.stage}: ${ev.message})`); voiceView = null; }
 }
 
@@ -2491,6 +2505,17 @@ function vdiag(step, extra = {}) {
       app: matchMedia("(display-mode: standalone)").matches || navigator.standalone ? "home-screen" : "browser", ...extra });
     fetch("/api/voice/diag", { method: "POST", body, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
   } catch {}
+}
+
+// Body language from the reply (<nod>, <shake>...: agent_stream.GESTURES): the planet acts it out. The same
+// "body" events will move the Reachy Mini's head and antennas.
+function gesture(name) {
+  if (calm.matches || !["nod", "shake", "shrug", "celebrate", "think", "look"].includes(name)) return;
+  const fig = $("vfig");
+  fig.classList.remove("g-nod", "g-shake", "g-shrug", "g-celebrate", "g-think", "g-look");
+  void fig.getBoundingClientRect();  // restart the animation if the same gesture comes twice
+  fig.classList.add(`g-${name}`);
+  clearTimeout(gesture.t); gesture.t = setTimeout(() => fig.classList.remove(`g-${name}`), 1600);
 }
 
 // What to tell him when iOS won't give voice mode the audio. A mic that comes back already "ended" is iOS
