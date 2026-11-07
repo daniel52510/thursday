@@ -79,6 +79,7 @@ def system_status(args: Dict[str, Any]) -> ToolResult:
 def snapshot() -> dict:
     """Everything system_status says, plus a per-service list for the health page (/api/health)."""
     import approvals
+    import presence
     import telephony
     import voice_ws  # here: voice_ws imports the tools
     problems: list[str] = []
@@ -142,6 +143,9 @@ def snapshot() -> dict:
         {"name": "Phone calls", "ok": calls_on, "detail": ("two-way" if telephony.TWO_WAY else "one-way")
          if calls_on else "off (TWILIO_PUBLIC_URL not set)"},
         {"name": "Push (ntfy)", "ok": ntfy_ok, "detail": "up" if ntfy_ok else "down or not set up"},
+        {"name": "Presence", "ok": presence.phone() in ("home", "away"),
+         "detail": {"home": "phone is home", "away": "phone is out", "offline": "phone offline",
+                    "unknown": "no reading (helper not running?)"}[presence.phone()]},
         {"name": "Mac memory", "ok": bool(memory) and memory["pressure"] == "normal",
          "detail": f"{memory['available_gb']} GB free, pressure {memory['pressure']}" if memory else "no reading"},
         {"name": "Brain disk", "ok": disk.free > 5e9, "detail": f"{round(disk.free / 1e9, 1)} GB free"},

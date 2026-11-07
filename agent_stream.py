@@ -52,6 +52,7 @@ import music
 import health
 import lights
 import gmail_tool
+import presence
 import reminders
 import trainer
 import notes
@@ -318,6 +319,8 @@ def _system_prompt(user: dict) -> str:
         system += (f"\n\nRight now you're talking with {name}, not Daniel: one of the people he has invited "
                    f"in ({user['role']}). Wherever these notes say Daniel or him, apply them to {name}. "
                    "Daniel is the friend who made your home; don't share what he or anyone else told you privately.")
+    if user["id"] == OWNER and (where := presence.prompt_line({"phone": presence.phone()})):
+        system += "\n\n" + where  # home or out: "since you're out..." (presence.py; a file read, no calendar call)
     if user["id"] == OWNER and (promises := reminders.prompt_note(user["id"])):
         system += "\n\n" + promises
     # Last, so a change only re-reads the end of the prompt (Ollama's cache keeps everything before it).

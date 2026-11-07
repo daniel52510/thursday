@@ -24,7 +24,7 @@ import httpx
 logger = logging.getLogger("thursday.voice.proactive")  # under voice_ws's logger: its handler reaches docker logs
 QUIET = (22, 8)        # local hours: non-urgent pushes wait for the morning
 EVENING_HOUR = 21
-TICK_S = 120
+TICK_S = 60  # presence changes are noticed within a minute (the helper pings once a minute)
 
 
 def _zone():
@@ -56,28 +56,34 @@ def _quiet(now: datetime) -> bool:
 
 
 async def deliver(title: str, text: str, *, tag: str = "bell", urgent: bool = False, say: str | None = None) -> None:
-    """Push (held overnight unless urgent), and out loud too if he's home and it's daytime."""
+    """Reach him the way that fits where he is (presence.channel): out loud in the room when he's home and awake,
+    a push when he's out or in a meeting, held for the morning when he's asleep (unless urgent)."""
     import approvals
-    now = datetime.now(_zone())
-    if _quiet(now) and not urgent:
+    import presence
+    state = await asyncio.to_thread(presence.now_state)
+    how = presence.channel(state, urgent)
+    if how == "hold":
         with _db() as conn:
             conn.execute("INSERT INTO proactive_held(title, text, tag, at) VALUES (?,?,?,?)",
-                         (title, text, tag, now.isoformat()))
-        logger.info("proactive: '%s' held for the morning", title)
+                         (title, text, tag, datetime.now(_zone()).isoformat()))
+        logger.info("proactive: '%s' held (asleep or night)", title)
+        return
+    if how == "speak" and await _speak(say or text):
+        logger.info("proactive: said '%s' (he's home)", title)
         return
     await asyncio.to_thread(approvals.push, title, text, tags=(tag,), priority=4 if urgent else 3)
-    logger.info("proactive: pushed '%s'", title)
-    if _quiet(now):
-        return
+    logger.info("proactive: pushed '%s' (%s)", title, "in a meeting" if state["meeting"] else f"phone {state['phone']}")
+
+
+async def _speak(line: str) -> bool:
     try:
         import mind
         import voice_ws
         from accounts import OWNER
         idle = [s for s in voice_ws.SATELLITES if s.state == "idle"]
         if not idle:
-            return
+            return False
         style = mind.voice_style(OWNER)
-        line = say or text
         if style.get("voice") != "tara":
             import eridian
             line = eridian.translate(line)
@@ -85,14 +91,16 @@ async def deliver(title: str, text: str, *, tag: str = "bell", urgent: bool = Fa
             audio = await voice_ws.synthesize_ahead(http, line, style)
         for sat in idle:
             if audio and await sat.announce(audio=audio, cue="announce"):
-                break
+                return True
     except Exception as exc:
         logger.warning("proactive: not spoken (%s)", type(exc).__name__)
+    return False
 
 
 async def _release_held() -> None:
     import approvals
-    if _quiet(datetime.now(_zone())):
+    import presence
+    if _quiet(datetime.now(_zone())) or await asyncio.to_thread(presence.asleep):
         return
     with _db() as conn:
         held = conn.execute("SELECT * FROM proactive_held ORDER BY id").fetchall()
@@ -203,13 +211,52 @@ async def evening_rule(now: datetime) -> None:
         await deliver("Evening wrap-up", " ".join(parts), tag="crescent_moon", say=" ".join(parts[:2]))
 
 
+_last_phone = {"state": None, "away_since": None}
+
+
+async def welcome_rule(now: datetime) -> None:
+    """Back home after 30+ minutes out: a short "welcome back" with what happened meanwhile, out loud."""
+    import presence
+    state = presence.phone()
+    was, _last_phone["state"] = _last_phone["state"], state
+    if state == "away" and was != "away":
+        _last_phone["away_since"] = now
+    if not (state == "home" and was == "away" and _last_phone["away_since"]):
+        return
+    gone = now - _last_phone["away_since"]
+    _last_phone["away_since"] = None
+    if gone < timedelta(minutes=30) or presence.asleep(now) or not 7 <= now.hour < 23:
+        return
+    bits = []
+    since = (now - gone).astimezone(timezone.utc).isoformat()
+    try:
+        from agent_stream import initalize_db
+        from accounts import OWNER
+        done = [m for m in initalize_db().list_missions(OWNER, "done", limit=10) if (m.get("finished_at") or "") >= since]
+        if done:
+            bits.append(f"Your research on {done[0]['goal'][:60]} is done.")
+    except Exception:
+        pass
+    import reminders
+    from accounts import OWNER
+    with reminders._connect() as conn:
+        nxt = conn.execute("SELECT text, due FROM reminders WHERE user_id = ? AND status = 'pending' ORDER BY due "
+                           "LIMIT 1", (OWNER,)).fetchone()
+    if nxt:
+        bits.append(f"Next reminder: {nxt['text']}, {reminders._say_when(datetime.fromisoformat(nxt['due']))}.")
+    hours = gone.total_seconds() / 3600
+    hello = "Welcome back." if hours < 3 else "Welcome home."
+    if await _speak(" ".join([hello] + bits)):
+        logger.info("proactive: welcomed him home after %.1f h", hours)
+
+
 async def run() -> None:
     """Every couple of minutes, each rule looks once. A rule's failure never stops the others."""
     from accounts import OWNER  # noqa: F401  (owner-only: everything here is his)
     await asyncio.sleep(30)
     while True:
         now = datetime.now(_zone())
-        for rule in (_release_held, calendar_rule, workout_rule, health_rule, evening_rule):
+        for rule in (_release_held, welcome_rule, calendar_rule, workout_rule, health_rule, evening_rule):
             try:
                 await (rule() if rule is _release_held else rule(now))
             except asyncio.CancelledError:
