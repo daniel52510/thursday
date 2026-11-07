@@ -81,3 +81,12 @@ def test_heavier_athlete_gets_joint_friendly_swaps_and_goal_protein():
     assert [n for n, _ in trainer._session(3, 240)[1]] == [n for n, _ in trainer.WEEK[3][1]]  # under 260: as written
     t = trainer.targets({"weight_lb": 300.0})
     assert t["goal_weight_lb"] == 245 and t["protein_g_per_day"] == 245
+
+
+def test_calories_from_his_stats():
+    me = {"weight_lb": 300.0, "height": "6 ft 5 in", "age": "27"}
+    kcal = trainer.maintenance(me)
+    assert 3700 <= kcal <= 3900  # Mifflin-St Jeor ~2,450 x 1.55
+    t = trainer.targets(me)
+    assert t["maintenance_kcal"] == kcal and t["eat_kcal"].count("-") == 1
+    assert trainer.maintenance({"weight_lb": 300.0, "height": "6 ft 5 in"}) is None  # no age: no number

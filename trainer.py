@@ -63,7 +63,8 @@ def profile() -> dict:
     from accounts import OWNER
     from agent_stream import initalize_db
     db = initalize_db()
-    out = {k: db.get_fact(k, OWNER) for k in ("weight_lb", "height", "training_background", "fitness_goal", "goal_weight_lb")}
+    out = {k: db.get_fact(k, OWNER) for k in ("weight_lb", "height", "training_background", "fitness_goal",
+                                             "goal_weight_lb", "age", "home_equipment")}
     try:
         out["weight_lb"] = float(str(out["weight_lb"]).split()[0]) if out.get("weight_lb") else None
     except ValueError:
@@ -76,10 +77,27 @@ def targets(p: dict) -> dict:
     goal = float(p.get("goal_weight_lb") or 0) or (245.0 if p.get("weight_lb") else None)
     if not goal:
         return {}
-    return {"goal_weight_lb": round(goal), "protein_g_per_day": round(goal),
-            "pace": "about 1-1.5 lb a week down while lifting heavy (faster loses muscle)",
-            "calories": "a 500-750 kcal daily deficit from maintenance; at his size maintenance is roughly 3,300-3,700 "
-                        "kcal on training days (an estimate: age and the scale will tune it)"}
+    out = {"goal_weight_lb": round(goal), "protein_g_per_day": round(goal),
+           "pace": "about 1-1.5 lb a week down while lifting heavy (faster loses muscle)",
+           "calories": "a 500-750 kcal daily deficit from maintenance (the scale tunes it: if he's not losing ~1 lb a "
+                       "week after 2-3 weeks, take off another 200)"}
+    kcal = maintenance(p)
+    if kcal:
+        out.update(maintenance_kcal=kcal, eat_kcal=f"{round(kcal - 750, -1):.0f}-{round(kcal - 500, -1):.0f}")
+    return out
+
+
+def maintenance(p: dict) -> int | None:
+    """Mifflin-St Jeor (men) x 1.55 for training ~5 days a week. None without weight, height and age."""
+    import re
+    try:
+        kg = float(p["weight_lb"]) * 0.4536
+        ft, inch = (int(x) for x in re.findall(r"\d+", str(p["height"]))[:2])
+        cm = (ft * 12 + inch) * 2.54
+        age = int(str(p["age"]).split()[0])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return round((10 * kg + 6.25 * cm - 5 * age + 5) * 1.55, -1)
 
 
 def _session(day: int, weight: float | None):
