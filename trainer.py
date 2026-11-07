@@ -125,6 +125,8 @@ def training_today(args: Dict[str, Any]):
     title, exercises = _session(day.weekday(), me.get("weight_lb"))
     ready = health.readiness() if not args.get("tomorrow") else None
     mode, why = adjust(ready["score"] if ready else None)
+    if args.get("tomorrow"):
+        why = "Tomorrow's intensity depends on how he sleeps tonight; it's set in the morning."
     if mode == "recover":
         title, exercises = WEEK[6]
     # This week so far, from his synced Watch workouts.
@@ -148,7 +150,9 @@ def training_plan(args: Dict[str, Any]):
         "program": PROGRAM, "goal": GOAL, "week": {names[d]: t for d, (t, _) in WEEK.items()},
         "nutrition": NUTRITION, "him": (me := profile()), "targets": targets(me),
         "joint_friendly": bool(me.get("weight_lb") and me["weight_lb"] >= JOINT_FRIENDLY_LB), "how_it_adapts": "Each day is adjusted to his readiness (HRV, resting heart rate, sleep).",
-        "note": "Explain it like a coach: the idea, the week in a sentence, and the two habits that matter most."})
+        "note": "Explain it like a coach: the idea, the week in a sentence, and the two habits that matter most. "
+                "When he asks about food or protein, give his own numbers from targets (protein in grams a day, the "
+                "deficit, the goal weight and pace) in plain words."})
 
 
 TOOL_SCHEMAS = [
