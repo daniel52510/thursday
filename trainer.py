@@ -58,6 +58,30 @@ SWAPS = {"Box jumps": ("Weighted step-ups (knee height)", "4 x 6 each leg"),
          "Run, swim or bike": ("Incline walk, swim or bike", "45-60 min easy")}
 
 
+# His apartment gym (photo, 2026-11-07): dumbbells to about 50+ lb, adjustable bench, cable machine, treadmills,
+# ellipticals, upright bike; no barbell, rack, dip station or rower. Same muscles, same intent; with lighter
+# dumbbells than a barbell allows, the main lifts go by reps and slow tempo instead of load.
+APARTMENT = {
+    "Barbell bench press": ("Dumbbell bench press (3 s down)", "4 x 8-12"),
+    "Standing overhead press": ("Seated dumbbell shoulder press", "3 x 8-12"),
+    "Weighted dips": ("Cable triceps pushdown", "3 x 12-15"),
+    "Pull-ups (weighted when 10+ are easy)": ("Cable lat pulldown", "4 x 8-12"),
+    "Bent-over barbell row": ("Seated cable row", "4 x 10"),
+    "Face pulls": ("Cable face pulls", "3 x 15"),
+    "Barbell curls": ("Dumbbell or cable curls", "3 x 10-12"),
+    "Back squat": ("Goblet squat (3 s down)", "4 x 10-12"),
+    "Romanian deadlift": ("Dumbbell Romanian deadlift", "3 x 10"),
+    "Walking lunges": ("Dumbbell split squats", "3 x 10 each leg"),
+    "Core: ab wheel": ("Core: cable crunches", "3 x 15"),
+    "Core: hanging knee raises + plank": ("Core: cable woodchops + plank", "3 rounds"),
+    "Core: hanging leg raises": ("Core: dead bugs", "3 x 10 each side"),
+    "Pull-ups or inverted rows": ("Cable rows (fast)", "45 s"),
+    "Intervals on the rower or bike (run them once under 260 lb)": ("Intervals on the upright bike or elliptical",
+                                                                    "8 x 1 min hard / 1 min easy"),
+    "Intervals (run, bike or rower)": ("Intervals on the bike, elliptical or treadmill", "8 x 1 min hard / 1 min easy"),
+}
+
+
 def profile() -> dict:
     """His stats from his facts (Settings → Memory): weight, height, background, goal."""
     from accounts import OWNER
@@ -100,10 +124,12 @@ def maintenance(p: dict) -> int | None:
     return round((10 * kg + 6.25 * cm - 5 * age + 5) * 1.55, -1)
 
 
-def _session(day: int, weight: float | None):
+def _session(day: int, weight: float | None, apartment: bool = False):
     title, exercises = WEEK[day]
     if weight and weight >= JOINT_FRIENDLY_LB:
         exercises = [SWAPS.get(n, (n, r)) if n in SWAPS else (n, r) for n, r in exercises]
+    if apartment:
+        exercises = [APARTMENT.get(n, (n, r)) for n, r in exercises]
     return title, exercises
 
 
@@ -140,7 +166,7 @@ def training_today(args: Dict[str, Any]):
         return ToolResult(ok=False, tool_name="training_today", error="training_is_daniels_only")
     day = _today() + timedelta(days=1 if args.get("tomorrow") else 0)
     me = profile()
-    title, exercises = _session(day.weekday(), me.get("weight_lb"))
+    title, exercises = _session(day.weekday(), me.get("weight_lb"), "apartment" in str(me.get("home_equipment") or ""))
     ready = health.readiness() if not args.get("tomorrow") else None
     mode, why = adjust(ready["score"] if ready else None)
     if args.get("tomorrow"):

@@ -90,3 +90,10 @@ def test_calories_from_his_stats():
     t = trainer.targets(me)
     assert t["maintenance_kcal"] == kcal and t["eat_kcal"].count("-") == 1
     assert trainer.maintenance({"weight_lb": 300.0, "height": "6 ft 5 in"}) is None  # no age: no number
+
+
+def test_apartment_gym_has_no_barbell():
+    for day in range(7):
+        names = [n for n, _ in trainer._session(day, 300, apartment=True)[1]]
+        assert not any("Barbell" in n or n.startswith("Back squat") or "Pull-ups (weighted" in n for n in names), names
+    assert "Cable lat pulldown" in [n for n, _ in trainer._session(1, 300, apartment=True)[1]]
