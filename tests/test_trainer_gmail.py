@@ -72,3 +72,12 @@ def test_gmail_owner_only_and_not_connected(monkeypatch):
     assert gmail_tool.email_inbox({}).error.startswith("gmail_not_connected")
     TURN.set({"user": "guest", "conversation": "c", "turn": 1, "user_said": "x"})
     assert gmail_tool.email_inbox({}).error == "email_is_daniels_only"
+
+
+def test_heavier_athlete_gets_joint_friendly_swaps_and_goal_protein():
+    title, ex = trainer._session(3, 300)  # Thursday, legs and power, at 300 lb
+    names = [n for n, _ in ex]
+    assert "Box jumps" not in names and any("step-ups" in n for n in names)
+    assert [n for n, _ in trainer._session(3, 240)[1]] == [n for n, _ in trainer.WEEK[3][1]]  # under 260: as written
+    t = trainer.targets({"weight_lb": 300.0})
+    assert t["goal_weight_lb"] == 245 and t["protein_g_per_day"] == 245

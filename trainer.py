@@ -48,6 +48,47 @@ NUTRITION = ["Protein at every meal: about 1 g per pound of body weight a day.",
              "Mostly whole foods; carbs around training; easy on alcohol (it costs recovery).",
              "7.5+ hours of sleep: it's when the muscle is built."]
 
+# Heavier athletes swap the high-impact moves for ones that train the same thing without pounding the knees and
+# ankles (until they're under JOINT_FRIENDLY_LB). Same session, same effort.
+JOINT_FRIENDLY_LB = 260
+SWAPS = {"Box jumps": ("Weighted step-ups (knee height)", "4 x 6 each leg"),
+         "Burpees": ("Dumbbell squat to press", "45 s"),
+         "Intervals (run, bike or rower)": ("Intervals on the rower or bike (run them once under 260 lb)",
+                                            "8 x 1 min hard / 1 min easy"),
+         "Run, swim or bike": ("Incline walk, swim or bike", "45-60 min easy")}
+
+
+def profile() -> dict:
+    """His stats from his facts (Settings → Memory): weight, height, background, goal."""
+    from accounts import OWNER
+    from agent_stream import initalize_db
+    db = initalize_db()
+    out = {k: db.get_fact(k, OWNER) for k in ("weight_lb", "height", "training_background", "fitness_goal", "goal_weight_lb")}
+    try:
+        out["weight_lb"] = float(str(out["weight_lb"]).split()[0]) if out.get("weight_lb") else None
+    except ValueError:
+        out["weight_lb"] = None
+    return out
+
+
+def targets(p: dict) -> dict:
+    """Protein from the goal weight (not today's): Craig's Casino Royale build at 6'5" is about 245 lb."""
+    goal = float(p.get("goal_weight_lb") or 0) or (245.0 if p.get("weight_lb") else None)
+    if not goal:
+        return {}
+    return {"goal_weight_lb": round(goal), "protein_g_per_day": round(goal),
+            "pace": "about 1-1.5 lb a week down while lifting heavy (faster loses muscle)",
+            "calories": "a 500-750 kcal daily deficit from maintenance; at his size maintenance is roughly 3,300-3,700 "
+                        "kcal on training days (an estimate: age and the scale will tune it)"}
+
+
+def _session(day: int, weight: float | None):
+    title, exercises = WEEK[day]
+    if weight and weight >= JOINT_FRIENDLY_LB:
+        exercises = [SWAPS.get(n, (n, r)) if n in SWAPS else (n, r) for n, r in exercises]
+    return title, exercises
+
+
 # Readiness (health.readiness) decides how hard today is.
 def adjust(score: int | None) -> tuple[str, str]:
     if score is None:
@@ -80,7 +121,8 @@ def training_today(args: Dict[str, Any]):
     if not _owner():
         return ToolResult(ok=False, tool_name="training_today", error="training_is_daniels_only")
     day = _today() + timedelta(days=1 if args.get("tomorrow") else 0)
-    title, exercises = WEEK[day.weekday()]
+    me = profile()
+    title, exercises = _session(day.weekday(), me.get("weight_lb"))
     ready = health.readiness() if not args.get("tomorrow") else None
     mode, why = adjust(ready["score"] if ready else None)
     if mode == "recover":
@@ -91,7 +133,7 @@ def training_today(args: Dict[str, Any]):
     return ToolResult(ok=True, tool_name="training_today", data={
         "program": PROGRAM, "day": day.strftime("%A"), "session": title, "intensity": mode, "why": why,
         "exercises": [f"{n}: {r}" if r else n for n, r in exercises], "readiness": ready,
-        "workouts_last_7_days": len(done),
+        "workouts_last_7_days": len(done), "him": me, "targets": targets(me),
         "note": "You're his personal trainer. Say the session in a sentence or two (the focus and the first couple "
                 "of moves), the intensity and why, and offer the full list. Encouraging, specific, no lecture. "
                 "General fitness coaching, not medical advice: stop on sharp pain."})
@@ -104,7 +146,8 @@ def training_plan(args: Dict[str, Any]):
     names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     return ToolResult(ok=True, tool_name="training_plan", data={
         "program": PROGRAM, "goal": GOAL, "week": {names[d]: t for d, (t, _) in WEEK.items()},
-        "nutrition": NUTRITION, "how_it_adapts": "Each day is adjusted to his readiness (HRV, resting heart rate, sleep).",
+        "nutrition": NUTRITION, "him": (me := profile()), "targets": targets(me),
+        "joint_friendly": bool(me.get("weight_lb") and me["weight_lb"] >= JOINT_FRIENDLY_LB), "how_it_adapts": "Each day is adjusted to his readiness (HRV, resting heart rate, sleep).",
         "note": "Explain it like a coach: the idea, the week in a sentence, and the two habits that matter most."})
 
 
