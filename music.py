@@ -105,6 +105,17 @@ def _now(st: dict | None) -> dict:
             "album": video.get("album"), "volume": player.get("volume"), "ad": player.get("adPlaying")}
 
 
+def now_playing() -> dict:
+    """For the web player: the track, its largest artwork, where it is, and the volume (state() is rate-limited,
+    so polling this every few seconds is fine)."""
+    st = state() or {}
+    video, player = st.get("video") or {}, st.get("player") or {}
+    thumbs = sorted(video.get("thumbnails") or [], key=lambda t: t.get("width") or 0)
+    return {**_now(st), "art": thumbs[-1]["url"] if thumbs else None, "progress": player.get("videoProgress"),
+            "duration": video.get("durationSeconds"), "liked": video.get("likeStatus") == 2, "muted": player.get("muted"),
+            "output": OUTPUT["where"], "connected": bool(st)}
+
+
 def _ytmusic():
     global _yt
     if _yt is None:

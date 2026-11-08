@@ -100,6 +100,32 @@
   @keyframes breathe { 50% { transform: scale(1.03); } }
   .wordmark { font: 600 13px/1 var(--tight); letter-spacing: .22em; text-transform: uppercase; color: var(--text); }
   /* The trajectory colours as one smooth line that fades in and out at the ends (was five hard 3px bars). */
+  /* now playing */
+  /* compact, like a music app's mini player: the artwork beside the title, so the sidebar keeps its room */
+  .np { margin: 8px 0 6px; padding: 10px; border-radius: 16px; background: var(--deep); display: grid; gap: 8px;
+        grid-template-columns: 52px 1fr; align-items: center; }
+  .np-art { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: var(--rule); box-shadow: 0 6px 18px -10px rgba(0,0,0,.6); }
+  .np > :not(.np-art):not(.np-meta) { grid-column: 1 / -1; }
+  .np-meta { display: grid; min-width: 0; }
+  .np-meta b { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np-meta span { font-size: 13px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np-bar { height: 4px; border-radius: 4px; background: var(--rule); overflow: hidden; cursor: pointer; }
+  .np-bar i { display: block; height: 100%; width: 0; border-radius: 4px; background: var(--text); transition: width .9s linear; }
+  .np-row { display: flex; align-items: center; justify-content: space-between; }
+  .np-time { font: 11px var(--mono); color: var(--text-faint); font-variant-numeric: tabular-nums; min-width: 34px; }
+  .np-time:last-child { text-align: right; }
+  .np-ctl { display: flex; align-items: center; gap: 4px; }
+  .np-ctl .icon-btn svg { width: 18px; height: 18px; }
+  .np-play { width: 40px; height: 40px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); }
+  .np-play:hover { background: var(--inverse-bg); opacity: .9; }
+  .np-vol { display: flex; align-items: center; gap: 8px; color: var(--text-muted); }
+  .np-vol svg { width: 16px; height: 16px; flex: none; }
+  .np-vol input { flex: 1; accent-color: var(--text); }
+  .np-mini { display: inline-flex; align-items: center; gap: 8px; max-width: 240px; padding: 4px 10px 4px 4px; border-radius: 999px;
+             border: 1px solid var(--rule-strong); font-size: 13px; color: var(--text); }
+  .np-mini img { width: 28px; height: 28px; border-radius: 999px; object-fit: cover; }
+  .np-mini span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np-mini svg { width: 14px; height: 14px; flex: none; }
   .stripe-bar { height: 3px; border-radius: 3px; background: linear-gradient(90deg, var(--stripe-blue), var(--stripe-green),
       var(--stripe-amber), var(--stripe-orange), var(--stripe-red));
     -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
@@ -394,6 +420,8 @@
   .set-list .icon-btn svg { width: 16px; height: 16px; }
   .set-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
   .set-row > input, .set-row > select { flex: 1 1 150px; width: auto; }
+  .set-range { flex: 1; accent-color: var(--text); }
+  .set-val { font: 12.5px var(--mono); color: var(--text-muted); min-width: 56px; text-align: right; }
   .set-text { width: 100%; resize: vertical; font: 15px/1.5 var(--sans); color: var(--text); background: var(--bg);
               border: 1px solid var(--rule-strong); border-radius: 10px; padding: 10px 12px; }
   .set-list .grow input { width: 100%; margin-top: 4px; }
@@ -632,6 +660,11 @@
   <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   <symbol id="i-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
   <symbol id="i-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24" fill="currentColor"><path d="M5 6.2v11.6a1 1 0 0 0 1.55.83L15 13v4.5a1 1 0 0 0 2 0v-11a1 1 0 0 0-2 0V11L6.55 5.37A1 1 0 0 0 5 6.2z"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.2v11.6a1 1 0 0 1-1.55.83L9 13v4.5a1 1 0 0 1-2 0v-11a1 1 0 0 1 2 0V11l8.45-5.63A1 1 0 0 1 19 6.2z"/></symbol>
+  <symbol id="i-vol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4zM15.5 9a4 4 0 0 1 0 6"/></symbol>
   <symbol id="i-redo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></symbol>
   <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></symbol>
   <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
@@ -651,6 +684,22 @@
   <button class="nav-btn" id="settingsNav"><svg><use href="#i-dots"/></svg>Settings</button>
   <input class="conv-search" id="convSearch" type="search" placeholder="Search conversations" aria-label="Search conversations" autocomplete="off">
   <nav class="conv-list" id="convList" aria-label="Conversations"></nav>
+  <!-- Now playing (YouTube Music on the Mac, music.py): artwork, controls, volume. Hidden until something's loaded. -->
+  <section class="np" id="np" hidden aria-label="Now playing">
+    <img class="np-art" id="npArt" alt="" referrerpolicy="no-referrer">
+    <div class="np-meta"><b id="npTitle"></b><span id="npArtist"></span></div>
+    <div class="np-bar" role="slider" aria-label="Position" id="npBar"><i id="npProg"></i></div>
+    <div class="np-row">
+      <span class="np-time" id="npTime"></span>
+      <div class="np-ctl">
+        <button class="icon-btn" id="npPrev" aria-label="Previous"><svg><use href="#i-prev"/></svg></button>
+        <button class="icon-btn np-play" id="npPlay" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+        <button class="icon-btn" id="npNext" aria-label="Next"><svg><use href="#i-next"/></svg></button>
+      </div>
+      <span class="np-time" id="npDur"></span>
+    </div>
+    <label class="np-vol"><svg><use href="#i-vol"/></svg><input type="range" id="npVol" min="0" max="100" aria-label="Music volume"></label>
+  </section>
   <div class="stripe-bar" aria-hidden="true" style="margin:4px 12px"></div>
   <div class="status">
     <dl class="sys" aria-label="Systems">
@@ -776,6 +825,7 @@
 <section id="voice" aria-hidden="true" data-state="standby">
   <div class="top">
     <div class="brand"><svg class="mark"><use href="#mark"/></svg><span class="wordmark">THURSDAY</span></div>
+    <button class="np-mini" id="npMini" hidden aria-label="Play or pause the music"><img alt="" id="npMiniArt" referrerpolicy="no-referrer"><span id="npMiniTitle"></span><svg><use href="#i-pause" id="npMiniIcon"/></svg></button>
     <div class="readouts mono"><span id="voiceLoc"></span><span id="voiceTurn" class="wide"></span><span id="voiceConn"></span></div>
   </div>
   <div class="stage">
@@ -1269,6 +1319,56 @@ for (const b of document.querySelectorAll(".body-range button")) b.onclick = () 
 };
 $("bodyClose").onclick = () => $("bodyDialog").close();
 $("bodyNav").onclick = () => { closeNav(); $("bodyDialog").showModal(); loadBody(); };
+
+// ---------- now playing (YouTube Music via music.py) ----------
+// Polled every 5 s while the page is visible (the player allows one fresh state per 5 s); the progress bar counts
+// on locally between polls. Buttons answer at once and refresh the state a moment later.
+const NP = { st: null, at: 0, timer: 0, dragging: false };
+const fmtClock = (s) => s == null ? "" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+async function loadNowPlaying() {
+  if (document.hidden || ME?.role !== "admin") return;
+  try { const res = await api("/api/music/now"); if (res.ok) { NP.st = await res.json(); NP.at = performance.now(); } } catch {}
+  drawNowPlaying();
+}
+function drawNowPlaying() {
+  const st = NP.st, show = !!(st && st.connected && st.title);
+  $("np").hidden = !show; $("npMini").hidden = !show;
+  if (!show) return;
+  const pos = Math.min(st.duration || 0, (st.progress || 0) + (st.playing ? (performance.now() - NP.at) / 1000 : 0));
+  if (st.art && $("npArt").src !== st.art) { $("npArt").src = st.art; $("npMiniArt").src = st.art; }
+  $("npTitle").textContent = st.title; $("npArtist").textContent = [st.artist, st.album].filter(Boolean).join(" · ");
+  $("npMiniTitle").textContent = st.title;
+  $("npProg").style.width = st.duration ? `${(pos / st.duration) * 100}%` : "0";
+  $("npTime").textContent = fmtClock(pos); $("npDur").textContent = fmtClock(st.duration);
+  const icon = st.playing ? "#i-pause" : "#i-play";
+  $("npPlay").innerHTML = `<svg><use href="${icon}"/></svg>`; $("npPlay").setAttribute("aria-label", st.playing ? "Pause" : "Play");
+  $("npMiniIcon").setAttribute("href", icon);
+  if (!NP.dragging && st.volume != null) $("npVol").value = st.volume;
+}
+async function npCommand(body) {
+  try { await api("/api/music/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); } catch {}
+  setTimeout(loadNowPlaying, 700);
+}
+function npToggle() {
+  if (!NP.st) return;
+  NP.st.playing = !NP.st.playing; NP.st.progress = (NP.st.progress || 0) + (performance.now() - NP.at) / 1000; NP.at = performance.now();
+  drawNowPlaying();  // flip the button at once
+  npCommand({ action: NP.st.playing ? "resume" : "pause" });
+}
+$("npPlay").onclick = npToggle; $("npMini").onclick = npToggle;
+$("npNext").onclick = () => npCommand({ action: "next" });
+$("npPrev").onclick = () => npCommand({ action: "previous" });
+$("npVol").addEventListener("input", () => { NP.dragging = true; });
+$("npVol").addEventListener("change", (e) => { NP.dragging = false; if (NP.st) NP.st.volume = +e.target.value; npCommand({ action: "set_volume", level: +e.target.value }); });
+$("npBar").onclick = (e) => {
+  if (!NP.st?.duration) return;
+  const r = e.currentTarget.getBoundingClientRect(), sec = Math.round((e.clientX - r.left) / r.width * NP.st.duration);
+  NP.st.progress = sec; NP.at = performance.now(); drawNowPlaying();
+  npCommand({ action: "seek", seconds: sec });
+};
+setInterval(loadNowPlaying, 5000);
+setInterval(() => { if (NP.st?.playing) drawNowPlaying(); }, 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) loadNowPlaying(); });
 
 // ---------- health (is every part of THURSDAY up?) ----------
 let healthTimer = 0;
@@ -2705,6 +2805,23 @@ const PANES = {
     body.append(el("h3", { className: "set-h", textContent: "Voice" }),
       el("div", { className: "set-row" }, el("span", { textContent: "Rocky" }), voiceSw, el("span", { textContent: "Tara" })), voiceNote);
 
+    // How loud and how fast he talks, everywhere (satellite, voice mode, read aloud, calls). Saved when you let go.
+    const v = await call("/api/voice").catch(() => ({ volume: 100, speed: 100 }));
+    const slider = (label, key, min, max, value, fmt) => {
+      const out = el("span", { className: "set-val", textContent: fmt(value) });
+      const inp = el("input", { type: "range", min, max, value, className: "set-range" });
+      inp.setAttribute("aria-label", label);
+      const n = note();
+      inp.oninput = () => { out.textContent = fmt(+inp.value); };
+      inp.onchange = async () => {
+        try { await call("/api/voice", jsonReq("PUT", { [key]: +inp.value })); say(n, "Saved: his next words use it."); }
+        catch (e) { say(n, e.message, true); }
+      };
+      return [el("h3", { className: "set-h", textContent: label }), el("div", { className: "set-row" }, inp, out), n];
+    };
+    body.append(...slider("Volume", "volume", 1, 100, v.volume ?? 100, (x) => `${x}%`),
+      ...slider("Speaking speed", "speed", 65, 135, v.speed ?? 100, (x) => x === 100 ? "normal" : `${x}%`),
+      el("p", { className: "set-p", textContent: "Saying \"talk louder\", \"quieter\" or \"slow down\" to THURSDAY changes the same settings. At night he whispers automatically." }));
     body.append(el("h3", { className: "set-h", textContent: "Voice ID" }),
       el("p", { className: "set-p", textContent: "On the satellite, THURSDAY knows your voice. Anything sensitive (your calendar, health, phone calls, approvals) only works when it's you talking; anyone else in the room gets a polite no. In this app and on your phone, your login does the same job." }));
   },
@@ -2907,6 +3024,7 @@ autosize();
   await loadMe();
   await loadInfo();
   await loadConversations();
+  loadNowPlaying();
   if (conversationId) await openConversation(conversationId);
   // Phone pushes (approvals.push) open /#agentic (the approval cards) or /#c=<id> (a mission's write-up).
   const hash = location.hash;

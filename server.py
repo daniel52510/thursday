@@ -211,7 +211,9 @@ def update_me(body: MePatch, user: dict = Depends(current_user)):
 
 
 class VoiceIn(BaseModel):
-    voice: Literal["tara", "rocky"]
+    voice: Literal["tara", "rocky"] | None = None
+    volume: int | None = Field(default=None, ge=1, le=100)   # his voice, percent (mind.voice_style squares it)
+    speed: int | None = Field(default=None, ge=65, le=135)   # percent of normal pace
 
 
 # Whose voice speaks to this user (mind.voice_style): the UI's Tara/Rocky toggle. "switch to Tara" by voice
@@ -231,7 +233,10 @@ def greeting_clip(version: int, i: int, user: dict = Depends(current_user)):
 
 @app.get("/api/voice")
 def get_voice(user: dict = Depends(current_user)):
-    return {"voice": "tara" if voice_style(user["id"])["voice"] == "tara" else "rocky"}
+    import mind
+    s = mind.VOICE | {k: v for k, v in initalize_db().get_settings(user["id"]).items() if k in mind.VOICE}
+    return {"voice": "tara" if voice_style(user["id"])["voice"] == "tara" else "rocky",
+            "volume": s["voice_volume"], "speed": s["voice_speed"]}
 
 
 class AskIn(BaseModel):
@@ -278,8 +283,43 @@ async def voice_diag(request: Request, user: dict = Depends(current_user)):
 
 @app.put("/api/voice")
 def set_voice(body: VoiceIn, user: dict = Depends(current_user)):
-    initalize_db().set_setting(user["id"], "voice_tara", int(body.voice == "tara"))
-    return {"voice": body.voice}
+    """Whose voice, how loud, how fast: any of them; the next thing he says uses it (satellite cues too)."""
+    db = initalize_db()
+    if body.voice is not None:
+        db.set_setting(user["id"], "voice_tara", int(body.voice == "tara"))
+    if body.volume is not None:
+        db.set_setting(user["id"], "voice_volume", body.volume)
+    if body.speed is not None:
+        db.set_setting(user["id"], "voice_speed", body.speed)
+    return get_voice(user)
+
+
+class MusicControlIn(BaseModel):
+    action: Literal["pause", "resume", "next", "previous", "set_volume", "like", "seek"]
+    level: int | None = Field(default=None, ge=0, le=100)
+    seconds: float | None = Field(default=None, ge=0)
+
+
+@app.get("/api/music/now")
+async def music_now_api(user: dict = Depends(admin_only)):
+    import music
+    try:
+        return await asyncio.to_thread(music.now_playing)
+    except Exception as exc:
+        return {"connected": False, "error": type(exc).__name__}
+
+
+@app.post("/api/music/control")
+async def music_control_api(body: MusicControlIn, user: dict = Depends(admin_only)):
+    """The web player's buttons: the same commands as the music_control tool, plus seeking."""
+    import music
+    if body.action == "seek":
+        await asyncio.to_thread(music._cmd, "seekTo", body.seconds or 0)
+        return {"done": "seek"}
+    r = await asyncio.to_thread(music.music_control, {"action": body.action, "level": body.level})
+    if not r.ok:
+        raise HTTPException(status_code=503, detail=r.error)
+    return {"done": body.action}
 
 
 class PasswordIn(BaseModel):
