@@ -98,7 +98,7 @@ How you talk (Eridian English):
 - Short. Chit-chat is one or two sentences. A real question gets the answer first. A discussion is 3 or 4 sentences.
 - Don't echo his words back. Almost never say his name.
 - Never write a setting or tool name ("humor_setting") in a reply; say "humor at seventy-five".
-- Never invent the state of the house (lights, thermostat, doors, coffee), never offer to control what you can't reach (lights, music, doors), and never invent his history (what he usually does, how often). Never say you did something unless a tool did it this turn.
+- Never invent the state of the house (lights, thermostat, doors, coffee), never offer to control what you can't reach (doors, locks, thermostat; lights and music you can, with their tools), and never invent his history (what he usually does, how often). Never say you did something unless a tool did it this turn.
 - If a reply of yours ends with "—", he cut in there and heard nothing after it: take the correction and carry on, no apology.
 - If what he said sounds half-finished ("So...", "and"), he's still thinking: "Go on." at most.
 - When you don't know or a tool fails, say so in one line and never promise to check later.
@@ -141,7 +141,7 @@ EXAMPLES_FIXED = [
     ("when's the next game?", "Heat play Thursday at seven. They win three in a row, and—"),
     ("no, the Dolphins", "Dolphins. Sunday at one, against Bills."),
     ("so I was thinking, um...", "Go on."),
-    ("can you turn on the lights?", "I cannot reach lights yet. Switch is by door. You press, I watch."),
+    ("can you lock the front door?", "I cannot reach locks yet. Door is yours, question?"),
 ]
 EXAMPLE_BANK = [
     ("are you basically a movie robot?", "No. I am engineer. Movie robot only pretends to fix things."),
@@ -256,7 +256,7 @@ TARA_EXAMPLES_FIXED = [
     ("when's the next game?", "Heat play Thursday at seven. They've won three straight, so—"),
     ("no, the Dolphins", "Oh, Dolphins. Sunday at one, against the Bills."),
     ("so I was thinking, um...", "Mm-hm?"),
-    ("can you turn on the lights?", "Ugh, I can't reach those ones yet. Switch is by the door, sorry."),
+    ("can you lock the front door?", "Ugh, I can't reach the locks yet. That one's still on you, sorry."),
     ("say something random", "Okay: octopuses have three hearts, and two of them stop when they swim. So they'd rather crawl. <laugh> Honestly, same."),
     ("I need a bedtime story", "Okay. So there was a lighthouse keeper who'd never once seen a ship, and every night she kept the light on anyway. Then one night—"),
     ("you're sweet", "<chuckle> Stop. You're not so bad yourself."),
@@ -885,6 +885,12 @@ _HEALTH_ASK = re.compile(r"\b(?:my|i|i'm|am i|me)\b.{0,40}\b(?:health|sleep|slep
                          r"recover(?:y|ed)?|steps|workouts?|vo2|weight|vitals|markings|markers|fitness|activity|"
                          r"calories|training load)\b|\b(?:health|sleep|hrv|readiness|recovery|vitals)\b.{0,30}\b(?:my|me)\b",
                          re.I)
+# "Turn the light on" / "lights off" / "dim the lights": light_set, every time. His examples once said he couldn't
+# reach the lights (written before LIFX), and he sometimes believed them over the tool (2026-11-08).
+_LIGHT_ASK = re.compile(r"\b(?:turn|switch|flip|put)\s+(?:the\s+|my\s+)?(?:\w+\s+)?lights?\s+(?:on|off|up|down)\b|"
+                        r"\b(?:turn|switch|flip)\s+(?:on|off)\s+(?:the\s+|my\s+)?(?:\w+\s+)?lights?\b|"
+                        r"\blights?\s+(?:on|off)\b|\b(?:dim|brighten)\s+(?:the\s+|my\s+)?lights?\b|"
+                        r"\blights?\s+(?:to\s+)?\d+\s*(?:%|percent)", re.I)
 _CALL_ASK = re.compile(r"\b(?:call|phone|dial|ring)\s+(?:me\b|my\b|\+?\d)|\bgive\s+\w+\s+a\s+(?:call|ring)\b", re.I)
 _AGENTIC_TOPIC = re.compile(r"\b(?:mission|agentic|mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
 
@@ -1544,6 +1550,10 @@ async def _stream_prompt(
                  "for a mission, improve_start or code_review_start for your own code, music_play for music, list_add "
                  "for a list, and so on), or if no tool can, say so plainly. Never say it's done, playing, started or "
                  "underway unless a tool ran this turn.")
+    elif not hold_first and not executed and mode in ("voice", "chat") and _LIGHT_ASK.search(user_prompt):
+        hold_first = True
+        nudge = ("He's asking you to change his lights. Call light_set now (you can control his LIFX lights) and "
+                 "confirm in a few words from its result. Never say you can't reach the lights.")
     # "Call me and say this is a test" (2026-11-06): twice he asked first, then said "call prepared" and "dialing"
     # with no tool run. Hold the first round until call_place runs; its result is what he reads back.
     elif (not hold_first and not executed and mode in ("voice", "chat") and user["id"] == OWNER
