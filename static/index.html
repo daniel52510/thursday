@@ -1120,6 +1120,15 @@
     <p class="set-note" id="contactNote" aria-live="polite"></p>
     <div class="row"><button type="submit">Add contact</button></div>
   </form>
+  <h3 class="health-h">Email</h3>
+  <p>He can only email you and the people here, and only after you say yes to each email.</p>
+  <div id="emailContactItems"></div>
+  <form id="emailContactForm">
+    <label class="field">Name<input id="emailContactName" maxlength="40" required placeholder="e.g. Sam" autocomplete="off"></label>
+    <label class="field">Email<input id="emailContactAddr" type="email" maxlength="254" required placeholder="sam@example.com" autocomplete="off"></label>
+    <p class="set-note" id="emailContactNote" aria-live="polite"></p>
+    <div class="row"><button type="submit">Add email contact</button></div>
+  </form>
 </dialog>
 
 <dialog id="announceDialog">
@@ -1749,8 +1758,41 @@ $("contactForm").onsubmit = async (e) => {
   $("contactName").value = ""; $("contactNumber").value = "";
   loadContacts();
 };
+// Who THURSDAY may email: same idea, its own list.
+async function loadEmailContacts() {
+  const box = $("emailContactItems");
+  let list = [];
+  try { const res = await api("/api/email-contacts"); if (res.ok) list = await res.json(); } catch {}
+  box.innerHTML = "";
+  if (!list.length) { box.innerHTML = `<div class="alarm-empty">No email contacts yet</div>`; return; }
+  for (const c of list) {
+    const row = document.createElement("div");
+    row.className = "alarm";
+    row.innerHTML = `<div class="alarm-main"><div class="contact-name"></div><div class="alarm-sub"></div></div>
+      <button class="icon-btn" aria-label="Delete email contact"><svg><use href="#i-trash"/></svg></button>`;
+    row.querySelector(".contact-name").textContent = c.name;
+    row.querySelector(".alarm-sub").textContent = c.email;
+    row.querySelector("button").onclick = async () => {
+      if (!confirm(`Remove ${c.name}? THURSDAY won't be able to email them.`)) return;
+      if ((await api(`/api/email-contacts/${encodeURIComponent(c.name)}`, { method: "DELETE" })).ok) loadEmailContacts();
+    };
+    box.append(row);
+  }
+}
+$("emailContactForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const note = $("emailContactNote");
+  note.textContent = ""; note.classList.remove("err");
+  const res = await api("/api/email-contacts", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: $("emailContactName").value, email: $("emailContactAddr").value }) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) { note.textContent = typeof out.detail === "string" ? out.detail : "Couldn't save the contact."; note.classList.add("err"); return; }
+  note.textContent = `Saved ${out.name}: ${out.email}. Try "email ${out.name} that I'm running late".`;
+  $("emailContactName").value = ""; $("emailContactAddr").value = "";
+  loadEmailContacts();
+};
 $("contactsClose").onclick = () => $("contactsDialog").close();
-$("contactsNav").onclick = () => { closeNav(); $("contactNote").textContent = ""; $("contactsDialog").showModal(); loadContacts(); };
+$("contactsNav").onclick = () => { closeNav(); $("contactNote").textContent = $("emailContactNote").textContent = ""; $("contactsDialog").showModal(); loadContacts(); loadEmailContacts(); };
 $("alarmsNav").onclick = () => { closeNav(); showAlarmList(); $("alarmsDialog").showModal(); loadAlarms(); };
 showLocation();
 detectLocation();
@@ -3003,19 +3045,19 @@ const PANES = {
     }
     body.append(calNote);
 
-    // Gmail: read-only plus drafts (gmail_tool.py), with a Google app password kept in the vault.
+    // Gmail: read, drafts, and sends after his yes to his email contacts (gmail_tool.py), with a Google app password kept in the vault.
     if (ME.id === "owner") {
       body.append(el("h3", { className: "set-h", textContent: "Gmail" }));
       const gNote = note();
       if (!ME.vault) {
         body.append(el("p", { className: "set-p", textContent: "Saving credentials is off: the server has no vault key." }));
       } else if (ME.credentials.gmail) {
-        body.append(el("p", { className: "set-p", textContent: "Connected. THURSDAY can read your inbox and save drafts to your Gmail Drafts. He never sends." }),
+        body.append(el("p", { className: "set-p", textContent: "Connected. THURSDAY can read your inbox, save drafts, and send email to you or your email contacts (Contacts), only after you say yes to each one." }),
           el("div", { className: "set-row" }, btn("Disconnect", async () => { await call("/api/me/credentials/gmail", { method: "DELETE" }); await loadMe(); openSettings("account"); }, true)));
       } else {
         const gu = textIn({ type: "email", placeholder: "you@gmail.com", autocomplete: "username" });
         const gp = textIn({ type: "password", placeholder: "16-letter app password", autocomplete: "off" });
-        body.append(el("p", { className: "set-p", textContent: "Make an app password at myaccount.google.com/apppasswords (it needs 2-Step Verification on), then paste it here. Read-only plus drafts: THURSDAY never sends mail." }),
+        body.append(el("p", { className: "set-p", textContent: "Make an app password at myaccount.google.com/apppasswords (it needs 2-Step Verification on), then paste it here. He sends only to your email contacts, and only after you say yes to each email." }),
           el("div", { className: "set-row" }, gu, gp, btn("Connect", async () => {
             say(gNote, "Checking with Gmail…");
             try { await call("/api/me/credentials/gmail", jsonReq("PUT", { username: gu.value, app_password: gp.value })); await loadMe(); openSettings("account"); }

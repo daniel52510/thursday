@@ -1122,7 +1122,7 @@ _REMEMBERED_TOOLS = {"list_add", "list_show", "list_remove", "note_save", "note_
                      "alarm_cancel", "alarm_snooze", "calendar_create", "calendar_delete", "calendar_confirm",
                      "mission_start", "mission_abort", "watch_start", "watch_stop", "approval_list", "approval_decide",
                      "routine_start", "routine_stop", "send_to_phone", "improve_start", "call_place", "call_confirm",
-                     "light_set"}
+                     "light_set", "email_send", "email_confirm"}
 
 
 def _with_tool_calls(turns: list[dict]) -> list[dict]:
@@ -1443,6 +1443,11 @@ async def _stream_prompt(
         result = await run_and_record("call_confirm", {})
         yield {"type": "tool_result", "name": "call_confirm", "ok": result.ok}
         executed.add("call_confirm:{}")
+    elif gmail_tool.confirms_pending(cid, user_prompt):  # and for an email read back last turn
+        yield {"type": "tool", "name": "email_confirm", "args": {}}
+        result = await run_and_record("email_confirm", {})
+        yield {"type": "tool_result", "name": "email_confirm", "ok": result.ok}
+        executed.add("email_confirm:{}")
     # Same for a mission (or routine) read back last turn: his yes starts it here.
     elif held := missions.confirms_pending(cid, user_prompt):
         yield {"type": "tool", "name": held, "args": {"confirmed": True}}

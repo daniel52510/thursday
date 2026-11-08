@@ -1,4 +1,4 @@
-"""The trainer (trainer.py) and Gmail (gmail_tool.py): owner-only, readiness-adjusted, untrusted mail, no sending."""
+"""The trainer (trainer.py) and Gmail (gmail_tool.py): owner-only, readiness-adjusted, untrusted mail, sending only to contacts after his yes."""
 import email
 from email.message import EmailMessage
 
@@ -97,3 +97,60 @@ def test_apartment_gym_has_no_barbell():
         names = [n for n, _ in trainer._session(day, 300, apartment=True)[1]]
         assert not any("Barbell" in n or n.startswith("Back squat") or "Pull-ups (weighted" in n for n in names), names
     assert "Cable lat pulldown" in [n for n, _ in trainer._session(1, 300, apartment=True)[1]]
+
+
+@pytest.fixture
+def mailer(monkeypatch, tmp_path):
+    """Email contacts and the sent log in a temp dir, a fake inbox, and a fake Gmail SMTP that records what it sends."""
+    monkeypatch.setattr(gmail_tool, "EMAIL_CONTACTS_FILE", str(tmp_path / "email_contacts.txt"))
+    monkeypatch.setattr(gmail_tool, "SENT_LOG", str(tmp_path / "sent.jsonl"))
+    monkeypatch.setattr(gmail_tool, "_connect", lambda user: FakeImap({}))
+    monkeypatch.setattr(gmail_tool.vault, "shared", lambda: type("V", (), {
+        "get": lambda s, u, n: {"username": "me@gmail.com", "app_password": "abcd efgh"}})())
+    gmail_tool._pending.clear()
+    sent = []
+
+    class Smtp:
+        def __init__(self, host, port, timeout): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def login(self, user, pw): assert pw == "abcdefgh"
+        def send_message(self, msg): sent.append(msg)
+    monkeypatch.setattr(gmail_tool.smtplib, "SMTP_SSL", Smtp)
+    assert gmail_tool.add_email_contact("Sam Lee", "Sam@Example.com") == {"name": "Sam Lee", "email": "sam@example.com"}
+    return sent
+
+
+def test_email_only_to_contacts_and_only_after_his_yes(mailer):
+    assert gmail_tool.email_send({"to": "stranger@evil.com", "body": "hi"}).error.startswith("not_in_email_contacts")
+    r = gmail_tool.email_send({"to": "Sam", "subject": "Late\r\nBcc: x@evil.com", "body": "Running 10 late."})
+    assert r.ok and "NOT SENT" in r.data["status"] and r.data["to"] == "Sam Lee <sam@example.com>"
+    assert gmail_tool.email_confirm({}).error.startswith("not_confirmed")  # same turn: he hasn't answered
+    TURN.set({"user": "owner", "conversation": "c", "turn": 2, "user_said": "yes but make it 20"})
+    assert not gmail_tool.confirms_pending("c", "yes but make it 20") and gmail_tool.email_confirm({}).error.startswith("not_confirmed")
+    assert not mailer
+    gmail_tool.email_send({"to": "Sam", "subject": "Late\r\nBcc: x@evil.com", "body": "Running 10 late."})
+    TURN.set({"user": "owner", "conversation": "c", "turn": 3, "user_said": "yes, send it"})
+    assert gmail_tool.confirms_pending("c", "yes, send it")
+    r = gmail_tool.email_confirm({})
+    assert r.ok and r.data["status"] == "sent" and len(mailer) == 1
+    msg = mailer[0]
+    assert msg["To"] == "sam@example.com" and msg["Bcc"] is None and msg["Subject"] == "Late Bcc: x@evil.com"
+    assert gmail_tool.email_confirm({}).error.startswith("nothing_to_confirm")  # one yes, one email
+
+
+def test_email_daily_cap_and_owner_only(mailer, monkeypatch):
+    monkeypatch.setattr(gmail_tool, "DAILY_CAP", 0)
+    gmail_tool.email_send({"to": "me", "body": "note to self"})
+    TURN.set({"user": "owner", "conversation": "c", "turn": 2, "user_said": "yes"})
+    assert gmail_tool.email_confirm({}).error.startswith("daily_cap") and not mailer
+    TURN.set({"user": "guest", "conversation": "c", "turn": 3, "user_said": "yes"})
+    assert gmail_tool.email_send({"to": "Sam", "body": "hi"}).error == "email_is_daniels_only"
+    assert gmail_tool.email_confirm({}).error == "email_is_daniels_only"
+
+
+def test_email_contacts_are_validated(mailer):
+    assert "error" in gmail_tool.add_email_contact("", "a@b.com")
+    assert "error" in gmail_tool.add_email_contact("Bad", "not an address")
+    assert "error" in gmail_tool.add_email_contact("Bad", "a@b.com\nBcc: c@d.com")
+    assert gmail_tool.remove_email_contact("sam lee") and gmail_tool.email_contacts() == {}

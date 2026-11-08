@@ -884,6 +884,11 @@ class ContactIn(BaseModel):
     number: str
 
 
+class EmailContactIn(BaseModel):
+    name: str = Field(max_length=40)
+    email: str = Field(max_length=254)
+
+
 # The call allowlist (brain/contacts.txt): only he edits it, here or by hand. No tool can, so nothing said to
 # THURSDAY (on a call, in a web page) can add a number.
 @app.get("/api/contacts")
@@ -902,6 +907,26 @@ def save_contact(body: ContactIn, user: dict = Depends(admin_only)):
 @app.delete("/api/contacts/{name}", status_code=204)
 def delete_contact(name: str, user: dict = Depends(admin_only)):
     if not telephony.remove_contact(name):
+        raise HTTPException(status_code=404)
+
+
+# Who THURSDAY may email (brain/email_contacts.txt): the same rule, only he edits it.
+@app.get("/api/email-contacts")
+def list_email_contacts(user: dict = Depends(admin_only)):
+    return gmail_tool.email_contact_list()
+
+
+@app.post("/api/email-contacts", status_code=201)
+def save_email_contact(body: EmailContactIn, user: dict = Depends(admin_only)):
+    saved = gmail_tool.add_email_contact(body.name, body.email)
+    if "error" in saved:
+        raise HTTPException(status_code=400, detail=saved["error"])
+    return saved
+
+
+@app.delete("/api/email-contacts/{name}", status_code=204)
+def delete_email_contact(name: str, user: dict = Depends(admin_only)):
+    if not gmail_tool.remove_email_contact(name):
         raise HTTPException(status_code=404)
 
 
