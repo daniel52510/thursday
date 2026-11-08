@@ -514,20 +514,46 @@ _filler_task: asyncio.Task | None = None
 _last_filler = ""
 
 
+# Kept on disk: rendered only in memory, every restart of this server sent ~40 clips to the voice server at once
+# when the satellite reconnected, and his first replies queued behind them (5-20 s of silence, 2026-11-08).
+# Delete brain/fillers/ after retuning a voice to render them again.
+FILLER_DIR = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "fillers")
+
+
+def _filler_path(voice: str, line: str) -> str:
+    import hashlib
+    return os.path.join(FILLER_DIR, voice, hashlib.sha1(line.encode()).hexdigest()[:16] + ".wav")
+
+
 async def _render_fillers() -> None:
+    rendered = 0
     async with httpx.AsyncClient() as http:
         for voice, fillers in _FILLERS_BY_VOICE.items():
             for line in {line for lines in fillers.values() for line in lines}:
                 if (voice, line) in _filler_audio:
                     continue
+                path = _filler_path(voice, line)
+                try:
+                    with open(path, "rb") as f:
+                        _filler_audio[(voice, line)] = f.read()
+                    continue
+                except OSError:
+                    pass
                 try:
                     wav = await _tts(http, line, {"voice": voice})
                 except Exception as exc:  # voice server down: try again with the next session
                     logger.warning("filler %r not rendered: %s", line, exc)
                     return
                 if wav:
-                    _filler_audio[(voice, line)] = _trim_wav(wav, EDGE_MARGIN_MS, PAUSE_CLAUSE_MS)
-    logger.info("spoken fillers ready (%d)", len(_filler_audio))
+                    _filler_audio[(voice, line)] = clip = _trim_wav(wav, EDGE_MARGIN_MS, PAUSE_CLAUSE_MS)
+                    rendered += 1
+                    try:
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        with open(path, "wb") as f:
+                            f.write(clip)
+                    except OSError as exc:
+                        logger.warning("filler not saved: %s", exc)
+    logger.info("spoken fillers ready (%d, %d rendered now)", len(_filler_audio), rendered)
 
 
 def warm_fillers() -> None:

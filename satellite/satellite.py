@@ -43,7 +43,7 @@ from urllib.parse import quote
 
 import numpy as np
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, WebSocketException
 
 # openwakeword/__init__.py imports its verifier-training module, which pulls in
 # scipy and scikit-learn (100+ MB, slow import on a Zero 2W). We never train
@@ -341,8 +341,9 @@ class Player:
     BLOCK = 480                  # 20 ms
     BUFFER_US = 100_000          # aplay's ALSA buffer
     FADE = 96                    # 4 ms: the ramp at either side of a gap (_soften)
-    MUSIC_PREROLL_S = 0.25       # buffered before music (re)starts
-    MUSIC_MAX_S = 1.0            # more than this queued (clock drift): the oldest goes
+    MUSIC_PREROLL_S = 0.6        # buffered before music (re)starts: covers a Wi-Fi or server hiccup this long
+    MUSIC_TARGET_S = 0.6         # held here against clock drift, a sample per block (_mix_music)
+    MUSIC_MAX_S = 2.0            # more than this queued (a burst after a stall): the oldest goes
     MUSIC_GAIN = float(os.getenv("THURSDAY_MUSIC_GAIN", "0.5"))
     MUSIC_DUCK = 0.15            # of MUSIC_GAIN while anyone talks or he speaks
     # Samples between the write and the speaker: pipe + ALSA buffer + aplay's period in hand.
@@ -451,7 +452,7 @@ class Player:
             self._music += pcm
             excess = len(self._music) - int(self.MUSIC_MAX_S * self.RATE) * 2
             if excess > 0:
-                del self._music[:excess + int(0.5 * self.RATE) * 2]  # back to ~0.5 s queued
+                del self._music[:excess + int(0.5 * self.RATE) * 2]  # 0.5 s under the cap
 
     def _mix_music(self, block: bytes, voice: bool) -> bytes | None:
         """The block with this block's music mixed under it, or None when no music plays."""
@@ -461,8 +462,17 @@ class Player:
                 if len(self._music) < int(self.MUSIC_PREROLL_S * self.RATE) * 2:
                     return None
                 self._music_live, self._mgain = True, 0.0  # starts from silence: the ramp is its fade-in
-            m = bytes(self._music[:n])
-            del self._music[:n]
+            # The Mac's clock and this DAC's differ slightly, so the queue creeps: past the cap it skipped
+            # 0.5 s, and empty it cut out (heard as music cutting in and out, 2026-11-08). One sample
+            # more or less per 20 ms block (0.2%, inaudible) holds it near MUSIC_TARGET_S instead.
+            queued = len(self._music) / 2 / self.RATE
+            take = n + 2 if queued > self.MUSIC_TARGET_S + 0.25 else n - 2 if queued < self.MUSIC_TARGET_S - 0.2 else n
+            m = bytes(self._music[:take])
+            del self._music[:take]
+            if take > n and len(m) == take:
+                m = m[:n]                      # one sample dropped
+            elif take < n and len(m) == take:
+                m = m + m[-2:]                 # the last sample held one more
             if len(self._music) < n:  # ran dry: fade out what's here, then pre-roll again
                 self._music_live = False
         target = self.MUSIC_GAIN * night_gain() * (self.MUSIC_DUCK if voice or self.ducking() else 1.0)
@@ -817,7 +827,10 @@ class Satellite:
                     self.ws = ws
                     await self._send_status()
                     await self._recv_loop(ws)
-            except (OSError, ConnectionClosed) as exc:
+            # Any failed connection retries. Mid-restart the server can accept the TCP connection and then
+            # close it before the handshake (InvalidMessage), which used to end the process: 168 restarts
+            # by systemd, each a few more seconds of silence (2026-11-08).
+            except (OSError, WebSocketException) as exc:
                 if down_since is None:
                     log.warning("connection lost (%s); retrying every %.0fs", exc, RECONNECT_S)
             self.ws = None
