@@ -105,15 +105,65 @@ def _now(st: dict | None) -> dict:
             "album": video.get("album"), "volume": player.get("volume"), "ad": player.get("adPlaying")}
 
 
+# The web player wants fresh state, but the app allows one /state per STATE_EVERY_S. A refresher thread keeps the
+# cache that fresh while someone is looking (a page polled in the last WATCH_S); commands patch the cache at once
+# (patch), so a button never snaps back to stale state. Reading the cache with state() alone gave states up to
+# 60 s old: the lag and the volume that "didn't match" (2026-11-08).
+WATCH_S = 60
+_watch = {"last": 0.0, "thread": None}
+
+
+def _refresher() -> None:
+    while time.monotonic() - _watch["last"] < WATCH_S:
+        try:
+            state(fresh=True)  # sleeps out the rate limit itself
+        except Exception:
+            time.sleep(STATE_EVERY_S)
+    _watch["thread"] = None
+
+
+def patch(**changes) -> None:
+    """Apply a command's effect to the cached state now (the next real read confirms it)."""
+    with _lock:
+        st = _state["value"]
+        if not st:
+            return
+        player = st.setdefault("player", {})
+        if "playing" in changes:
+            player["trackState"] = PLAYING if changes["playing"] else 0
+        if "volume" in changes:
+            player["volume"] = changes["volume"]
+        if "progress" in changes:
+            player["videoProgress"] = changes["progress"]
+        if "repeat" in changes:
+            player.setdefault("queue", {})["repeatMode"] = changes["repeat"]
+        if "liked" in changes:
+            st.setdefault("video", {})["likeStatus"] = 2 if changes["liked"] else 1
+
+
 def now_playing() -> dict:
-    """For the web player: the track, its largest artwork, where it is, and the volume (state() is rate-limited,
-    so polling this every few seconds is fine)."""
+    """For the web player: track, artwork, position, volume (his level, not the ducked one while THURSDAY talks),
+    repeat, like, where it plays, and what's up next."""
+    _watch["last"] = time.monotonic()
+    if _watch["thread"] is None:
+        _watch["thread"] = threading.Thread(target=_refresher, daemon=True, name="ytmd-refresh")
+        _watch["thread"].start()
     st = state() or {}
     video, player = st.get("video") or {}, st.get("player") or {}
     thumbs = sorted(video.get("thumbnails") or [], key=lambda t: t.get("width") or 0)
-    return {**_now(st), "art": thumbs[-1]["url"] if thumbs else None, "progress": player.get("videoProgress"),
-            "duration": video.get("durationSeconds"), "liked": video.get("likeStatus") == 2, "muted": player.get("muted"),
-            "output": OUTPUT["where"], "connected": bool(st)}
+    queue = player.get("queue") or {}
+    at = queue.get("selectedItemIndex") or 0
+    def art(item, size=120):
+        ts = sorted(item.get("thumbnails") or [], key=lambda t: t.get("width") or 0)
+        return next((t["url"] for t in ts if (t.get("width") or 0) >= size), ts[-1]["url"] if ts else None)
+    up_next = [{"index": i, "title": it.get("title"), "artist": it.get("author"), "duration": it.get("duration"),
+                "art": art(it)} for i, it in enumerate(queue.get("items") or []) if i > at][:25]
+    now = _now(st)
+    return {**now, "volume": _duck["restore"] if _duck["restore"] is not None else now["volume"],
+            "ducked": _duck["restore"] is not None, "art": thumbs[-1]["url"] if thumbs else None,
+            "progress": player.get("videoProgress"), "duration": video.get("durationSeconds"),
+            "liked": video.get("likeStatus") == 2, "muted": player.get("muted"), "repeat": queue.get("repeatMode") or 0,
+            "up_next": up_next, "output": OUTPUT["where"], "connected": bool(st), "fresh_s": round(time.monotonic() - _state["at"], 1)}
 
 
 def _ytmusic():

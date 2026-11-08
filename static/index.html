@@ -121,6 +121,34 @@
   .np-vol { display: flex; align-items: center; gap: 8px; color: var(--text-muted); }
   .np-vol svg { width: 16px; height: 16px; flex: none; }
   .np-vol input { flex: 1; accent-color: var(--text); }
+  .np-art, .np-meta { cursor: pointer; }
+  dialog.alarms.music { width: min(760px, calc(100vw - 32px)); }
+  .mv { display: grid; grid-template-columns: minmax(0, 300px) 1fr; gap: 22px; align-items: center; margin-top: 10px; }
+  @media (max-width: 640px) { .mv { grid-template-columns: 1fr; } .mv-art { max-width: 320px; justify-self: center; } }
+  .mv-art { width: 100%; aspect-ratio: 1; border-radius: 16px; object-fit: cover; background: var(--deep); box-shadow: 0 20px 50px -24px rgba(0,0,0,.7); }
+  .mv-side { display: grid; gap: 10px; min-width: 0; }
+  .mv-meta { display: grid; min-width: 0; }
+  .mv-meta b { font: 400 26px/1.2 var(--serif); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mv-meta span { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mv-meta small { font: 11px var(--mono); color: var(--text-faint); letter-spacing: .06em; text-transform: uppercase; min-height: 1.3em; }
+  .mv-seek, .np-vol input { width: 100%; accent-color: var(--text); }
+  .mv-ctl { display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .mv-ctl .icon-btn svg { width: 20px; height: 20px; }
+  .mv-play { width: 56px; height: 56px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); }
+  .mv-play:hover { background: var(--inverse-bg); opacity: .9; }
+  .mv-play svg { width: 24px !important; height: 24px !important; }
+  .mv-repeat { position: relative; color: var(--text-faint); } .mv-repeat.on { color: var(--text); }
+  .mv-repeat em { position: absolute; right: 2px; bottom: 2px; font: 700 9px var(--mono); font-style: normal; }
+  .mv-row2 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .mv-chip { display: inline-flex; gap: 6px; align-items: center; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--rule-strong); font-size: 13px; }
+  .mv-chip svg { width: 16px; height: 16px; } .mv-chip.on { background: var(--inverse-bg); color: var(--inverse-text); border-color: var(--inverse-bg); }
+  .mv-queue { display: grid; max-height: 320px; overflow-y: auto; }
+  .mv-q { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px; border-radius: 10px; text-align: left; width: 100%; }
+  .mv-q:hover { background: var(--deep); }
+  .mv-q img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--deep); }
+  .mv-q b { display: block; font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mv-q span { display: block; font-size: 12.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mv-q small { font: 11px var(--mono); color: var(--text-faint); }
   .np-mini { display: inline-flex; align-items: center; gap: 8px; max-width: 240px; padding: 4px 10px 4px 4px; border-radius: 999px;
              border: 1px solid var(--rule-strong); font-size: 13px; color: var(--text); }
   .np-mini img { width: 28px; height: 28px; border-radius: 999px; object-fit: cover; }
@@ -669,6 +697,10 @@
   <symbol id="i-next" viewBox="0 0 24 24" fill="currentColor"><path d="M5 6.2v11.6a1 1 0 0 0 1.55.83L15 13v4.5a1 1 0 0 0 2 0v-11a1 1 0 0 0-2 0V11L6.55 5.37A1 1 0 0 0 5 6.2z"/></symbol>
   <symbol id="i-prev" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.2v11.6a1 1 0 0 1-1.55.83L9 13v4.5a1 1 0 0 1-2 0v-11a1 1 0 0 1 2 0V11l8.45-5.63A1 1 0 0 1 19 6.2z"/></symbol>
   <symbol id="i-vol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4zM15.5 9a4 4 0 0 1 0 6"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h4v4M4 20 20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3M3 11V9a4 4 0 0 1 4-4h13M7 22l-3-3 3-3M21 13v2a4 4 0 0 1-4 4H4"/></symbol>
+  <symbol id="i-like" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 11v9H4v-9h3zm0 0 4-7a2 2 0 0 1 3 1.7V10h5a2 2 0 0 1 2 2.3l-1.2 6A2 2 0 0 1 17.8 20H7"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
   <symbol id="i-redo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></symbol>
   <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></symbol>
   <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
@@ -681,6 +713,7 @@
   <button class="nav-btn primary" id="newChat"><svg><use href="#i-plus"/></svg>New conversation</button>
   <button class="nav-btn" id="voiceNav"><svg><use href="#i-wave"/></svg>Voice mode</button>
   <button class="nav-btn" id="alarmsNav"><svg><use href="#i-bell"/></svg>Alarms</button>
+  <button class="nav-btn" id="musicNav"><svg><use href="#i-music"/></svg>Music</button>
   <button class="nav-btn" id="bodyNav"><svg><use href="#i-heart"/></svg>Health</button>
   <button class="nav-btn" id="healthNav"><svg><use href="#i-pulse"/></svg>System</button>
   <button class="nav-btn" id="contactsNav"><svg><use href="#i-phone"/></svg>Contacts</button>
@@ -919,6 +952,32 @@
   </form>
 </dialog>
 
+<dialog id="musicDialog" class="alarms music">
+  <div class="alarms-head"><h2>Music</h2><button class="icon-btn" id="musicClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <div class="mv" id="mv">
+    <img class="mv-art" id="mvArt" alt="" referrerpolicy="no-referrer">
+    <div class="mv-side">
+      <div class="mv-meta"><b id="mvTitle">Nothing playing</b><span id="mvArtist"></span><small id="mvState"></small></div>
+      <input type="range" class="mv-seek" id="mvSeek" min="0" max="100" value="0" step="1" aria-label="Position">
+      <div class="np-row"><span class="np-time" id="mvTime"></span><span class="np-time" id="mvDur"></span></div>
+      <div class="mv-ctl">
+        <button class="icon-btn" id="mvShuffle" aria-label="Shuffle the queue" title="Shuffle the queue"><svg><use href="#i-shuffle"/></svg></button>
+        <button class="icon-btn" id="mvPrev" aria-label="Previous"><svg><use href="#i-prev"/></svg></button>
+        <button class="icon-btn mv-play" id="mvPlay" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+        <button class="icon-btn" id="mvNext" aria-label="Next"><svg><use href="#i-next"/></svg></button>
+        <button class="icon-btn mv-repeat" id="mvRepeat" aria-label="Repeat: off" title="Repeat"><svg><use href="#i-repeat"/></svg><em></em></button>
+      </div>
+      <label class="np-vol"><svg><use href="#i-vol"/></svg><input type="range" id="mvVol" min="0" max="100" aria-label="Music volume"><span class="set-val" id="mvVolVal"></span></label>
+      <div class="mv-row2">
+        <button class="mv-chip" id="mvLike"><svg><use href="#i-like"/></svg><span>Like</span></button>
+        <div class="lat-range" role="group" aria-label="Plays on"><button type="button" data-where="satellite">Speaker</button><button type="button" data-where="mac">Mac</button></div>
+      </div>
+    </div>
+  </div>
+  <h3 class="health-h">Up next</h3>
+  <div id="mvQueue" class="mv-queue"></div>
+</dialog>
+
 <dialog id="bodyDialog" class="alarms body">
   <div class="alarms-head"><h2>Health</h2><button class="icon-btn" id="bodyClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <div class="lat-head"><p class="body-sub" id="bodySub">From your Apple Watch, synced by Health Auto Export.</p>
@@ -1034,6 +1093,7 @@ async function loadMe() {
   $("contactsNav").hidden = ME.role !== "admin";       // his call allowlist
   $("healthNav").hidden = ME.role !== "admin";         // system status
   $("bodyNav").hidden = ME.id !== "owner";             // his Apple Health data
+  $("musicNav").hidden = ME.role !== "admin";          // the house's music
   $("announceNav").hidden = !ME.family_memory;          // admin and family
   $("agenticTop").hidden = ME.id !== "owner";           // missions run on the owner's GPU, with his calendar
 }
@@ -1348,10 +1408,45 @@ function drawNowPlaying() {
   $("npPlay").innerHTML = `<svg><use href="${icon}"/></svg>`; $("npPlay").setAttribute("aria-label", st.playing ? "Pause" : "Play");
   $("npMiniIcon").setAttribute("href", icon);
   if (!NP.dragging && st.volume != null) $("npVol").value = st.volume;
+  if ($("musicDialog").open) drawMusicView(pos);
+}
+function drawMusicView(pos) {
+  const st = NP.st || {};
+  if (!st.title) { $("mvTitle").textContent = st.connected === false ? "YouTube Music isn't reachable" : "Nothing playing"; return; }
+  if (st.art && $("mvArt").src !== st.art) $("mvArt").src = st.art;
+  $("mvTitle").textContent = st.title; $("mvArtist").textContent = [st.artist, st.album].filter(Boolean).join(" · ");
+  $("mvState").textContent = st.ducked ? "Lowered while THURSDAY talks" : st.ad ? "Ad playing" : "";
+  if (!NP.seeking) { $("mvSeek").max = st.duration || 0; $("mvSeek").value = Math.floor(pos); }
+  $("mvTime").textContent = fmtClock(pos); $("mvDur").textContent = fmtClock(st.duration);
+  $("mvPlay").innerHTML = `<svg><use href="${st.playing ? "#i-pause" : "#i-play"}"/></svg>`;
+  $("mvPlay").setAttribute("aria-label", st.playing ? "Pause" : "Play");
+  const rep = ["off", "all", "one"][st.repeat || 0];
+  $("mvRepeat").classList.toggle("on", !!st.repeat); $("mvRepeat").querySelector("em").textContent = st.repeat === 2 ? "1" : "";
+  $("mvRepeat").setAttribute("aria-label", `Repeat: ${rep}`);
+  if (!NP.dragging && st.volume != null) { $("mvVol").value = st.volume; $("mvVolVal").textContent = `${st.volume}%`; }
+  $("mvLike").classList.toggle("on", !!st.liked);
+  for (const b of document.querySelectorAll("#musicDialog [data-where]")) b.setAttribute("aria-pressed", String(b.dataset.where === st.output));
+  const key = (st.up_next || []).map((q) => q.index + q.title).join("|");
+  if (key !== NP.queueKey) {
+    NP.queueKey = key;
+    const box = $("mvQueue"); box.innerHTML = "";
+    if (!st.up_next?.length) box.innerHTML = `<div class="health-warn">Nothing queued.</div>`;
+    for (const q of st.up_next || []) {
+      const b = document.createElement("button"); b.className = "mv-q";
+      b.innerHTML = `<img alt="" referrerpolicy="no-referrer"><div><b></b><span></span></div><small></small>`;
+      if (q.art) b.querySelector("img").src = q.art;
+      b.querySelector("b").textContent = q.title || ""; b.querySelector("span").textContent = q.artist || "";
+      b.querySelector("small").textContent = typeof q.duration === "number" ? fmtClock(q.duration) : (q.duration || "");  // YTM sends "4:12"
+      b.onclick = () => npCommand({ action: "play_index", index: q.index });
+      box.append(b);
+    }
+  }
 }
 async function npCommand(body) {
   try { await api("/api/music/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); } catch {}
-  setTimeout(loadNowPlaying, 700);
+  // The server's cache already shows play/pause/volume/seek; a new track needs the next real read (≤ 5 s).
+  setTimeout(loadNowPlaying, 300);
+  if (["next", "previous", "play_index", "shuffle"].includes(body.action)) setTimeout(loadNowPlaying, 5600);
 }
 function npToggle() {
   if (!NP.st) return;
@@ -1359,11 +1454,26 @@ function npToggle() {
   drawNowPlaying();  // flip the button at once
   npCommand({ action: NP.st.playing ? "resume" : "pause" });
 }
-$("npPlay").onclick = npToggle; $("npMini").onclick = npToggle;
+$("npPlay").onclick = npToggle; $("npMini").onclick = npToggle; $("mvPlay").onclick = npToggle;
+const openMusic = () => { closeNav(); NP.queueKey = ""; $("musicDialog").showModal(); loadNowPlaying(); clearInterval(NP.fast); NP.fast = setInterval(loadNowPlaying, 2500); };
+$("musicNav").onclick = openMusic; $("npArt").onclick = openMusic; document.querySelector(".np-meta").onclick = openMusic;
+$("musicClose").onclick = () => $("musicDialog").close();
+$("musicDialog").addEventListener("close", () => clearInterval(NP.fast));
+$("mvNext").onclick = () => npCommand({ action: "next" });
+$("mvPrev").onclick = () => npCommand({ action: "previous" });
+$("mvShuffle").onclick = () => npCommand({ action: "shuffle" });
+$("mvRepeat").onclick = () => { if (!NP.st) return; NP.st.repeat = ((NP.st.repeat || 0) + 1) % 3; drawNowPlaying(); npCommand({ action: "repeat", repeat: NP.st.repeat }); };
+$("mvLike").onclick = () => { if (!NP.st) return; NP.st.liked = !NP.st.liked; drawNowPlaying(); npCommand({ action: "like" }); };
+for (const b of document.querySelectorAll("#musicDialog [data-where]")) b.onclick = () => { if (NP.st) NP.st.output = b.dataset.where; drawNowPlaying(); npCommand({ action: "output", where: b.dataset.where }); };
+$("mvSeek").addEventListener("input", () => { NP.seeking = true; $("mvTime").textContent = fmtClock(+$("mvSeek").value); });
+$("mvSeek").addEventListener("change", () => { NP.seeking = false; const sec = +$("mvSeek").value; if (NP.st) { NP.st.progress = sec; NP.at = performance.now(); } drawNowPlaying(); npCommand({ action: "seek", seconds: sec }); });
+for (const id of ["npVol", "mvVol"]) {
+  $(id).addEventListener("input", (e) => { NP.dragging = true; $("mvVolVal").textContent = `${e.target.value}%`; });
+  $(id).addEventListener("change", (e) => { NP.dragging = false; if (NP.st) NP.st.volume = +e.target.value; drawNowPlaying(); npCommand({ action: "set_volume", level: +e.target.value }); });
+}
 $("npNext").onclick = () => npCommand({ action: "next" });
 $("npPrev").onclick = () => npCommand({ action: "previous" });
-$("npVol").addEventListener("input", () => { NP.dragging = true; });
-$("npVol").addEventListener("change", (e) => { NP.dragging = false; if (NP.st) NP.st.volume = +e.target.value; npCommand({ action: "set_volume", level: +e.target.value }); });
+
 $("npBar").onclick = (e) => {
   if (!NP.st?.duration) return;
   const r = e.currentTarget.getBoundingClientRect(), sec = Math.round((e.clientX - r.left) / r.width * NP.st.duration);

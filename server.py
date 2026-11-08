@@ -295,9 +295,13 @@ def set_voice(body: VoiceIn, user: dict = Depends(current_user)):
 
 
 class MusicControlIn(BaseModel):
-    action: Literal["pause", "resume", "next", "previous", "set_volume", "like", "seek"]
+    action: Literal["pause", "resume", "next", "previous", "set_volume", "like", "seek", "shuffle", "repeat",
+                    "play_index", "output"]
     level: int | None = Field(default=None, ge=0, le=100)
     seconds: float | None = Field(default=None, ge=0)
+    index: int | None = Field(default=None, ge=0, le=500)
+    repeat: int | None = Field(default=None, ge=0, le=2)     # 0 off, 1 all, 2 one
+    where: Literal["satellite", "mac"] | None = None
 
 
 @app.get("/api/music/now")
@@ -313,12 +317,27 @@ async def music_now_api(user: dict = Depends(admin_only)):
 async def music_control_api(body: MusicControlIn, user: dict = Depends(admin_only)):
     """The web player's buttons: the same commands as the music_control tool, plus seeking."""
     import music
-    if body.action == "seek":
-        await asyncio.to_thread(music._cmd, "seekTo", body.seconds or 0)
-        return {"done": "seek"}
-    r = await asyncio.to_thread(music.music_control, {"action": body.action, "level": body.level})
-    if not r.ok:
-        raise HTTPException(status_code=503, detail=r.error)
+    direct = {"seek": ("seekTo", body.seconds or 0), "shuffle": ("shuffle", None),
+              "repeat": ("repeatMode", body.repeat or 0), "play_index": ("playQueueIndex", body.index or 0)}
+    try:
+        if body.action == "output":
+            r = await asyncio.to_thread(music.music_output, {"where": body.where})
+            if not r.ok:
+                raise HTTPException(status_code=400, detail=r.error)
+            return {"done": "output", **(r.data or {})}
+        if body.action in direct:
+            await asyncio.to_thread(music._cmd, *direct[body.action])
+        else:
+            r = await asyncio.to_thread(music.music_control, {"action": body.action, "level": body.level})
+            if not r.ok:
+                raise HTTPException(status_code=503, detail=r.error)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"YouTube Music didn't take it: {type(exc).__name__}")
+    # The cache shows the result at once; the refresher confirms it within ~5 s.
+    music.patch(**{"pause": {"playing": False}, "resume": {"playing": True}, "set_volume": {"volume": body.level},
+                   "seek": {"progress": body.seconds}, "repeat": {"repeat": body.repeat or 0}}.get(body.action, {}))
     return {"done": body.action}
 
 

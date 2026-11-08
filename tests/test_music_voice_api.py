@@ -44,3 +44,29 @@ def test_music_now_and_controls(client, monkeypatch):
     assert sent == [{"action": "resume", "level": None}, {"action": "set_volume", "level": 40}, ("seekTo", 61.0)]
     monkeypatch.setattr(music, "now_playing", lambda: (_ for _ in ()).throw(RuntimeError("not paired")))
     assert client.get("/api/music/now").json() == {"connected": False, "error": "RuntimeError"}
+
+
+def test_new_actions_reach_youtube_music(client, monkeypatch):
+    sent = []
+    monkeypatch.setattr(music, "_cmd", lambda c, d=None: sent.append((c, d)))
+    monkeypatch.setattr(music, "music_output", lambda a: type("R", (), {"ok": True, "data": {"where": a["where"]}})())
+    for body in [{"action": "shuffle"}, {"action": "repeat", "repeat": 2}, {"action": "play_index", "index": 7},
+                 {"action": "output", "where": "mac"}]:
+        assert client.post("/api/music/control", json=body).status_code == 200, body
+    assert sent == [("shuffle", None), ("repeatMode", 2), ("playQueueIndex", 7)]
+
+
+def test_now_playing_is_his_volume_and_patched_at_once(monkeypatch):
+    st = {"video": {"title": "Song", "durationSeconds": 200, "thumbnails": []},
+          "player": {"trackState": 0, "volume": 20, "videoProgress": 10,
+                     "queue": {"selectedItemIndex": 0, "repeatMode": 0,
+                               "items": [{"title": f"T{i}", "author": "A", "thumbnails": []} for i in range(40)]}}}
+    monkeypatch.setattr(music, "_state", {"value": st, "at": music.time.monotonic()})
+    monkeypatch.setattr(music, "_watch", {"last": 0.0, "thread": object()})  # no refresher thread in tests
+    monkeypatch.setattr(music, "_duck", {"restore": 70})                      # THURSDAY is talking: music at 20
+    n = music.now_playing()
+    assert n["volume"] == 70 and n["ducked"] and len(n["up_next"]) == 25 and n["up_next"][0]["title"] == "T1"
+    music.patch(playing=True, volume=55, progress=120, repeat=1)
+    monkeypatch.setattr(music, "_duck", {"restore": None})
+    n = music.now_playing()
+    assert n["playing"] and n["volume"] == 55 and n["progress"] == 120 and n["repeat"] == 1
