@@ -122,33 +122,67 @@
   .np-vol svg { width: 16px; height: 16px; flex: none; }
   .np-vol input { flex: 1; accent-color: var(--text); }
   .np-art, .np-meta { cursor: pointer; }
-  dialog.alarms.music { width: min(760px, calc(100vw - 32px)); }
-  .mv { display: grid; grid-template-columns: minmax(0, 300px) 1fr; gap: 22px; align-items: center; margin-top: 10px; }
-  @media (max-width: 640px) { .mv { grid-template-columns: 1fr; } .mv-art { max-width: 320px; justify-self: center; } }
-  .mv-art { width: 100%; aspect-ratio: 1; border-radius: 16px; object-fit: cover; background: var(--deep); box-shadow: 0 20px 50px -24px rgba(0,0,0,.7); }
-  .mv-side { display: grid; gap: 10px; min-width: 0; }
-  .mv-meta { display: grid; min-width: 0; }
-  .mv-meta b { font: 400 26px/1.2 var(--serif); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mv-meta span { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mv-meta small { font: 11px var(--mono); color: var(--text-faint); letter-spacing: .06em; text-transform: uppercase; min-height: 1.3em; }
-  .mv-seek, .np-vol input { width: 100%; accent-color: var(--text); }
-  .mv-ctl { display: flex; align-items: center; justify-content: center; gap: 10px; }
-  .mv-ctl .icon-btn svg { width: 20px; height: 20px; }
-  .mv-play { width: 56px; height: 56px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); }
-  .mv-play:hover { background: var(--inverse-bg); opacity: .9; }
-  .mv-play svg { width: 24px !important; height: 24px !important; }
-  .mv-repeat { position: relative; color: var(--text-faint); } .mv-repeat.on { color: var(--text); }
-  .mv-repeat em { position: absolute; right: 2px; bottom: 2px; font: 700 9px var(--mono); font-style: normal; }
+  /* Music: ChatGPT-quiet. Sans type, a soft glow from the artwork, slim sliders, round icon buttons. */
+  dialog.alarms.music { width: min(760px, calc(100vw - 32px)); border-radius: 28px; padding: 22px 26px 18px; isolation: isolate; }
+  dialog.music { --mv-soft: color-mix(in srgb, var(--text) 8%, transparent); --mv-on: color-mix(in srgb, var(--text) 15%, transparent); }
+  dialog.music .alarms-head h2 { font: 600 17px/1.3 var(--sans); letter-spacing: -.01em; }
+  .mv-glow { position: absolute; left: -10%; top: -25%; width: 120%; height: 75%; object-fit: cover; z-index: -1; pointer-events: none;
+    filter: blur(80px) saturate(1.6); opacity: .22; transition: opacity .6s; }
+  .mv-glow:not([src]), .mv-glow[src=""] { opacity: 0; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .mv-glow { opacity: .32; } }
+  :root[data-theme="dark"] .mv-glow { opacity: .32; }
+  .mv { display: grid; grid-template-columns: minmax(0, 280px) 1fr; gap: 28px; align-items: center; margin-top: 14px; }
+  @media (max-width: 640px) { .mv { grid-template-columns: 1fr; gap: 20px; } .mv-art { max-width: 300px; justify-self: center; } }
+  .mv-art { width: 100%; aspect-ratio: 1; border-radius: 18px; object-fit: cover; background: var(--deep);
+    box-shadow: 0 24px 60px -28px rgba(0,0,0,.65), 0 0 0 1px rgba(127,127,127,.12); }
+  .mv-side { display: grid; gap: 14px; min-width: 0; }
+  .mv-meta { display: grid; gap: 2px; min-width: 0; }
+  .mv-meta b { font: 600 24px/1.25 var(--sans); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mv-meta span { font-size: 15px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mv-meta small { justify-self: start; margin-top: 6px; font-size: 12px; color: var(--text-muted); background: var(--mv-soft); padding: 2px 10px; border-radius: 999px; }
+  .mv-meta small:empty { display: none; }
+  .slim { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; cursor: pointer; --p: 0%; }
+  .slim::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: linear-gradient(to right, var(--text) var(--p), var(--rule-strong) var(--p)); }
+  .slim::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--text);
+    transform: scale(0); transition: transform .15s ease; }
+  .slim:hover::-webkit-slider-thumb, .slim:active::-webkit-slider-thumb, .slim:focus-visible::-webkit-slider-thumb { transform: scale(1); }
+  .slim::-moz-range-track { height: 4px; border-radius: 999px; background: var(--rule-strong); }
+  .slim::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--text); }
+  .slim::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--text); }
+  @media (hover: none) { .slim::-webkit-slider-thumb { transform: scale(1); } }
+  .mv-seekbox { display: grid; gap: 2px; }
+  .mv-times { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .mv-ctl { display: flex; align-items: center; justify-content: center; gap: 14px; }
+  .mv-ctl .icon-btn { width: 44px; height: 44px; border-radius: 999px; display: grid; place-items: center; transition: background .15s, transform .1s; }
+  .mv-ctl .icon-btn:hover { background: var(--mv-soft); }
+  .mv-ctl .icon-btn:active { transform: scale(.94); }
+  .mv-ctl .icon-btn svg { width: 22px; height: 22px; }
+  .mv-ctl .mv-mode { width: 38px; height: 38px; color: var(--text-faint); }
+  .mv-ctl .mv-mode svg { width: 18px; height: 18px; }
+  .mv-ctl .mv-mode.on { color: var(--text); }
+  .mv-ctl .mv-play { width: 62px; height: 62px; background: var(--inverse-bg); color: var(--inverse-text); }
+  .mv-ctl .mv-play:hover { background: var(--inverse-bg); opacity: .88; }
+  .mv-play svg { width: 26px !important; height: 26px !important; }
+  .mv-repeat { position: relative; }
+  .mv-repeat em { position: absolute; right: 6px; bottom: 6px; font: 700 9px var(--sans); font-style: normal; }
+  .mv-vol { display: flex; align-items: center; gap: 10px; color: var(--text-muted); }
+  .mv-vol svg { width: 16px; height: 16px; flex: none; }
+  .mv-vol span { font-size: 12px; color: var(--text-faint); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
   .mv-row2 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .mv-chip { display: inline-flex; gap: 6px; align-items: center; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--rule-strong); font-size: 13px; }
-  .mv-chip svg { width: 16px; height: 16px; } .mv-chip.on { background: var(--inverse-bg); color: var(--inverse-text); border-color: var(--inverse-bg); }
-  .mv-queue { display: grid; max-height: 320px; overflow-y: auto; }
-  .mv-q { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px; border-radius: 10px; text-align: left; width: 100%; }
-  .mv-q:hover { background: var(--deep); }
-  .mv-q img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--deep); }
+  .mv-chip { display: inline-flex; gap: 6px; align-items: center; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--mv-soft); font-size: 13.5px; transition: background .15s; }
+  .mv-chip svg { width: 16px; height: 16px; } .mv-chip.on { background: var(--inverse-bg); color: var(--inverse-text); }
+  .mv-seg { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--mv-soft); }
+  .mv-seg button { height: 28px; padding: 0 14px; border-radius: 999px; font-size: 13px; color: var(--text-muted); transition: background .15s, color .15s; }
+  .mv-seg button[aria-pressed="true"] { background: var(--mv-on); color: var(--text); }
+  .mv-qhead { display: flex; align-items: baseline; gap: 8px; margin: 22px 0 6px; font: 600 14px var(--sans); }
+  .mv-qhead small { font-weight: 400; color: var(--text-faint); font-size: 12.5px; }
+  .mv-queue { display: grid; gap: 2px; max-height: 320px; overflow-y: auto; margin: 0 -8px; }
+  .mv-q { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 6px 8px; border-radius: 12px; text-align: left; width: 100%; transition: background .15s; }
+  .mv-q:hover { background: var(--mv-soft); }
+  .mv-q img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--deep); }
   .mv-q b { display: block; font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mv-q span { display: block; font-size: 12.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mv-q small { font: 11px var(--mono); color: var(--text-faint); }
+  .mv-q small { font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
   .np-mini { display: inline-flex; align-items: center; gap: 8px; max-width: 240px; padding: 4px 10px 4px 4px; border-radius: 999px;
              border: 1px solid var(--rule-strong); font-size: 13px; color: var(--text); }
   .np-mini img { width: 28px; height: 28px; border-radius: 999px; object-fit: cover; }
@@ -953,28 +987,31 @@
 </dialog>
 
 <dialog id="musicDialog" class="alarms music">
+  <img class="mv-glow" id="mvGlow" alt="" aria-hidden="true" referrerpolicy="no-referrer">
   <div class="alarms-head"><h2>Music</h2><button class="icon-btn" id="musicClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <div class="mv" id="mv">
     <img class="mv-art" id="mvArt" alt="" referrerpolicy="no-referrer">
     <div class="mv-side">
       <div class="mv-meta"><b id="mvTitle">Nothing playing</b><span id="mvArtist"></span><small id="mvState"></small></div>
-      <input type="range" class="mv-seek" id="mvSeek" min="0" max="100" value="0" step="1" aria-label="Position">
-      <div class="np-row"><span class="np-time" id="mvTime"></span><span class="np-time" id="mvDur"></span></div>
+      <div class="mv-seekbox">
+        <input type="range" class="slim" id="mvSeek" min="0" max="100" value="0" step="1" aria-label="Position">
+        <div class="mv-times"><span id="mvTime"></span><span id="mvDur"></span></div>
+      </div>
       <div class="mv-ctl">
-        <button class="icon-btn" id="mvShuffle" aria-label="Shuffle the queue" title="Shuffle the queue"><svg><use href="#i-shuffle"/></svg></button>
+        <button class="icon-btn mv-mode" id="mvShuffle" aria-label="Shuffle the queue" title="Shuffle the queue"><svg><use href="#i-shuffle"/></svg></button>
         <button class="icon-btn" id="mvPrev" aria-label="Previous"><svg><use href="#i-prev"/></svg></button>
         <button class="icon-btn mv-play" id="mvPlay" aria-label="Play"><svg><use href="#i-play"/></svg></button>
         <button class="icon-btn" id="mvNext" aria-label="Next"><svg><use href="#i-next"/></svg></button>
-        <button class="icon-btn mv-repeat" id="mvRepeat" aria-label="Repeat: off" title="Repeat"><svg><use href="#i-repeat"/></svg><em></em></button>
+        <button class="icon-btn mv-mode mv-repeat" id="mvRepeat" aria-label="Repeat: off" title="Repeat"><svg><use href="#i-repeat"/></svg><em></em></button>
       </div>
-      <label class="np-vol"><svg><use href="#i-vol"/></svg><input type="range" id="mvVol" min="0" max="100" aria-label="Music volume"><span class="set-val" id="mvVolVal"></span></label>
+      <label class="mv-vol"><svg><use href="#i-vol"/></svg><input type="range" class="slim" id="mvVol" min="0" max="100" aria-label="Music volume"><span id="mvVolVal"></span></label>
       <div class="mv-row2">
         <button class="mv-chip" id="mvLike"><svg><use href="#i-like"/></svg><span>Like</span></button>
-        <div class="lat-range" role="group" aria-label="Plays on"><button type="button" data-where="satellite">Speaker</button><button type="button" data-where="mac">Mac</button></div>
+        <div class="mv-seg" role="group" aria-label="Plays on"><button type="button" data-where="satellite">Speaker</button><button type="button" data-where="mac">Mac</button></div>
       </div>
     </div>
   </div>
-  <h3 class="health-h">Up next</h3>
+  <div class="mv-qhead">Up next <small id="mvQCount"></small></div>
   <div id="mvQueue" class="mv-queue"></div>
 </dialog>
 
@@ -1410,25 +1447,28 @@ function drawNowPlaying() {
   if (!NP.dragging && st.volume != null) $("npVol").value = st.volume;
   if ($("musicDialog").open) drawMusicView(pos);
 }
+// The slim sliders paint their own fill (--p), since a styled track has no accent-color progress.
+const fillRange = (el) => { const span = (+el.max || 0) - (+el.min || 0); el.style.setProperty("--p", span > 0 ? `${((+el.value - (+el.min || 0)) / span) * 100}%` : "0%"); };
 function drawMusicView(pos) {
   const st = NP.st || {};
   if (!st.title) { $("mvTitle").textContent = st.connected === false ? "YouTube Music isn't reachable" : "Nothing playing"; return; }
-  if (st.art && $("mvArt").src !== st.art) $("mvArt").src = st.art;
+  if (st.art && $("mvArt").src !== st.art) $("mvArt").src = $("mvGlow").src = st.art;
   $("mvTitle").textContent = st.title; $("mvArtist").textContent = [st.artist, st.album].filter(Boolean).join(" · ");
   $("mvState").textContent = st.ducked ? "Lowered while THURSDAY talks" : st.ad ? "Ad playing" : "";
-  if (!NP.seeking) { $("mvSeek").max = st.duration || 0; $("mvSeek").value = Math.floor(pos); }
+  if (!NP.seeking) { $("mvSeek").max = st.duration || 0; $("mvSeek").value = Math.floor(pos); fillRange($("mvSeek")); }
   $("mvTime").textContent = fmtClock(pos); $("mvDur").textContent = fmtClock(st.duration);
   $("mvPlay").innerHTML = `<svg><use href="${st.playing ? "#i-pause" : "#i-play"}"/></svg>`;
   $("mvPlay").setAttribute("aria-label", st.playing ? "Pause" : "Play");
   const rep = ["off", "all", "one"][st.repeat || 0];
   $("mvRepeat").classList.toggle("on", !!st.repeat); $("mvRepeat").querySelector("em").textContent = st.repeat === 2 ? "1" : "";
   $("mvRepeat").setAttribute("aria-label", `Repeat: ${rep}`);
-  if (!NP.dragging && st.volume != null) { $("mvVol").value = st.volume; $("mvVolVal").textContent = `${st.volume}%`; }
+  if (!NP.dragging && st.volume != null) { $("mvVol").value = st.volume; $("mvVolVal").textContent = `${st.volume}%`; fillRange($("mvVol")); }
   $("mvLike").classList.toggle("on", !!st.liked);
   for (const b of document.querySelectorAll("#musicDialog [data-where]")) b.setAttribute("aria-pressed", String(b.dataset.where === st.output));
   const key = (st.up_next || []).map((q) => q.index + q.title).join("|");
   if (key !== NP.queueKey) {
     NP.queueKey = key;
+    $("mvQCount").textContent = st.up_next?.length ? `${st.up_next.length} songs` : "";
     const box = $("mvQueue"); box.innerHTML = "";
     if (!st.up_next?.length) box.innerHTML = `<div class="health-warn">Nothing queued.</div>`;
     for (const q of st.up_next || []) {
@@ -1465,10 +1505,10 @@ $("mvShuffle").onclick = () => npCommand({ action: "shuffle" });
 $("mvRepeat").onclick = () => { if (!NP.st) return; NP.st.repeat = ((NP.st.repeat || 0) + 1) % 3; drawNowPlaying(); npCommand({ action: "repeat", repeat: NP.st.repeat }); };
 $("mvLike").onclick = () => { if (!NP.st) return; NP.st.liked = !NP.st.liked; drawNowPlaying(); npCommand({ action: "like" }); };
 for (const b of document.querySelectorAll("#musicDialog [data-where]")) b.onclick = () => { if (NP.st) NP.st.output = b.dataset.where; drawNowPlaying(); npCommand({ action: "output", where: b.dataset.where }); };
-$("mvSeek").addEventListener("input", () => { NP.seeking = true; $("mvTime").textContent = fmtClock(+$("mvSeek").value); });
+$("mvSeek").addEventListener("input", () => { NP.seeking = true; fillRange($("mvSeek")); $("mvTime").textContent = fmtClock(+$("mvSeek").value); });
 $("mvSeek").addEventListener("change", () => { NP.seeking = false; const sec = +$("mvSeek").value; if (NP.st) { NP.st.progress = sec; NP.at = performance.now(); } drawNowPlaying(); npCommand({ action: "seek", seconds: sec }); });
 for (const id of ["npVol", "mvVol"]) {
-  $(id).addEventListener("input", (e) => { NP.dragging = true; $("mvVolVal").textContent = `${e.target.value}%`; });
+  $(id).addEventListener("input", (e) => { NP.dragging = true; if (id === "mvVol") fillRange(e.target); $("mvVolVal").textContent = `${e.target.value}%`; });
   $(id).addEventListener("change", (e) => { NP.dragging = false; if (NP.st) NP.st.volume = +e.target.value; drawNowPlaying(); npCommand({ action: "set_volume", level: +e.target.value }); });
 }
 $("npNext").onclick = () => npCommand({ action: "next" });
