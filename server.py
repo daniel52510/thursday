@@ -22,6 +22,7 @@ import improvements
 import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
+import email_threads
 import gmail_tool
 import greetings
 import proactive
@@ -65,10 +66,12 @@ async def lifespan(app: FastAPI):
     on_greetings = asyncio.create_task(greetings.run())  # fresh wake greetings each hour
     on_reminders = asyncio.create_task(reminders.run())  # due reminders: push, and out loud at home
     on_proactive = asyncio.create_task(proactive.run())  # he speaks first: calendar, workouts, health, evening
+    on_email = asyncio.create_task(email_threads.run())  # email conversations: replies toward his goal
     yield
     on_greetings.cancel()
     on_reminders.cancel()
     on_proactive.cancel()
+    on_email.cancel()
     on_missions.cancel()
     on_improvements.cancel()
     on_review.cancel()

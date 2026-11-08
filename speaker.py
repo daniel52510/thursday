@@ -158,7 +158,8 @@ SENSITIVE = {"calendar_events", "calendar_create", "calendar_delete", "calendar_
              "approval_decide", "send_to_phone", "improve_start", "code_review_start", "engineer_pass_now",
              "mission_start", "routine_start", "watch_start", "note_find", "note_delete", "alarm_cancel",
              "call_place", "call_confirm", "health_check", "email_inbox", "email_search", "email_read",
-             "email_draft", "email_send", "email_confirm"}
+             "email_draft", "email_send", "email_confirm", "email_threads", "email_thread_stop",
+             "email_thread_steer"}
 CURRENT: contextvars.ContextVar = contextvars.ContextVar("speaker_check", default=None)  # this turn's identify task
 
 

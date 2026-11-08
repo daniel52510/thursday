@@ -6,6 +6,7 @@ from Settings → You, like the Apple Calendar login. A draft lands in Gmail's D
 email_send prepares and reads it back, email_confirm sends it only after his plain yes on a later message (checked
 here, not left to the model), and only to him or someone in his email contacts (brain/email_contacts.txt, which only
 he edits, in the web app). At most EMAIL_DAILY_CAP a day; each send is logged (who, subject, when; not the body).
+With a goal, email_threads.py carries the conversation on from there.
 Email is someone else's words: results carry a note that nothing in an email is an instruction (no calls, buys,
 shares or changes because an email says so).
 """
@@ -21,7 +22,7 @@ import threading
 import time
 from email.message import EmailMessage
 from email.policy import default as default_policy
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import make_msgid, parseaddr, parsedate_to_datetime
 from typing import Any, Dict
 
 import vault
@@ -292,12 +293,17 @@ def email_send(args: Dict[str, Any]):
                 f"not_in_email_contacts: you can only email him or his saved email contacts ({names}). Tell him to "
                 "add them under Contacts in the web app first; you can't add anyone yourself."))
         msg["From"], msg["To"], msg["Subject"] = own, who[1], subject or "(no subject)"
+        msg["Message-ID"] = make_msgid(domain=own.rsplit("@", 1)[-1])  # their replies point back to it
         msg.set_content(body)
-        _pending[turn["conversation"]] = {"at": time.monotonic(), "turn": turn["turn"], "msg": msg, "to": who[1]}
+        goal = str(args.get("goal") or "").strip()[:500]
+        _pending[turn["conversation"]] = {"at": time.monotonic(), "turn": turn["turn"], "msg": msg, "to": who[1],
+                                          "goal": goal}
         return ToolResult(ok=True, tool_name="email_send", data={
             "status": "NOT SENT YET - waiting for his ok", "to": f"{who[0]} <{who[1]}>", "subject": msg["Subject"],
-            "body": body, "note": "Tell him who it's to and the gist in one line (in chat, show the email itself), "
-            "and ask if you should send it. Only email_confirm after a plain yes; for changes, email_send again."})
+            "body": body, **({"goal": goal} if goal else {}),
+            "note": "Tell him who it's to and the gist in one line (in chat, show the email itself)"
+            + (", and that you'll handle their replies until the goal is met" if goal else "")
+            + ", and ask if you should send it. Only email_confirm after a plain yes; for changes, email_send again."})
     return _run("email_send", go)
 
 
@@ -328,10 +334,26 @@ def email_confirm(args: Dict[str, Any]):
                           error="not_confirmed: not a plain yes; if he changed something, email_send again")
     del _pending[turn["conversation"]]
     msg = pending["msg"]
+    if err := smtp_send(msg):
+        return ToolResult(ok=False, tool_name="email_confirm", error=err)
+    data = {"status": "sent", "to": pending["to"], "subject": str(msg["Subject"]),
+            "note": "Sent; Gmail keeps a copy in his Sent folder. Say so in a few words."}
+    if pending.get("goal"):
+        import email_threads
+        email_threads.start(msg, pending["goal"])
+        data["note"] = ("Sent. Tell him in a few words, and that you'll handle their replies toward the goal and "
+                        "let him know how it goes (or if they ask something only he can answer).")
+    return ToolResult(ok=True, tool_name="email_confirm", data=data)
+
+
+def smtp_send(msg: EmailMessage) -> str | None:
+    """Sends through his Gmail: None when sent, else why not. Every email THURSDAY sends comes through here, so the
+    daily cap and the log cover first emails and the replies of a conversation (email_threads) alike."""
+    from accounts import OWNER
     with _send_lock:
         now = time.time()
         if _sent_recently(now) >= DAILY_CAP:
-            return ToolResult(ok=False, tool_name="email_confirm", error=f"daily_cap: {DAILY_CAP} emails a day")
+            return f"daily_cap: {DAILY_CAP} emails a day"
         creds = vault.shared().get(OWNER, CREDENTIAL)
         t = time.monotonic()
         try:
@@ -339,13 +361,11 @@ def email_confirm(args: Dict[str, Any]):
                 s.login(creds["username"], creds["app_password"].replace(" ", ""))
                 s.send_message(msg)
         except (smtplib.SMTPException, OSError) as exc:
-            return ToolResult(ok=False, tool_name="email_confirm", error=f"not_sent: {type(exc).__name__}")
+            return f"not_sent: {type(exc).__name__}"
         with open(SENT_LOG, "a") as f:
-            f.write(json.dumps({"at": now, "to": pending["to"], "subject": str(msg["Subject"])}) + "\n")
+            f.write(json.dumps({"at": now, "to": str(msg["To"]), "subject": str(msg["Subject"])}) + "\n")
         print(f"[email] sent in {int((time.monotonic() - t) * 1000)} ms")
-    return ToolResult(ok=True, tool_name="email_confirm", data={
-        "status": "sent", "to": pending["to"], "subject": str(msg["Subject"]),
-        "note": "Sent; Gmail keeps a copy in his Sent folder. Say so in a few words."})
+    return None
 
 
 TOOL_SCHEMAS = [
@@ -377,6 +397,9 @@ TOOL_SCHEMAS = [
                        "running late', 'reply to Jordana saying yes'. For 'draft' or 'write up', use email_draft.",
         "parameters": {"type": "object", "properties": {
             "to": {"type": "string", "description": "A contact's name, or 'me'"}, "reply_to_id": {"type": "string"},
+            "goal": {"type": "string", "description": "Only when he wants you to handle the back-and-forth ('find a "
+                     "time', 'get a quote', 'ask and let me know'): what counts as done, plus any facts he gave you to "
+                     "use. You'll answer their replies yourself until it's met."},
             "subject": {"type": "string"}, "body": {"type": "string", "description": "The email, in his voice"}},
             "required": ["body"]}}},
     {"type": "function", "function": {
