@@ -596,6 +596,10 @@
 
   dialog h2, .alarms-head h2 { font: 600 20px/1.3 var(--sans); letter-spacing: -.01em; }
   dialog:focus-visible { outline: none; }
+  /* Nothing in a window scrolls sideways: the music glow is wider than the window on purpose, and it made the whole
+     sheet draggable left and right on the phone (2026-11-08). */
+  dialog.alarms, dialog.settings { overflow-x: hidden; }
+  html, body { overscroll-behavior-x: none; }
 
   .tabs button { font: 500 13px var(--sans); letter-spacing: 0; text-transform: none; border: 0; background: var(--soft); }
   .tabs button[aria-selected="true"] { background: var(--inverse-bg); }

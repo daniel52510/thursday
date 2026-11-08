@@ -500,13 +500,13 @@ FILLERS = {
 FILLERS_TARA = {
     "web_search": ["Let me look.", "One sec.", "Okay, checking.", "Hang on, let me find it."],
     "sports_scores": ["Let me check the score.", "One sec."],
-    "launch_schedule": ["Ooh, launches. One sec.", "Let me check."],
+    "launch_schedule": ["Oh, launches. One sec.", "Let me check."],
     "get_weather": ["Let me check the sky.", "One sec, weather."],
     "calendar_events": ["Let me look at your calendar.", "One sec."],
     "calendar_create": ["Okay, setting it up.", "One sec."],
     "calendar_delete": ["Let me find it.", "One sec."],
-    "code_ask": ["Let me look at my code.", "Ooh, okay, let me check."],
-    "_deliberate": ["Ooh, good one. Give me like thirty seconds.", "Let me really think about that. Half a minute."],
+    "code_ask": ["Let me look at my code.", "Oh, okay, let me check."],
+    "_deliberate": ["Oh, good one. Give me like thirty seconds.", "Let me really think about that. Half a minute."],
 }
 _FILLERS_BY_VOICE = {"leo": FILLERS, "tara": FILLERS_TARA}
 _filler_audio: dict[tuple[str, str], bytes] = {}  # (voice, line)
