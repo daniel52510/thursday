@@ -138,12 +138,16 @@
     width: 280px; flex: none; background: var(--surface); border-right: 1px solid var(--rule);
     display: flex; flex-direction: column; padding: 16px 12px 0; gap: 4px; z-index: 20;
     transition: transform .25s var(--ease);
+    /* The whole sidebar scrolls when it's taller than the screen (nav, player, status): only the conversation
+       list scrolled, so on short screens it was squeezed to nothing and the bottom was cut off (2026-11-08). */
+    overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   }
   .brand { display: flex; align-items: center; gap: 8px; padding: 2px 8px 18px; }
   .nav-btn { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 999px; color: var(--text-muted); text-align: left; width: 100%; font-size: 14px; }
   .nav-btn:hover { background: var(--deep); color: var(--text); }
   .nav-btn.primary { color: var(--text); border: 1px solid var(--rule-strong); margin-bottom: 4px; font-weight: 500; }
-  .conv-list { flex: 1; overflow-y: auto; margin: 10px -6px 0; padding: 0 6px 12px; }
+  /* The list scrolls itself and always keeps at least 220px; the sidebar scrolls only by what doesn't fit beyond that. */
+  .conv-list { flex: 1 1 0; min-height: 220px; overflow-y: auto; margin: 10px -6px 0; padding: 0 6px 12px; }
   .conv-group { padding: 16px 12px 6px; }
   .conv-empty { font-size: 13px; color: var(--text-muted); padding: 14px 12px; }
   .conv-search { margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--rule); background: var(--bg);
