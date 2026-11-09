@@ -1057,10 +1057,40 @@ class LiftIn(BaseModel):
     day: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
+class WorkoutSetIn(BaseModel):
+    reps: int = Field(ge=1, le=100)
+    weight_lb: float = Field(default=0, ge=0, le=1500)
+
+
+class WorkoutExerciseIn(BaseModel):
+    exercise: str = Field(min_length=1, max_length=60)
+    sets: list[WorkoutSetIn] = Field(min_length=1, max_length=20)
+    custom: bool = False
+    category: str = Field(default="", max_length=30)
+
+
+class WorkoutIn(BaseModel):
+    day: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    exercises: list[WorkoutExerciseIn] = Field(min_length=1, max_length=30)
+
+
 @app.get("/api/lifts")
 def get_lifts(days: int = 30, user: dict = Depends(owner_only)):
     return {"plan": lifts.plan(), "journal": lifts.journal(max(1, min(days, 365))),
-            "exercises": lifts.known_exercises()}
+            "exercises": lifts.known_exercises(), "library": lifts.library()}
+
+
+@app.get("/api/lifts/last")
+def last_lift(exercise: str, user: dict = Depends(owner_only)):
+    return lifts.last_sets(exercise[:60])
+
+
+@app.post("/api/lifts/workout", status_code=201)
+def save_workout(body: WorkoutIn, user: dict = Depends(owner_only)):
+    saved = lifts.save_workout(body.day, [e.model_dump() for e in body.exercises])
+    if not saved:
+        raise HTTPException(status_code=400, detail="nothing to save")
+    return {"saved": saved}
 
 
 @app.post("/api/lifts", status_code=201)

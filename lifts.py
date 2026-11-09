@@ -33,6 +33,44 @@ _PRESCRIPTION = re.compile(r"(\d+)\s*x\s*(\d+)(?:\s*-\s*(\d+))?", re.I)
 _LOWER = re.compile(r"squat|deadlift|lunge|leg press|step-up|hip thrust|calf", re.I)
 _DUMBBELL = re.compile(r"dumbbell|goblet|\bdb\b", re.I)
 
+# The picker's preset library (Health → Lifts → Log a workout): the common lifts by muscle group. Anything else he
+# adds as a custom exercise, kept for next time (custom table).
+LIBRARY: dict[str, list[str]] = {
+    "Chest": ["Barbell bench press", "Incline barbell bench press", "Decline barbell bench press", "Dumbbell bench press",
+              "Incline dumbbell press", "Decline dumbbell press", "Dumbbell fly", "Incline dumbbell fly",
+              "Cable crossover", "Low-to-high cable fly", "Machine chest press", "Pec deck", "Push-ups",
+              "Weighted push-ups", "Chest dips", "Smith machine bench press", "Floor press", "Svend press"],
+    "Back": ["Deadlift", "Pull-ups", "Weighted pull-ups", "Chin-ups", "Cable lat pulldown", "Close-grip lat pulldown",
+             "Straight-arm pulldown", "Bent-over barbell row", "Pendlay row", "Single-arm dumbbell row",
+             "Chest-supported dumbbell row", "Seated cable row", "T-bar row", "Machine row", "Inverted rows",
+             "Rack pulls", "Back extensions", "Meadows row", "Kroc row", "Single-arm cable row"],
+    "Shoulders": ["Standing overhead press", "Seated dumbbell shoulder press", "Arnold press", "Push press",
+                  "Machine shoulder press", "Lateral raises", "Cable lateral raises", "Front raises",
+                  "Rear delt fly", "Reverse pec deck", "Cable face pulls", "Upright rows", "Barbell shrugs",
+                  "Dumbbell shrugs", "Landmine press", "Y-raises"],
+    "Biceps": ["Barbell curls", "EZ-bar curls", "Dumbbell curls", "Hammer curls", "Incline dumbbell curls",
+               "Preacher curls", "Cable curls", "Concentration curls", "Spider curls", "Reverse curls",
+               "Bayesian cable curls"],
+    "Triceps": ["Close-grip bench press", "Triceps dips", "Skull crushers", "Overhead dumbbell extension",
+                "Cable triceps pushdown", "Rope pushdown", "Overhead cable extension", "Dumbbell kickbacks",
+                "Diamond push-ups", "JM press"],
+    "Quads": ["Back squat", "Front squat", "Goblet squat", "Hack squat", "Leg press", "Leg extensions",
+              "Bulgarian split squats", "Dumbbell split squats", "Walking lunges", "Reverse lunges", "Step-ups",
+              "Smith machine squat", "Pistol squats", "Sissy squats", "Belt squat"],
+    "Hamstrings & glutes": ["Romanian deadlift", "Dumbbell Romanian deadlift", "Stiff-leg deadlift",
+                            "Sumo deadlift", "Trap bar deadlift", "Good mornings", "Lying leg curls",
+                            "Seated leg curls", "Nordic curls", "Hip thrusts", "Glute bridges", "Cable pull-throughs",
+                            "Kettlebell swings", "Single-leg Romanian deadlift", "Hip abduction machine",
+                            "Cable kickbacks"],
+    "Calves": ["Standing calf raises", "Seated calf raises", "Single-leg calf raises", "Leg press calf raises"],
+    "Core": ["Plank", "Side plank", "Hanging leg raises", "Hanging knee raises", "Ab wheel rollouts",
+             "Cable crunches", "Cable woodchops", "Pallof press", "Dead bugs", "Russian twists", "Decline sit-ups",
+             "Weighted crunches", "Mountain climbers", "Dragon flags"],
+    "Full body": ["Power clean", "Hang clean", "Clean and jerk", "Snatch", "Thrusters", "Dumbbell thrusters",
+                  "Farmer's carry", "Suitcase carry", "Turkish get-up", "Burpees", "Sled push", "Battle ropes",
+                  "Medicine ball slams", "Renegade rows"],
+}
+
 
 def _connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB) or ".", exist_ok=True)
@@ -41,7 +79,23 @@ def _connect() -> sqlite3.Connection:
     conn.execute("""CREATE TABLE IF NOT EXISTS sets (id TEXT PRIMARY KEY, day TEXT NOT NULL, exercise TEXT NOT NULL,
         set_no INTEGER NOT NULL, reps INTEGER NOT NULL, weight_lb REAL NOT NULL, source TEXT, created REAL NOT NULL)""")
     conn.execute("CREATE INDEX IF NOT EXISTS sets_exercise_day ON sets (exercise, day)")
+    conn.execute("CREATE TABLE IF NOT EXISTS custom (name TEXT PRIMARY KEY COLLATE NOCASE, category TEXT, created REAL)")
     return conn
+
+
+def library() -> dict[str, list[str]]:
+    """The presets by group, his custom exercises first under "My exercises"."""
+    with _connect() as conn:
+        mine = [r[0] for r in conn.execute("SELECT name FROM custom ORDER BY created DESC")]
+    return {"My exercises": mine, **LIBRARY} if mine else dict(LIBRARY)
+
+
+def add_custom(name: str, category: str = "") -> str:
+    name = " ".join(str(name or "").split())[:60]
+    if name:
+        with _connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO custom VALUES (?, ?, ?)", (name, category[:30], time.time()))
+    return name
 
 
 def _today() -> datetime:
@@ -65,7 +119,8 @@ def canonical(name: str) -> str:
         return ""
     low = said.lower()
     names = known_exercises()
-    for n in names:
+    exact = names + [n for group in library().values() for n in group]  # picked from the library: kept as is
+    for n in exact:
         if n.lower() == low:
             return n
     # Prefer what his gym has (the apartment swaps), then the program's own names.
@@ -95,13 +150,35 @@ def add(exercise: str, sets: list[dict], day: str | None = None, source: str = "
         return {"error": "need an exercise and at least one set with reps"}
     with _connect() as conn:
         before = max((_est_1rm(r["weight_lb"], r["reps"]) for r in conn.execute(
-            "SELECT reps, weight_lb FROM sets WHERE exercise = ?", (ex,))), default=0.0)
+            "SELECT exercise, reps, weight_lb FROM sets") if _base(r["exercise"]) == _base(ex)), default=0.0)
         n0 = conn.execute("SELECT COALESCE(MAX(set_no), 0) FROM sets WHERE exercise = ? AND day = ?", (ex, day)).fetchone()[0]
         for i, s in enumerate(clean, 1):
             conn.execute("INSERT INTO sets VALUES (?,?,?,?,?,?,?,?)",
                          (uuid.uuid4().hex[:10], day, ex, n0 + i, s["reps"], s["weight_lb"], source, time.time()))
     best = max(_est_1rm(s["weight_lb"], s["reps"]) for s in clean)
     return {"exercise": ex, "day": day, "sets": clean, "personal_best": bool(before and best > before + 0.5)}
+
+
+def save_workout(day: str | None, exercises: list[dict]) -> list[dict]:
+    """A whole session from the workout builder: [{exercise, sets: [{reps, weight_lb}], custom}] in one go."""
+    saved = []
+    for e in exercises[:30]:
+        if e.get("custom"):
+            add_custom(str(e.get("exercise") or ""), str(e.get("category") or ""))
+        out = add(str(e.get("exercise") or ""), list(e.get("sets") or []), day, source="builder")
+        if "error" not in out:
+            saved.append(out)
+    return saved
+
+
+def last_sets(exercise: str) -> dict:
+    """What to prefill when he adds an exercise: last session's sets, and the trainer's next weight."""
+    ex = canonical(exercise)
+    hist = sessions(ex, 1)
+    sets = [{"reps": s["reps"], "weight_lb": s["weight_lb"]} for s in hist[0]["sets"]] if hist else []
+    nxt = next_weight(ex, max(3, len(sets)), 8, 12) if hist else None
+    return {"exercise": ex, "last": sets, "last_day": hist[0]["day"] if hist else None,
+            "suggested_weight_lb": nxt["weight_lb"] if nxt else None}
 
 
 def remove(set_id: str) -> bool:
@@ -116,14 +193,23 @@ def remove_last(exercise: str, day: str | None = None) -> int:
         return conn.execute("DELETE FROM sets WHERE exercise = ? AND day = ?", (ex, day)).rowcount
 
 
+def _base(name: str) -> str:
+    """"Dumbbell bench press (3 s down)" and "Dumbbell bench press" are the same lift for his history."""
+    return re.sub(r"\s*\(.*?\)", "", name or "").strip().lower()
+
+
 def sessions(exercise: str, limit: int = 2) -> list[dict]:
-    """His last `limit` days of one exercise, newest first: [{day, sets: [{reps, weight_lb}]}]."""
+    """His last `limit` days of one exercise (any of its names), newest first: [{day, sets: [{reps, weight_lb}]}]."""
     with _connect() as conn:
-        days = [r[0] for r in conn.execute("SELECT DISTINCT day FROM sets WHERE exercise = ? ORDER BY day DESC LIMIT ?",
-                                           (exercise, limit))]
+        names = [r[0] for r in conn.execute("SELECT DISTINCT exercise FROM sets") if _base(r[0]) == _base(exercise)]
+        if not names:
+            return []
+        marks = ",".join("?" * len(names))
+        days = [r[0] for r in conn.execute(f"SELECT DISTINCT day FROM sets WHERE exercise IN ({marks}) "
+                                           "ORDER BY day DESC LIMIT ?", (*names, limit))]
         return [{"day": d, "sets": [dict(r) for r in conn.execute(
-            "SELECT id, reps, weight_lb FROM sets WHERE exercise = ? AND day = ? ORDER BY set_no", (exercise, d))]}
-            for d in days]
+            f"SELECT id, reps, weight_lb FROM sets WHERE exercise IN ({marks}) AND day = ? ORDER BY created, set_no",
+            (*names, d))]} for d in days]
 
 
 def journal(days: int = 30) -> list[dict]:

@@ -106,3 +106,27 @@ def test_he_is_asked_to_log_in_the_evening(monkeypatch, tmp_path):
     asked.clear()
     asyncio.run(asks.lift_source())                                           # logged: nothing more to ask
     assert not asked
+
+
+def test_library_has_the_presets_and_picks_stay_as_named():
+    names = [n for group in lifts.LIBRARY.values() for n in group]
+    assert 100 <= len(names) <= 150 and len(names) == len(set(names))
+    assert lifts.canonical("Hip thrusts") == "Hip thrusts" and lifts.canonical("Arnold press") == "Arnold press"
+
+
+def test_custom_exercise_is_kept_for_next_time_and_a_workout_saves_in_one_go():
+    saved = lifts.save_workout("2026-11-09", [
+        {"exercise": "Landmine squat to press", "custom": True, "category": "Full body",
+         "sets": [{"reps": 10, "weight_lb": 45}, {"reps": 8, "weight_lb": 55}]},
+        {"exercise": "Hip thrusts", "sets": [{"reps": 12, "weight_lb": 135}] * 3},
+        {"exercise": "Nothing", "sets": [{"reps": 0, "weight_lb": 10}]}])           # no reps: skipped
+    assert [s["exercise"] for s in saved] == ["Landmine squat to press", "Hip thrusts"]
+    assert lifts.library()["My exercises"] == ["Landmine squat to press"]
+    assert lifts.canonical("landmine squat to press") == "Landmine squat to press"
+    last = lifts.last_sets("Landmine squat to press")
+    assert last["last"] == [{"reps": 10, "weight_lb": 45.0}, {"reps": 8, "weight_lb": 55.0}] and last["last_day"] == "2026-11-09"
+
+
+def test_history_spans_a_lifts_name_variants():
+    _log("Dumbbell bench press", "2026-11-02", 45, [12, 12, 12, 12])               # picked from the library
+    assert lifts.next_weight("Dumbbell bench press (3 s down)", 4, 8, 12)["weight_lb"] == 50  # the program's name

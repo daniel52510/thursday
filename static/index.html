@@ -678,6 +678,42 @@
   .lf-set { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--soft-2); font-variant-numeric: tabular-nums; }
   .lf-set:hover { text-decoration: line-through; }
 
+  .lf-start, .lf-addex { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 48px; margin-top: 14px; border-radius: 16px; background: var(--inverse-bg); color: var(--inverse-text); font: 600 15px var(--sans); }
+  .lf-start svg, .lf-addex svg { width: 18px; height: 18px; }
+  .lf-addex { background: var(--soft-2); color: var(--text); margin-top: 10px; }
+  .lf-builder { margin-top: 14px; padding: 16px; border-radius: 18px; background: var(--soft); }
+  .lf-bhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .lf-bhead h3 { margin: 0; font: 600 16px var(--sans); }
+  .lf-bhead input { height: 36px; padding: 0 10px; border-radius: 10px; border: 0; background: var(--surface); color: var(--text); font: 14px var(--sans); }
+  .lf-item { margin-top: 12px; padding: 12px; border-radius: 14px; background: var(--surface); }
+  .lf-ihead { display: flex; align-items: center; gap: 8px; }
+  .lf-ihead b { flex: 1; min-width: 0; font-weight: 600; font-size: 14.5px; }
+  .lf-ihead .tag { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--soft-2); color: var(--text-muted); }
+  .lf-ihead button, .lf-srow button.x { width: 32px; height: 32px; border-radius: 999px; display: grid; place-items: center; color: var(--text-faint); flex: none; }
+  .lf-ihead button svg, .lf-srow button.x svg { width: 15px; height: 15px; }
+  .lf-hint { font-size: 12px; color: var(--text-muted); margin: 2px 0 6px; }
+  .lf-srow { display: grid; grid-template-columns: 28px 1fr 1fr 32px; gap: 8px; align-items: center; margin-top: 6px; }
+  .lf-srow .n { font-size: 12.5px; color: var(--text-faint); text-align: center; font-variant-numeric: tabular-nums; }
+  .lf-srow label { position: relative; }
+  .lf-srow input { width: 100%; height: 42px; padding: 0 44px 0 12px; border-radius: 12px; border: 0; background: var(--soft); color: var(--text); font: 600 16px var(--sans); font-variant-numeric: tabular-nums; }
+  .lf-srow label span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--text-faint); pointer-events: none; }
+  .lf-addset { margin-top: 8px; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--soft); font-size: 13px; }
+  .lf-picker { margin-top: 10px; padding: 12px; border-radius: 14px; background: var(--surface); }
+  .lf-picker input { width: 100%; height: 42px; padding: 0 14px; border-radius: 12px; border: 0; background: var(--soft); color: var(--text); font: 15px var(--sans); }
+  .lf-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 10px -2px 6px; padding: 0 2px; }
+  .lf-chips::-webkit-scrollbar { display: none; }
+  .lf-chips button { flex: none; height: 30px; padding: 0 12px; border-radius: 999px; background: var(--soft); font-size: 12.5px; color: var(--text-muted); }
+  .lf-chips button[aria-pressed="true"] { background: var(--inverse-bg); color: var(--inverse-text); }
+  .lf-results { display: grid; max-height: 280px; overflow-y: auto; }
+  .lf-results button { text-align: left; padding: 11px 10px; border-radius: 10px; font-size: 14.5px; display: flex; justify-content: space-between; gap: 10px; }
+  .lf-results button:hover { background: var(--soft); }
+  .lf-results button small { color: var(--text-faint); font-size: 12px; }
+  .lf-results .custom { color: var(--text); font-weight: 600; }
+  .lf-actions { display: flex; gap: 8px; margin-top: 14px; }
+  .lf-actions button { flex: 1; height: 46px; border-radius: 999px; font: 600 15px var(--sans); background: var(--soft-2); }
+  .lf-actions .yes { background: var(--inverse-bg); color: var(--inverse-text); }
+  .lf-actions button:disabled { opacity: .5; }
+
   /* ---------- phone ---------- */
   @media (max-width: 800px) {
     aside {
@@ -1174,17 +1210,19 @@
   <div class="mv-seg body-tabs" role="tablist" aria-label="Health views"><button type="button" data-view="body" aria-pressed="true">Body</button><button type="button" data-view="lifts" aria-pressed="false">Lifts</button></div>
   <div id="liftsView" hidden>
     <div class="lf-card" id="lfPlan"></div>
-    <form class="lf-add" id="lfAdd">
-      <h3>Add a lift</h3>
-      <input id="lfEx" list="lfExList" maxlength="60" required placeholder="Exercise" aria-label="Exercise" autocomplete="off"><datalist id="lfExList"></datalist>
-      <div class="lf-nums">
-        <label>Weight<input id="lfW" type="number" inputmode="decimal" min="0" max="1500" step="2.5" placeholder="lb"></label>
-        <label>Sets<input id="lfS" type="number" inputmode="numeric" min="1" max="20" value="3" required></label>
-        <label>Reps<input id="lfR" type="number" inputmode="numeric" min="1" max="100" value="8" required></label>
-        <button type="submit">Add</button>
+    <button type="button" class="lf-start" id="lfStart"><svg><use href="#i-plus"/></svg>Log a workout</button>
+    <div class="lf-builder" id="lfBuilder" hidden>
+      <div class="lf-bhead"><h3>Workout</h3><input type="date" id="lfDay" aria-label="Day"></div>
+      <div id="lfItems"></div>
+      <button type="button" class="lf-addex" id="lfAddEx"><svg><use href="#i-plus"/></svg>Add exercise</button>
+      <div class="lf-picker" id="lfPicker" hidden>
+        <input id="lfSearch" type="search" placeholder="Search exercises, or type your own" autocomplete="off" aria-label="Search exercises">
+        <div class="lf-chips" id="lfChips" role="group" aria-label="Muscle group"></div>
+        <div class="lf-results" id="lfResults"></div>
       </div>
-      <p class="em-meta" id="lfNote" aria-live="polite">Dumbbells per hand; leave weight empty for bodyweight. Or just tell THURSDAY: "bench, 3 sets of 8 at 50".</p>
-    </form>
+      <div class="lf-actions"><button type="button" class="ghost" id="lfCancel">Cancel</button><button type="button" class="yes" id="lfSave">Save workout</button></div>
+      <p class="em-meta" id="lfNote" aria-live="polite">Weights in lb; dumbbells per hand; leave weight empty for bodyweight.</p>
+    </div>
     <div id="lfJournal"></div>
   </div>
   <div class="lat-head" id="bodyHead"><p class="body-sub" id="bodySub">From your Apple Watch, synced by Health Auto Export.</p>
@@ -1605,7 +1643,7 @@ async function loadLifts() {
   let data = null;
   try { const r = await api("/api/lifts?days=42"); if (r.ok) data = await r.json(); } catch {}
   if (!data) return;
-  $("lfExList").innerHTML = ""; for (const n of data.exercises) $("lfExList").append(Object.assign(document.createElement("option"), { value: n }));
+  WB.library = data.library || {};
   const plan = $("lfPlan"); plan.innerHTML = "";
   const h = document.createElement("h3"); h.textContent = "Today"; const sm = document.createElement("small"); sm.textContent = data.plan.session; h.append(sm); plan.append(h);
   if (!data.plan.lifts.length) plan.append(Object.assign(document.createElement("p"), { className: "em-meta", textContent: "No lifting today: it's a cardio or rest day." }));
@@ -1642,13 +1680,94 @@ async function loadLifts() {
     box.append(day);
   }
 }
-$("lfAdd").onsubmit = async (e) => {
-  e.preventDefault();
-  const body = { exercise: $("lfEx").value, weight_lb: +$("lfW").value || 0, sets: +$("lfS").value, reps: +$("lfR").value };
-  const r = await api("/api/lifts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+// Log a workout: pick from the library (or type a custom one), sets prefilled from last time, save in one go.
+const WB = { library: {}, items: [], cat: "All" };
+const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const svgX = `<svg><use href="#i-x"/></svg>`;
+function wbOpen() {
+  WB.items = []; $("lfDay").value = today(); $("lfNote").textContent = "Weights in lb; dumbbells per hand; leave weight empty for bodyweight.";
+  $("lfBuilder").hidden = false; $("lfStart").hidden = true; wbDraw(); wbPicker(true);
+}
+function wbClose() { $("lfBuilder").hidden = true; $("lfStart").hidden = false; $("lfPicker").hidden = true; }
+function wbDraw() {
+  const box = $("lfItems"); box.innerHTML = "";
+  WB.items.forEach((it, i) => {
+    const card = document.createElement("div"); card.className = "lf-item";
+    card.innerHTML = `<div class="lf-ihead"><b></b>${it.custom ? '<span class="tag">custom</span>' : ""}<button type="button" aria-label="Remove exercise">${svgX}</button></div><div class="lf-hint"></div><div class="lf-sets"></div><button type="button" class="lf-addset">+ Add set</button>`;
+    card.querySelector("b").textContent = it.exercise;
+    card.querySelector(".lf-hint").textContent = it.hint || "";
+    card.querySelector(".lf-ihead button").onclick = () => { WB.items.splice(i, 1); wbDraw(); };
+    const sets = card.querySelector(".lf-sets");
+    it.sets.forEach((st, j) => {
+      const row = document.createElement("div"); row.className = "lf-srow";
+      row.innerHTML = `<span class="n">${j + 1}</span><label><input type="number" inputmode="decimal" min="0" max="1500" step="2.5" placeholder="BW" aria-label="Set ${j + 1} weight"><span>lb</span></label><label><input type="number" inputmode="numeric" min="1" max="100" aria-label="Set ${j + 1} reps"><span>reps</span></label><button type="button" class="x" aria-label="Remove set ${j + 1}">${svgX}</button>`;
+      const [w, r] = row.querySelectorAll("input");
+      w.value = st.weight_lb || ""; r.value = st.reps || "";
+      w.oninput = () => { st.weight_lb = +w.value || 0; }; r.oninput = () => { st.reps = +r.value || 0; };
+      row.querySelector(".x").onclick = () => { it.sets.splice(j, 1); if (!it.sets.length) WB.items.splice(i, 1); wbDraw(); };
+      sets.append(row);
+    });
+    card.querySelector(".lf-addset").onclick = () => { const last = it.sets[it.sets.length - 1] || { reps: 8, weight_lb: 0 }; it.sets.push({ ...last }); wbDraw(); };
+    box.append(card);
+  });
+  $("lfSave").disabled = !WB.items.length;
+}
+async function wbAdd(name, custom = false) {
+  const it = { exercise: name, custom, category: custom && !["All", "My exercises"].includes(WB.cat) ? WB.cat : "", sets: [], hint: "" };
+  WB.items.push(it); $("lfPicker").hidden = true; $("lfSearch").value = "";
+  try {
+    const r = await api(`/api/lifts/last?exercise=${encodeURIComponent(name)}`);
+    const j = r.ok ? await r.json() : {};
+    if (j.last && j.last.length) {
+      it.sets = j.last.map((x) => ({ ...x }));
+      if (j.suggested_weight_lb != null && j.suggested_weight_lb !== Math.max(...j.last.map((x) => x.weight_lb))) for (const x of it.sets) x.weight_lb = j.suggested_weight_lb;
+      it.hint = `Last (${dayName(j.last_day)}): ${j.last.map(fmtSet).join(", ")}` + (j.suggested_weight_lb != null ? ` · today ${+j.suggested_weight_lb || "BW"}` : "");
+    }
+  } catch {}
+  if (!it.sets.length) it.sets = [{ reps: 8, weight_lb: 0 }, { reps: 8, weight_lb: 0 }, { reps: 8, weight_lb: 0 }];
+  wbDraw();
+}
+function wbPicker(show) {
+  $("lfPicker").hidden = !show; if (!show) return;
+  const chips = $("lfChips"); chips.innerHTML = "";
+  for (const c of ["All", ...Object.keys(WB.library)]) {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = c; b.setAttribute("aria-pressed", String(c === WB.cat));
+    b.onclick = () => { WB.cat = c; wbPicker(true); }; chips.append(b);
+  }
+  wbResults(); if (!TOUCH) $("lfSearch").focus();
+}
+function wbResults() {
+  const q = $("lfSearch").value.trim(), ql = q.toLowerCase(), box = $("lfResults"); box.innerHTML = "";
+  const all = Object.entries(WB.library).flatMap(([cat, names]) => names.map((n) => ({ n, cat })));
+  const seen = new Set();
+  const list = all.filter(({ n, cat }) => (ql ? n.toLowerCase().includes(ql) : WB.cat === "All" || cat === WB.cat) && !seen.has(n) && seen.add(n));
+  if (q && !all.some(({ n }) => n.toLowerCase() === ql)) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "custom"; b.textContent = `+ Add "${q.slice(0, 60)}" as a custom exercise`;
+    b.onclick = () => wbAdd(q.slice(0, 60), true); box.append(b);
+  }
+  for (const { n, cat } of list.slice(0, 80)) {
+    const b = document.createElement("button"); b.type = "button"; b.innerHTML = "<span></span><small></small>";
+    b.children[0].textContent = n; b.children[1].textContent = ql || WB.cat === "All" ? cat : "";
+    b.onclick = () => wbAdd(n, cat === "My exercises"); box.append(b);
+  }
+  if (!box.children.length) box.innerHTML = `<div class="em-meta" style="padding:10px">Type a name to add your own.</div>`;
+}
+$("lfStart").onclick = wbOpen;
+$("lfCancel").onclick = () => { if (!WB.items.length || confirm("Discard this workout?")) wbClose(); };
+$("lfAddEx").onclick = () => wbPicker($("lfPicker").hidden);
+$("lfSearch").oninput = wbResults;
+$("lfSave").onclick = async () => {
+  const exercises = WB.items.map((it) => ({ exercise: it.exercise, custom: it.custom, category: it.category,
+    sets: it.sets.filter((x) => x.reps > 0).map((x) => ({ reps: x.reps, weight_lb: x.weight_lb || 0 })) })).filter((e) => e.sets.length);
+  if (!exercises.length) { $("lfNote").textContent = "Add reps to at least one set."; return; }
+  $("lfSave").disabled = true;
+  const r = await api("/api/lifts/workout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ day: $("lfDay").value || null, exercises }) });
   const out = await r.json().catch(() => ({}));
-  $("lfNote").textContent = r.ok ? `Logged ${out.exercise}: ${out.sets.length} × ${out.sets[0].reps}${out.sets[0].weight_lb ? ` @ ${out.sets[0].weight_lb}` : ""}${out.personal_best ? ". New best!" : "."}` : `Couldn't: ${out.detail || r.status}`;
-  if (r.ok) { $("lfEx").value = ""; loadLifts(); }
+  if (!r.ok) { $("lfNote").textContent = `Couldn't save: ${typeof out.detail === "string" ? out.detail : r.status}`; $("lfSave").disabled = false; return; }
+  const prs = out.saved.filter((x) => x.personal_best).map((x) => x.exercise);
+  wbClose(); loadLifts();
+  $("lfPlan").scrollIntoView({ behavior: "smooth" });
+  setTimeout(() => alert(`Saved ${out.saved.length} exercise${out.saved.length === 1 ? "" : "s"}.` + (prs.length ? ` New best: ${prs.join(", ")}!` : "")), 300);
 };
 function showBodyView(v) {
   for (const b of document.querySelectorAll(".body-tabs button")) b.setAttribute("aria-pressed", String(b.dataset.view === v));
