@@ -60,7 +60,9 @@ from tools import _PAGE_HEADERS, ToolCall, ToolResult, execute_tool
 MODEL = os.getenv("MISSION_MODEL", "gemma4:31b")
 CHAT_URL = URL.rsplit("/api/", 1)[0] + "/api/chat"
 NUM_CTX = int(os.getenv("MISSION_NUM_CTX", "16384"))
-KEEP_ALIVE = "2m"      # the 31b's ~20 GB goes back to the Mac soon after the mission ends
+# A separate mission model (the 31b's ~20 GB) goes back to the Mac soon after the mission ends; the chat model
+# (the 26b-only setup, 2026-11-09) stays loaded like chat keeps it, or the next voice reply would start cold.
+KEEP_ALIVE = -1 if MODEL == os.getenv("OLLAMA_MODEL", "gemma4:26b") else "2m"
 MAX_STEPS = 25         # tool calls per mission
 MAX_SEARCHES = 5       # of them web searches: reading the results is where the answer is
 MIN_SOURCES = 2        # different sites read before a report counts as more than a lead

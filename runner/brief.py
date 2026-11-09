@@ -60,7 +60,7 @@ summaries suggest; never contradict them:
 def _ask(http: httpx.Client, system: str, user: str) -> str:
     from agent import _wait_for_memory  # same rule as jobs: no 31b load while the Mac is short on memory
     _wait_for_memory()
-    r = http.post(CHAT_URL, json={"model": MODEL, "stream": False, "think": False, "keep_alive": "2m",
+    r = http.post(CHAT_URL, json={"model": MODEL, "stream": False, "think": False, "keep_alive": -1 if MODEL == os.getenv("CHAT_MODEL", "gemma4:26b") else "2m",
                                   "options": {"num_ctx": 16384, "temperature": 0.2},
                                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]},
                   timeout=httpx.Timeout(300, connect=5))

@@ -32,6 +32,8 @@ from pathlib import Path
 import httpx
 
 MODEL = os.getenv("RUNNER_MODEL", "gemma4:31b")
+# The chat model stays loaded (chat runs it with keep_alive -1); a separate runner model unloads 2 min after a job.
+KEEP_ALIVE = -1 if MODEL == os.getenv("CHAT_MODEL", "gemma4:26b") else "2m"
 CHAT_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434").rstrip("/") + "/api/chat"
 BASE = os.getenv("RUNNER_BASE", "container-branch")
 JOB = os.getenv("JOB_ID") or time.strftime("%Y%m%d-%H%M%S")
@@ -535,7 +537,7 @@ def _chat_once(http: httpx.Client, messages: list[dict], tools: list[dict]) -> t
     """One model call: after a quiet spell, streamed, and dropped (then retried) the moment anyone
     talks, the way missions do. Returns the message and the seconds of actual work."""
     body = {"model": MODEL, "messages": messages, "tools": tools, "stream": True, "think": True,
-            "keep_alive": "2m", "options": {"num_ctx": NUM_CTX}}
+            "keep_alive": KEEP_ALIVE, "options": {"num_ctx": NUM_CTX}}
     while True:
         while _age("activity") < QUIET_S:
             time.sleep(1)
