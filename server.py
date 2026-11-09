@@ -304,7 +304,8 @@ async def _shortcut_body(request: Request) -> AskIn:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    lower = {str(k).strip().lower(): v for k, v in data.items()}
+    # Field names as typed into the Shortcut's boxes: "Text", " text", "text =" (seen 2026-11-09) all mean text.
+    lower = {re.sub(r"[^a-z_]", "", str(k).lower()): v for k, v in data.items()}
     text = " ".join(str(lower.get("text") or "").split())[:2000]
     if not text:
         logging.getLogger("thursday.voice").warning("phone: no text in the request (fields: %s, type %s)",

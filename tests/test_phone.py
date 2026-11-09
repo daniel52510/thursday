@@ -72,7 +72,7 @@ def test_phone_tools_are_only_for_phone_turns():
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"json": {"text": "what time is it"}}, {"json": {"Text": "what time is it"}}, {"json": {" TEXT ": "what time is it"}},
+    {"json": {"text": "what time is it"}}, {"json": {"Text": "what time is it"}}, {"json": {" TEXT ": "what time is it"}}, {"json": {"text =": "what time is it"}},
     {"data": {"text": "what time is it"}}, {"data": {"Text": "what time is it"}}])
 def test_shortcut_body_any_shape(kwargs, monkeypatch):
     """JSON or Form, "text" in any case: a Shortcut's field boxes make all of these."""
