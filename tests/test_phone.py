@@ -32,7 +32,7 @@ def test_a_text_sends_only_after_his_spoken_yes():
         r = phone.phone_message({"contact": "Sam", "text": "Running   10 late"})
         assert r.ok and "NOT SENT" in r.data["status"] and box == {}       # nothing for the phone yet
         out = phone.respond("Text Sam: 'Running 10 late.' Send it?")
-        assert out["do"] == "" and out["listen"] is True                    # it listens for his answer
+        assert out["do"] == "" and out["listen"] == "yes"                    # it listens for his answer
     finally:
         phone.ACTION.reset(t)
     assert phone.confirm_message("owner", "what's the weather") is None     # not an answer: the model takes over
@@ -70,8 +70,8 @@ def test_not_a_phone_turn_does_nothing():
 def test_listen_again_when_he_was_asked_something():
     box, t = _turn()
     try:
-        assert phone.respond("Which Sam, question?")["listen"] is True
-        assert phone.respond("Done.")["listen"] is False
+        assert phone.respond("Which Sam, question?")["listen"] == "yes"
+        assert phone.respond("Done.")["listen"] == ""
     finally:
         phone.ACTION.reset(t)
 

@@ -109,11 +109,11 @@ def confirm_message(user_id: str, said: str) -> dict | None:
     if plain_yes(said):
         del _pending[user_id]
         return {"speak": "Sent.", "do": "message", "contact": p["contact"], "body": p["body"], "url": "",
-                "minutes": 0, "listen": False}
+                "minutes": 0, "listen": ""}
     if re.match(r"^\W*(?:no|nope|nah|don't|do not|cancel|never ?mind|stop)\b", said or "", re.I):
         del _pending[user_id]
         return {"speak": "Okay, not sending it.", "do": "", "contact": "", "body": "", "url": "", "minutes": 0,
-                "listen": False}
+                "listen": ""}
     _pending.pop(user_id, None)  # something else (a change, a new request): the model takes it from here
     return None
 
@@ -163,7 +163,8 @@ def respond(reply: str) -> dict:
     speak = reply.strip() or "Sorry, I didn't get anything back."
     return {"speak": speak, "do": action.get("do", ""), "contact": action.get("contact", ""),
             "body": action.get("body", ""), "url": action.get("url", ""), "minutes": action.get("minutes", 0),
-            "listen": speak.rstrip().endswith("?") and not action}
+            # "yes" or empty, not true/false: a Shortcut's If can test it with "has any value", no typing.
+            "listen": "yes" if speak.rstrip().endswith("?") and not action else ""}
 
 
 PHONE_SCHEMAS = [
