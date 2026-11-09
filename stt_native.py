@@ -33,9 +33,16 @@ _pool = ThreadPoolExecutor(max_workers=1)  # the one thread that touches MLX
 _model = None
 
 
+# MLX keeps freed GPU buffers for reuse, with no limit by default; every utterance is a different length, so the
+# cache only grew: 10 GB after three days for a model that needs about 2 (2026-11-09). Capped here.
+CACHE_LIMIT_GB = float(os.getenv("STT_MLX_CACHE_GB", "1"))
+
+
 def _load() -> None:
     global _model
+    import mlx.core as mx
     from parakeet_mlx import from_pretrained
+    mx.set_cache_limit(int(CACHE_LIMIT_GB * 1024 ** 3))
     started = time.monotonic()
     _model = from_pretrained(MODEL_ID)
     _run(np.zeros(SAMPLE_RATE, dtype=np.float32))  # compile kernels before the first real request
@@ -65,7 +72,9 @@ async def startup() -> None:
 
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "stt", "model_loaded": _model is not None, "engine": "parakeet", "model": MODEL_ID}
+    import mlx.core as mx
+    return {"ok": True, "service": "stt", "model_loaded": _model is not None, "engine": "parakeet", "model": MODEL_ID,
+            "gpu_active_gb": round(mx.get_active_memory() / 1024 ** 3, 2), "gpu_cache_gb": round(mx.get_cache_memory() / 1024 ** 3, 2)}
 
 
 @app.post("/transcribe")
