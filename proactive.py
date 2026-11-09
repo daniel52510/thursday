@@ -210,6 +210,13 @@ async def evening_rule(now: datetime) -> None:
         parts.append(f"{pending} reminder{'s' if pending > 1 else ''} still set.")
     if promises:
         parts.append("Still on my list: " + "; ".join(p[0] for p in promises))
+    try:  # his food journal (food.py): only when he logged today, and only protein, the number that matters on a cut
+        import food
+        d = await asyncio.to_thread(food.day)
+        if d["entries"] and d["left"]["protein"] >= 30:
+            parts.append(f"Protein: {d['left']['protein']} g to go. A shake or Greek yogurt closes it.")
+    except Exception:
+        pass
     if parts:
         await deliver("Evening wrap-up", " ".join(parts), tag="crescent_moon", say=" ".join(parts[:2]))
 

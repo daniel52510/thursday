@@ -718,6 +718,43 @@
   .set-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 0; }
   .set-toggle span { flex: 1; min-width: 0; font-size: 14px; line-height: 1.45; color: var(--text-body); }
 
+  /* Food journal (food.py), the Food view of the Health page. */
+  .fd-head { display: grid; justify-items: center; margin: 18px 0 6px; }
+  .fd-head b { font: 600 46px/1.05 var(--sans); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+  .fd-head span { font-size: 14px; color: var(--text-muted); }
+  .fd-head small { font-size: 12.5px; color: var(--text-faint); margin-top: 2px; }
+  .fd-head.over b { color: var(--signal-text); }
+  .fd-bars { display: grid; gap: 10px; margin: 14px 0 6px; }
+  .fd-bar { display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
+  .fd-bar span:first-child { color: var(--text-muted); }
+  .fd-bar i { display: block; height: 8px; border-radius: 999px; background: var(--soft-2); overflow: hidden; }
+  .fd-bar i b { display: block; height: 100%; border-radius: 999px; background: var(--text); }
+  .fd-bar.over i b { background: var(--signal-text); }
+  .fd-bar em { font-style: normal; font-variant-numeric: tabular-nums; color: var(--text-body); min-width: 92px; text-align: right; }
+  .fd-add { display: flex; gap: 8px; margin-top: 14px; }
+  .fd-add input, #fdManual input { flex: 1; min-width: 0; height: 44px; padding: 0 14px; border-radius: 14px; border: 0; background: var(--soft); color: var(--text); font: 15px var(--sans); }
+  .fd-add button, #fdManual button { height: 44px; padding: 0 18px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font: 600 14px var(--sans); }
+  .fd-add button:disabled { opacity: .5; }
+  .fd-recent { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 8px 0 0; }
+  .fd-recent::-webkit-scrollbar { display: none; }
+  .fd-recent button { flex: none; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--soft); font-size: 13px; white-space: nowrap; }
+  .fd-manual { margin-top: 10px; font-size: 13.5px; color: var(--text-muted); }
+  .fd-manual summary { cursor: pointer; padding: 6px 0; }
+  #fdManual { display: grid; gap: 8px; margin-top: 6px; }
+  .fd-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .fd-nums label { display: grid; gap: 3px; font-size: 11.5px; color: var(--text-muted); }
+  .fd-nums input { padding: 0 8px !important; }
+  .fd-meal { margin-top: 16px; }
+  .fd-meal h3 { margin: 0 0 4px; font: 600 13px var(--sans); color: var(--text-muted); text-transform: capitalize; display: flex; justify-content: space-between; }
+  .fd-item { display: grid; grid-template-columns: 1fr auto 32px; gap: 4px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .fd-item b { font-weight: 500; font-size: 14px; }
+  .fd-item small { grid-column: 1; font-size: 12px; color: var(--text-muted); }
+  .fd-item .k { font-variant-numeric: tabular-nums; font-size: 14px; }
+  .fd-item button { grid-row: 1 / span 2; grid-column: 3; width: 32px; height: 32px; border-radius: 999px; display: grid; place-items: center; color: var(--text-faint); }
+  .fd-item button svg { width: 14px; height: 14px; }
+  .fd-target { margin-top: 18px; font-size: 12.5px; color: var(--text-faint); }
+  .fd-target button { color: var(--text-muted); text-decoration: underline; font-size: 12.5px; }
+
   /* ---------- phone ---------- */
   @media (max-width: 800px) {
     aside {
@@ -1211,7 +1248,20 @@
 
 <dialog id="bodyDialog" class="alarms body">
   <div class="alarms-head"><h2>Health</h2><button class="icon-btn" id="bodyClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
-  <div class="mv-seg body-tabs" role="tablist" aria-label="Health views"><button type="button" data-view="body" aria-pressed="true">Body</button><button type="button" data-view="lifts" aria-pressed="false">Lifts</button></div>
+  <div class="mv-seg body-tabs" role="tablist" aria-label="Health views"><button type="button" data-view="body" aria-pressed="true">Body</button><button type="button" data-view="lifts" aria-pressed="false">Lifts</button><button type="button" data-view="food" aria-pressed="false">Food</button></div>
+  <div id="foodView" hidden>
+    <div class="fd-head"><b id="fdLeft">–</b><span id="fdLeftLabel">calories left</span><small id="fdOf"></small></div>
+    <div class="fd-bars" id="fdBars"></div>
+    <form class="fd-add" id="fdAdd"><input id="fdText" maxlength="400" placeholder="What did you eat? e.g. two eggs and toast" aria-label="What did you eat" autocomplete="off"><button type="submit" id="fdLog">Log</button></form>
+    <p class="em-meta" id="fdNote">THURSDAY estimates the calories and macros. Or just tell him: "I had a chicken burrito".</p>
+    <div class="fd-recent" id="fdRecent"></div>
+    <details class="fd-manual"><summary>Enter exact numbers (from a label)</summary>
+      <form id="fdManual"><input id="fmName" maxlength="60" required placeholder="Food" aria-label="Food">
+        <div class="fd-nums"><label>kcal<input id="fmK" type="number" inputmode="decimal" min="0" max="5000" required></label><label>Protein<input id="fmP" type="number" inputmode="decimal" min="0" max="500"></label><label>Carbs<input id="fmC" type="number" inputmode="decimal" min="0" max="1000"></label><label>Fat<input id="fmF" type="number" inputmode="decimal" min="0" max="500"></label></div>
+        <button type="submit">Add</button></form></details>
+    <div id="fdList"></div>
+    <p class="fd-target"><span id="fdTarget"></span> <button type="button" id="fdTargetBtn">Change</button></p>
+  </div>
   <div id="liftsView" hidden>
     <div class="lf-card" id="lfPlan"></div>
     <button type="button" class="lf-start" id="lfStart"><svg><use href="#i-plus"/></svg>Log a workout</button>
@@ -1773,10 +1823,80 @@ $("lfSave").onclick = async () => {
   $("lfPlan").scrollIntoView({ behavior: "smooth" });
   setTimeout(() => alert(`Saved ${out.saved.length} exercise${out.saved.length === 1 ? "" : "s"}.` + (prs.length ? ` New best: ${prs.join(", ")}!` : "")), 300);
 };
+// ---------- food journal (food.py) ----------
+const FD = { data: null };
+const r0 = (x) => Math.round(x);
+function drawFood(d) {
+  FD.data = d;
+  const left = d.left.kcal, head = $("fdLeft").parentElement;
+  $("fdLeft").textContent = Math.abs(left).toLocaleString();
+  $("fdLeftLabel").textContent = left >= 0 ? "calories left" : "calories over";
+  head.classList.toggle("over", left < 0);
+  $("fdOf").textContent = `${d.totals.kcal.toLocaleString()} of ${d.targets.kcal.toLocaleString()} eaten`;
+  const bars = $("fdBars"); bars.innerHTML = "";
+  for (const [k, label, unit] of [["protein", "Protein", "g"], ["carbs", "Carbs", "g"], ["fat", "Fat", "g"]]) {
+    const got = d.totals[k], want = d.targets[k] || 1;
+    const row = document.createElement("div"); row.className = "fd-bar" + (k !== "protein" && got > want ? " over" : "");
+    row.innerHTML = `<span>${label}</span><i><b style="width:${Math.min(100, (got / want) * 100)}%"></b></i><em>${r0(got)} / ${want} ${unit}</em>`;
+    bars.append(row);
+  }
+  const rec = $("fdRecent"); rec.innerHTML = "";
+  for (const e of (d.recent || []).slice(0, 10)) {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = `+ ${e.name} · ${r0(e.kcal)}`; b.title = `Add ${e.name} again`;
+    b.onclick = async () => { const r = await api(`/api/food/${e.id}/again`, { method: "POST" }); if (r.ok) drawFood({ ...(await r.json()), recent: FD.data.recent, history: FD.data.history }); };
+    rec.append(b);
+  }
+  const list = $("fdList"); list.innerHTML = "";
+  if (!d.entries.length) list.innerHTML = `<div class="em-empty" style="margin-top:14px">Nothing logged today.</div>`;
+  for (const meal of ["breakfast", "lunch", "dinner", "snack"]) {
+    const items = d.entries.filter((e) => e.meal === meal); if (!items.length) continue;
+    const sec = document.createElement("div"); sec.className = "fd-meal";
+    sec.innerHTML = `<h3><span>${meal}</span><span>${r0(items.reduce((a, e) => a + e.kcal, 0))} kcal</span></h3>`;
+    for (const e of items) {
+      const row = document.createElement("div"); row.className = "fd-item";
+      row.innerHTML = `<b></b><span class="k">${r0(e.kcal)}</span><button type="button" aria-label="Remove"><svg><use href="#i-x"/></svg></button><small></small>`;
+      row.querySelector("b").textContent = e.name + (e.qty ? ` · ${e.qty}` : "");
+      row.querySelector("small").textContent = `P ${r0(e.protein)} · C ${r0(e.carbs)} · F ${r0(e.fat)}`;
+      row.querySelector("button").onclick = async () => { await api(`/api/food/${e.id}`, { method: "DELETE" }); loadFood(); };
+      sec.append(row);
+    }
+    list.append(sec);
+  }
+  $("fdTarget").textContent = `Daily target ${d.targets.kcal.toLocaleString()} kcal, ${d.targets.protein} g protein (${d.targets.why}).`;
+}
+async function loadFood() {
+  try { const r = await api("/api/food"); if (r.ok) drawFood(await r.json()); } catch {}
+}
+$("fdAdd").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("fdText").value.trim(); if (!text) return;
+  $("fdLog").disabled = true; $("fdNote").textContent = "Estimating…";
+  const r = await api("/api/food/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+  const out = await r.json().catch(() => ({}));
+  $("fdLog").disabled = false;
+  if (!r.ok) { $("fdNote").textContent = `Couldn't: ${typeof out.detail === "string" ? out.detail : r.status}`; return; }
+  $("fdText").value = "";
+  $("fdNote").textContent = "Logged: " + out.saved.map((x) => `${x.name} ${r0(x.kcal)} kcal`).join(", ") + ".";
+  loadFood();
+};
+$("fdManual").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = { name: $("fmName").value, kcal: +$("fmK").value || 0, protein: +$("fmP").value || 0, carbs: +$("fmC").value || 0, fat: +$("fmF").value || 0 };
+  const r = await api("/api/food", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.ok) { for (const id of ["fmName", "fmK", "fmP", "fmC", "fmF"]) $(id).value = ""; loadFood(); }
+};
+$("fdTargetBtn").onclick = async () => {
+  const v = prompt("Daily calories (leave empty for the trainer's number):", FD.data ? FD.data.targets.kcal : "");
+  if (v === null) return;
+  await api("/api/food/target", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kcal: v.trim() ? +v : null }) });
+  loadFood();
+};
 function showBodyView(v) {
   for (const b of document.querySelectorAll(".body-tabs button")) b.setAttribute("aria-pressed", String(b.dataset.view === v));
-  $("liftsView").hidden = v !== "lifts"; $("bodyView").hidden = v === "lifts"; $("bodyHead").hidden = v === "lifts";
+  $("liftsView").hidden = v !== "lifts"; $("foodView").hidden = v !== "food";
+  $("bodyView").hidden = v !== "body"; $("bodyHead").hidden = v !== "body";
   if (v === "lifts") loadLifts();
+  if (v === "food") loadFood();
 }
 for (const b of document.querySelectorAll(".body-tabs button")) b.onclick = () => showBodyView(b.dataset.view);
 $("bodyClose").onclick = () => $("bodyDialog").close();

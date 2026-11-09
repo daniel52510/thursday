@@ -376,13 +376,35 @@ def _alarm_check_handler(choice: str, data: dict) -> str:
     return f"alarm set for {data['say']}"
 
 
-HANDLERS.update(email=_email_handler, promise=_promise_handler, lifts=_lifts_handler, alarm_check=_alarm_check_handler)
+async def nutrition_source() -> None:
+    """Sunday: two weeks of his food journal and weigh-ins; when the trainer wants a new calorie target, he asks."""
+    import food
+    now = food._now()
+    if now.weekday() != 6 or not 10 <= now.hour < 20:
+        return
+    c = await asyncio.to_thread(food.coach)
+    if not c.get("suggested_kcal"):
+        return
+    why = next((a for a in c["advice"] if str(c["suggested_kcal"]) in a), c["advice"][-1])
+    await ask("nutrition", f"Weekly check-in: {why} Change your daily target to {c['suggested_kcal']:,} kcal?",
+              [{"key": "set", "label": f"Make it {c['suggested_kcal']:,}"}, {"key": "no", "label": "Keep it"}],
+              {"kcal": c["suggested_kcal"]}, key=f"nutrition:{now.strftime('%G-W%V')}", expires_h=48)
+
+
+def _nutrition_handler(choice: str, data: dict) -> str:
+    import food
+    if choice != "set":
+        return "kept your target"
+    return f"daily target now {food.set_target(int(data['kcal']))['kcal']:,} kcal"
+
+
+HANDLERS.update(nutrition=_nutrition_handler, email=_email_handler, promise=_promise_handler, lifts=_lifts_handler, alarm_check=_alarm_check_handler)
 
 
 async def run() -> None:
     await asyncio.sleep(90)
     while True:
-        for source in (email_source, promise_source, lift_source):
+        for source in (email_source, promise_source, lift_source, nutrition_source):
             try:
                 await source()
             except asyncio.CancelledError:

@@ -25,6 +25,7 @@ import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
 import asks
+import food
 import lifts
 import night
 import phone
@@ -1211,6 +1212,66 @@ def log_lift_plan(user: dict = Depends(owner_only)):
 def delete_lift(set_id: str, user: dict = Depends(owner_only)):
     if not lifts.remove(set_id):
         raise HTTPException(status_code=404)
+
+
+# His food journal (food.py), the Health page's Food tab.
+class FoodTextIn(BaseModel):
+    text: str = Field(min_length=1, max_length=400)
+    meal: Literal["breakfast", "lunch", "dinner", "snack"] | None = None
+
+
+class FoodManualIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    kcal: float = Field(ge=0, le=5000)
+    protein: float = Field(default=0, ge=0, le=500)
+    carbs: float = Field(default=0, ge=0, le=1000)
+    fat: float = Field(default=0, ge=0, le=500)
+    meal: Literal["breakfast", "lunch", "dinner", "snack"] | None = None
+
+
+class FoodTargetIn(BaseModel):
+    kcal: int | None = Field(default=None, ge=1000, le=8000)  # None: back to the trainer's number
+
+
+@app.get("/api/food")
+def get_food(day: str | None = None, user: dict = Depends(owner_only)):
+    if day and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        raise HTTPException(status_code=400, detail="day is YYYY-MM-DD")
+    return {**food.day(day), "recent": food.recent(), "history": food.history()}
+
+
+@app.post("/api/food/log", status_code=201)
+async def log_food(body: FoodTextIn, user: dict = Depends(owner_only)):
+    try:
+        items = await asyncio.to_thread(food.estimate, body.text)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Couldn't estimate it ({type(exc).__name__})")
+    if not items:
+        raise HTTPException(status_code=400, detail="Couldn't tell what food that was")
+    return {"saved": food.add(items, body.meal, source="web"), **food.day()}
+
+
+@app.post("/api/food", status_code=201)
+def add_food(body: FoodManualIn, user: dict = Depends(owner_only)):
+    return {"saved": food.add([{**body.model_dump(), "qty": ""}], body.meal, source="manual"), **food.day()}
+
+
+@app.post("/api/food/{entry_id}/again", status_code=201)
+def readd_food(entry_id: str, user: dict = Depends(owner_only)):
+    if not (saved := food.readd(entry_id)):
+        raise HTTPException(status_code=404)
+    return {"saved": saved, **food.day()}
+
+
+@app.delete("/api/food/{entry_id}", status_code=204)
+def delete_food(entry_id: str, user: dict = Depends(owner_only)):
+    if not food.remove(entry_id):
+        raise HTTPException(status_code=404)
+
+
+@app.put("/api/food/target")
+def set_food_target(body: FoodTargetIn, user: dict = Depends(owner_only)):
+    return food.set_target(body.kcal)
 
 
 @app.get("/api/night")

@@ -9,7 +9,7 @@ import requests
 
 #tool contract
 class ToolCall(BaseModel):
-    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "improve_start", "improve_status", "self_review_now", "code_review_start", "code_ask", "project_list", "system_status", "engineer_pass_now", "music_play", "music_control", "music_now", "music_recommend", "music_output", "voice_setting", "light_set", "light_status", "call_place", "call_confirm", "health_check", "reminder_set", "reminder_list", "reminder_cancel", "promise_done", "followup_done", "email_inbox", "email_search", "email_read", "email_draft", "email_send", "email_confirm", "email_threads", "email_thread_stop", "email_thread_steer", "ask_answer", "night_mode", "lift_log", "lift_undo", "lift_history", "phone_call", "phone_message", "phone_music", "phone_directions", "phone_timer", "training_today", "training_plan"]
+    name: Literal["get_time", "echo", "get_weather", "web_search", "calendar_events", "calendar_create", "calendar_delete", "calendar_confirm", "sports_scores", "launch_schedule", "alarm_set", "alarm_list", "alarm_cancel", "alarm_snooze", "alarm_dismiss", "thursday_setting", "mission_start", "mission_status", "mission_abort", "list_add", "list_show", "list_remove", "note_save", "note_find", "note_delete", "watch_start", "watch_list", "watch_stop", "approval_list", "approval_decide", "send_to_phone", "routine_start", "routine_list", "routine_stop", "improve_start", "improve_status", "self_review_now", "code_review_start", "code_ask", "project_list", "system_status", "engineer_pass_now", "music_play", "music_control", "music_now", "music_recommend", "music_output", "voice_setting", "light_set", "light_status", "call_place", "call_confirm", "health_check", "reminder_set", "reminder_list", "reminder_cancel", "promise_done", "followup_done", "email_inbox", "email_search", "email_read", "email_draft", "email_send", "email_confirm", "email_threads", "email_thread_stop", "email_thread_steer", "ask_answer", "night_mode", "lift_log", "lift_undo", "lift_history", "food_log", "food_today", "food_undo", "phone_call", "phone_message", "phone_music", "phone_directions", "phone_timer", "training_today", "training_plan"]
     args: Dict[str, Any] = Field(default_factory=dict)
 
 #tool contract results
@@ -703,6 +703,8 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], ToolResult]] = {
     "night_mode": lambda args: __import__("night").night_mode(args),
     **{name: (lambda n: lambda args: getattr(__import__("lifts"), n)(args))(name)
        for name in ("lift_log", "lift_undo", "lift_history")},
+    **{name: (lambda n: lambda args: getattr(__import__("food"), n)(args))(name)
+       for name in ("food_log", "food_today", "food_undo")},
     **{name: (lambda n: lambda args: getattr(__import__("phone"), n)(args))(name)
        for name in ("phone_call", "phone_message", "phone_music", "phone_directions", "phone_timer")},
     **{name: (lambda n: lambda args: getattr(__import__("trainer"), n)(args))(name)

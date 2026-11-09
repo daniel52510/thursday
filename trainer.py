@@ -159,6 +159,15 @@ def _today():
     return datetime.now(ZoneInfo(os.getenv("THURSDAY_TZ", "America/New_York")))
 
 
+def _food_view() -> dict:
+    """His food journal (food.py) for the trainer: today's fuel and the last two weeks. Empty if it fails."""
+    try:
+        import food
+        return food.trainer_view()
+    except Exception:
+        return {}
+
+
 def training_today(args: Dict[str, Any]):
     from tools import ToolResult
     import health
@@ -187,10 +196,12 @@ def training_today(args: Dict[str, Any]):
         "loads": [{"exercise": x["exercise"], "do": f"{x['sets']} x {x['reps']}" + (
             f" at {x['weight_lb']:g} lb" if x["weight_lb"] else " bodyweight" if x["weight_lb"] == 0 else ""),
             "last_time": x["last"], "why": x["why"]} for x in loads.values()],
+        "nutrition": _food_view(),
         "workouts_last_7_days": len(done), "him": me, "targets": targets(me),
         "note": "You're his personal trainer. Say the session in a sentence or two (the focus and the first couple "
                 "of moves with their weights from loads), the intensity and why, and offer the full list. Encouraging, "
-                "specific, no lecture. If a lift went up since last time, say so. "
+                "specific, no lecture. If a lift went up since last time, say so. If he's logged food today and protein is "
+                "well behind, one line on closing it (around the workout). "
                 "General fitness coaching, not medical advice: stop on sharp pain."})
 
 
@@ -202,6 +213,7 @@ def training_plan(args: Dict[str, Any]):
     return ToolResult(ok=True, tool_name="training_plan", data={
         "program": PROGRAM, "goal": GOAL, "week": {names[d]: t for d, (t, _) in WEEK.items()},
         "nutrition": NUTRITION, "him": (me := profile()), "targets": targets(me),
+        "food_journal": _food_view().get("last_two_weeks", {}),
         "joint_friendly": bool(me.get("weight_lb") and me["weight_lb"] >= JOINT_FRIENDLY_LB), "how_it_adapts": "Each day is adjusted to his readiness (HRV, resting heart rate, sleep).",
         "note": "Explain it like a coach: the idea, the week in a sentence, and the two habits that matter most. "
                 "When he asks about food or protein, give his own numbers from targets (protein in grams a day, the "
