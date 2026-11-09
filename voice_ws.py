@@ -818,6 +818,7 @@ class Session:
         self._conversation_id: str | None = None  # sent by the client with "start"; a turn may create one
         self._context: dict | None = None  # {"timezone", "location"}, also sent with "start"
         self._warmed_at = 0.0  # last Ollama cache warm-up (warm_cache)
+        self._alarm_until = 0.0  # a wake-up is speaking: his alarm voice (mind.alarm_style), not night-quiet
         self._no_wake = False   # the current listening window opened without the wake word (a follow-up)
         self._speaker_last: tuple[str | None, float] = (None, 0.0)  # last confident speaker match, when
         self._warming: asyncio.Task | None = None
@@ -1523,6 +1524,8 @@ class Session:
         """His voice for whoever is talking: volume and whisper (mind.voice_setting). Read per piece, so a
         change made this turn is already in the reply that confirms it."""
         try:
+            if time.monotonic() < self._alarm_until:
+                return mind.alarm_style(self.user["id"])
             return mind.voice_style(self.user["id"])
         except Exception:  # settings are a nicety: never let them stop a reply
             return {}
@@ -1544,7 +1547,7 @@ class Session:
 
     async def announce(self, *, audio: list[bytes] | None = None, prompt: str = "",
                        conversation_id: str | None = None, context: dict | None = None,
-                       cue: str = "alarm", mode: str = "briefing") -> bool:
+                       cue: str = "alarm", mode: str = "briefing", alarm_try: int = 0) -> bool:
         """Server-initiated speech (alarms): an "alarm" cue, then either audio
         made ahead of time or a live reply to `prompt` (mode "briefing"). The
         session continues in `conversation_id`, so follow-up questions have the
@@ -1557,7 +1560,12 @@ class Session:
         self._said = None
         if self.barge:
             self.barge.reset()
-        await self.ws.send_json({"type": "alarm", "cue": cue})
+        if alarm_try:  # an alarm (alarms.py): its own chime level, and the wake-up isn't night-quiet or whispered
+            self._alarm_until = time.monotonic() + 180
+            await self.ws.send_json({"type": "alarm", "cue": cue, "alarm": True,
+                                     "chime_gain": round(mind.alarm_chime(self.user["id"], alarm_try), 3)})
+        else:
+            await self.ws.send_json({"type": "alarm", "cue": cue})
         self._speech_end = time.monotonic()
         self._chunked = True
         if conversation_id:

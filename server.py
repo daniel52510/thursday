@@ -225,6 +225,9 @@ class VoiceIn(BaseModel):
     voice: Literal["tara", "rocky"] | None = None
     volume: int | None = Field(default=None, ge=1, le=100)   # his voice, percent (mind.voice_style squares it)
     speed: int | None = Field(default=None, ge=65, le=135)   # percent of normal pace
+    alarm_volume: int | None = Field(default=None, ge=10, le=100)  # his voice when an alarm wakes him
+    alarm_chime: int | None = Field(default=None, ge=0, le=100)    # the chime; 0 = none
+    alarm_gentle: bool | None = None                               # chime starts soft and rises
 
 
 # Whose voice speaks to this user (mind.voice_style): the UI's Tara/Rocky toggle. "switch to Tara" by voice
@@ -247,7 +250,8 @@ def get_voice(user: dict = Depends(current_user)):
     import mind
     s = mind.VOICE | {k: v for k, v in initalize_db().get_settings(user["id"]).items() if k in mind.VOICE}
     return {"voice": "tara" if voice_style(user["id"])["voice"] == "tara" else "rocky",
-            "volume": s["voice_volume"], "speed": s["voice_speed"]}
+            "volume": s["voice_volume"], "speed": s["voice_speed"], "alarm_volume": s["alarm_volume"],
+            "alarm_chime": s["alarm_chime"], "alarm_gentle": bool(s["alarm_gentle"])}
 
 
 class AskIn(BaseModel):
@@ -302,7 +306,27 @@ def set_voice(body: VoiceIn, user: dict = Depends(current_user)):
         db.set_setting(user["id"], "voice_volume", body.volume)
     if body.speed is not None:
         db.set_setting(user["id"], "voice_speed", body.speed)
+    for key in ("alarm_volume", "alarm_chime"):
+        if getattr(body, key) is not None:
+            db.set_setting(user["id"], key, getattr(body, key))
+    if body.alarm_gentle is not None:
+        db.set_setting(user["id"], "alarm_gentle", int(body.alarm_gentle))
     return get_voice(user)
+
+
+@app.post("/api/alarms/test")
+async def test_alarm(user: dict = Depends(admin_only)):
+    """The alarm as it will sound, on the satellite now: the chime at his level (as on a third try, full), then a
+    line in his alarm voice. For tuning the levels without waiting for the morning."""
+    import mind
+    if not SATELLITES:
+        raise HTTPException(503, "No satellite is connected")
+    for sat in list(SATELLITES):
+        audio = await synthesize_ahead(sat.http, "Good morning. This is how loud I'll be when I wake you.",
+                                       mind.alarm_style(user["id"]))
+        if audio and await sat.announce(audio=audio, cue="alarm", alarm_try=3):
+            return {"ok": True}
+    raise HTTPException(409, "The satellite is busy right now")
 
 
 class MusicControlIn(BaseModel):

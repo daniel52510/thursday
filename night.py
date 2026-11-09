@@ -89,6 +89,9 @@ def _woke(now: datetime) -> bool:
 def state(now: datetime | None = None) -> dict:
     now = now or _now()
     if o := _override(now):
+        # His Watch ends a "good night" too: a sleep stage that ended after he said it means he's up.
+        if o["mode"] == "night" and _woke(now) and now.timestamp() - o.get("at", 0) > 3 * 3600:
+            return {"night": False, "why": "watch: you're up", "until": None}
         return {"night": o["mode"] == "night", "why": o.get("by", "you"), "until": o["until"]}
     if _in(NIGHT_HOURS, now):
         if _woke(now):
@@ -105,7 +108,7 @@ def quiet(now: datetime | None = None) -> bool:
     """When proactive delivery holds what can wait: an override decides; else the quiet hours."""
     now = now or _now()
     if o := _override(now):
-        return o["mode"] == "night"
+        return o["mode"] == "night" and state(now)["night"]
     return _in(QUIET_HOURS, now) and not _woke(now)
 
 

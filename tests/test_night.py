@@ -67,3 +67,11 @@ def test_bedtime_is_the_sleep_target_before_the_first_alarm(clock, monkeypatch):
     assert night.bedtime(clock["now"]).strftime("%H:%M") == "22:30"
     monkeypatch.setattr(night, "_first_alarm", lambda after: None)
     assert night.bedtime(clock["now"]).strftime("%H:%M") == "23:00"  # THURSDAY_WAKE 07:00, 8 hours
+
+
+def test_watch_and_alarm_end_a_good_night(clock, monkeypatch):
+    night.set_mode("night", "you said good night")                      # 21:30
+    clock["now"] = clock["now"].replace(hour=7, minute=40) + timedelta(days=1)
+    assert night.is_night(clock["now"])                                  # no sign he's up: still night till 11
+    monkeypatch.setattr(night, "_woke", lambda now: True)
+    assert not night.is_night(clock["now"]) and not night.quiet(clock["now"])  # his Watch says he's up

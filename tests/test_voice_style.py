@@ -211,3 +211,26 @@ def test_voice_switch_between_rocky_and_tara(owner_turn):
     assert mind.voice_style("owner", NOON)["voice"] == "tara"
     assert mind.voice_setting({"voice": "rocky"}).data["voice"] == "rocky"
     assert mind.voice_style("owner", NOON)["voice"] == "leo"
+
+
+def test_alarm_voice_is_never_whispered_and_has_its_own_level(owner_turn, monkeypatch):
+    """A wake-up at 6:30 (night hours) or after "good night" was whispered at night volume (2026-11-09)."""
+    import night
+    owner_turn("")
+    monkeypatch.setattr(night, "is_night", lambda now=None: True)
+    mind.voice_setting({"volume": 30, "whisper": True})                      # everyday: quiet and whispered
+    assert mind.voice_style("owner", NIGHT)["whisper"]
+    alarm = mind.alarm_style("owner")
+    assert alarm["whisper"] is False and alarm["volume"] == pytest.approx(0.64)  # default alarm voice 80 %
+    mind.voice_setting({"alarm_volume": 100, "voice": "tara"})
+    assert mind.alarm_style("owner") == {"volume": 1.0, "whisper": False, "voice": "tara"}
+
+
+def test_alarm_chime_level_and_gentle_start(owner_turn):
+    owner_turn("")
+    assert [round(mind.alarm_chime("owner", t), 3) for t in (1, 2, 3, 5)] == [0.09, 0.203, 0.36, 0.36]  # 60 %: soft, rising
+    r = mind.voice_setting({"alarm_chime": 100, "alarm_gentle": False})
+    assert r.data["alarm_chime_volume"] == 100 and r.data["alarm_gentle_start"] is False
+    assert mind.alarm_chime("owner", 1) == 1.0
+    mind.voice_setting({"alarm_chime": 0})
+    assert mind.alarm_chime("owner", 3) == 0.0                               # chime off: just his voice

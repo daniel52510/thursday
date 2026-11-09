@@ -24,11 +24,15 @@ def client(monkeypatch, tmp_path):
 
 
 def test_voice_volume_and_speed(client):
-    assert client.get("/api/voice").json() == {"voice": "rocky", "volume": 100, "speed": 100}
+    alarm = {"alarm_volume": 80, "alarm_chime": 60, "alarm_gentle": True}
+    assert client.get("/api/voice").json() == {"voice": "rocky", "volume": 100, "speed": 100, **alarm}
     assert client.put("/api/voice", json={"volume": 55}).json()["volume"] == 55
-    assert client.put("/api/voice", json={"speed": 90}).json() == {"voice": "rocky", "volume": 55, "speed": 90}
+    assert client.put("/api/voice", json={"speed": 90}).json() == {"voice": "rocky", "volume": 55, "speed": 90, **alarm}
     assert client.put("/api/voice", json={"volume": 0}).status_code == 422      # 1-100 only
     assert client.put("/api/voice", json={"speed": 200}).status_code == 422
+    out = client.put("/api/voice", json={"alarm_chime": 0, "alarm_volume": 95, "alarm_gentle": False}).json()
+    assert (out["alarm_chime"], out["alarm_volume"], out["alarm_gentle"]) == (0, 95, False)
+    assert client.put("/api/voice", json={"alarm_volume": 5}).status_code == 422  # never too quiet to wake him
 
 
 def test_music_now_and_controls(client, monkeypatch):

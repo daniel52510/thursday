@@ -75,7 +75,10 @@ Think for yourself. Return ONLY JSON:
 # How his voice sounds for this user (rocky_voice style): volume, whisper, and speaking speed. Not in
 # SETTINGS: they change the audio, not what he says, so they stay out of the prompt.
 VOICE = {"voice_volume": 100, "whisper": 0, "night_whisper": 1, "normal_until": 0, "voice_speed": 100,
-         "voice_tara": 0}  # 1 = Tara's voice (plain Orpheus "tara"), 0 = Rocky's (leo + rocky_voice.py)
+         "voice_tara": 0,  # 1 = Tara's voice (plain Orpheus "tara"), 0 = Rocky's (leo + rocky_voice.py)
+         # Alarms have their own levels: a wake-up isn't whispered or night-quiet, and the chime isn't a blast.
+         # Gentle: the first chime at half his level, rising to all of it by the third try.
+         "alarm_volume": 80, "alarm_chime": 60, "alarm_gentle": 1}
 VOICE_STEP = 20  # "louder" / "quieter"
 SPEED_STEP = 12  # "faster" / "slower"
 # Night: he whispers on his own, the same hours the satellite plays quieter (satellite NIGHT, 22-7).
@@ -107,6 +110,26 @@ def voice_style(user_id: str, now: datetime | None = None) -> dict:
     return out
 
 
+def _level(pct: float) -> float:
+    return (max(0, min(100, pct)) / 100) ** 2  # perceived loudness, as voice_volume (percent squared)
+
+
+def alarm_style(user_id: str) -> dict:
+    """His voice for a wake-up: the alarm voice volume, never whispered (night or not), his voice and speed."""
+    s = VOICE | {k: v for k, v in initalize_db().get_settings(user_id).items() if k in VOICE}
+    out = {"volume": _level(s["alarm_volume"]), "whisper": False, "voice": "tara" if s["voice_tara"] else "leo"}
+    if s["voice_speed"] != 100:
+        out["tempo"] = max(65, min(135, s["voice_speed"])) / 100
+    return out
+
+
+def alarm_chime(user_id: str, attempt: int = 1) -> float:
+    """The chime's gain for this try: his alarm chime level, softer on the first tries when gentle is on."""
+    s = VOICE | {k: v for k, v in initalize_db().get_settings(user_id).items() if k in VOICE}
+    ramp = (0.5, 0.75, 1.0)[min(max(attempt, 1), 3) - 1] if s["alarm_gentle"] else 1.0
+    return _level(s["alarm_chime"] * ramp)
+
+
 def voice_setting(args: Dict[str, Any]) -> ToolResult:
     """His voice for the speaking user: volume (percent, or louder/quieter), speed, and whisper on/off."""
     user_id = (TURN.get() or {}).get("user")
@@ -133,6 +156,14 @@ def voice_setting(args: Dict[str, Any]) -> ToolResult:
             changed["normal_until"] = int(ends.timestamp())  # "speak normally" at night: until morning
     if isinstance(args.get("night_whisper"), bool):
         changed["night_whisper"] = int(args["night_whisper"])
+    try:
+        for key in ("alarm_volume", "alarm_chime"):
+            if args.get(key) not in (None, ""):
+                changed[key] = max(0 if key == "alarm_chime" else 10, min(100, round(float(args[key]))))
+    except (TypeError, ValueError):
+        return ToolResult(ok=False, tool_name="voice_setting", error="alarm volumes must be numbers")
+    if isinstance(args.get("alarm_gentle"), bool):
+        changed["alarm_gentle"] = int(args["alarm_gentle"])
     if args.get("voice") in ("tara", "rocky"):
         changed["voice_tara"] = int(args["voice"] == "tara")
     if not changed and args.get("report"):  # "what's your volume?"
@@ -150,6 +181,8 @@ def voice_setting(args: Dict[str, Any]) -> ToolResult:
         "voice_volume": after["voice_volume"], "voice_speed": after["voice_speed"],
         "whisper_now": whispering, "night_whisper": bool(after["night_whisper"]),
         "voice": "tara" if after["voice_tara"] else "rocky",
+        **({"alarm_voice_volume": after["alarm_volume"], "alarm_chime_volume": after["alarm_chime"],
+            "alarm_gentle_start": bool(after["alarm_gentle"])} if any(k.startswith("alarm") for k in changed) else {}),
         "note": "It applies to this reply already. Confirm in a few words" + (", softly." if whispering else ".")})
 
 
@@ -157,7 +190,7 @@ VOICE_SCHEMA = {"type": "function", "function": {
     "name": "voice_setting",
     "description": "Your own voice: its volume (separate from music), speaking speed, and whisper mode. "
     "'talk louder', 'your voice to 40', 'talk slower', 'talk faster', 'whisper', 'speak normally', "
-    "'switch to Tara', 'switch back to Rocky'.",
+    "'switch to Tara', 'switch back to Rocky', 'make the alarm chime quieter', 'alarm voice to 90'.",
     "parameters": {"type": "object", "properties": {
         "volume": {"type": "integer", "description": "1-100 percent"},
         "speed": {"type": "integer", "description": "65-135 percent (100 = normal)"},
@@ -165,6 +198,9 @@ VOICE_SCHEMA = {"type": "function", "function": {
         "whisper": {"type": "boolean"},
         "night_whisper": {"type": "boolean", "description": "Whisper on your own at night (22-7), on by default"},
         "voice": {"type": "string", "enum": ["tara", "rocky"], "description": "Whose voice speaks: Tara or Rocky"},
+        "alarm_volume": {"type": "integer", "description": "Your voice when an alarm wakes him, 10-100 ('alarm voice louder')"},
+        "alarm_chime": {"type": "integer", "description": "The alarm chime, 0-100 (0 = no chime, just your voice)"},
+        "alarm_gentle": {"type": "boolean", "description": "Alarm chime starts soft and rises over the first tries"},
         "report": {"type": "boolean", "description": "Just say what your voice volume is now"}}}}}
 
 

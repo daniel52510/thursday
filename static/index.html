@@ -3500,6 +3500,24 @@ const PANES = {
     body.append(...slider("Volume", "volume", 1, 100, v.volume ?? 100, (x) => `${x}%`),
       ...slider("Speaking speed", "speed", 65, 135, v.speed ?? 100, (x) => x === 100 ? "normal" : `${x}%`),
       el("p", { className: "set-p", textContent: "Saying \"talk louder\", \"quieter\" or \"slow down\" to THURSDAY changes the same settings. At night he whispers automatically." }));
+    // Alarms have their own levels (mind.alarm_style / alarm_chime): never whispered or night-quiet.
+    const gentle = el("button", { className: "switch", type: "button", role: "switch" });
+    gentle.setAttribute("aria-checked", String(v.alarm_gentle !== false)); gentle.setAttribute("aria-label", "Gentle start");
+    const gNote = note();
+    gentle.onclick = async () => {
+      const on = gentle.getAttribute("aria-checked") !== "true";
+      try { await call("/api/voice", jsonReq("PUT", { alarm_gentle: on })); gentle.setAttribute("aria-checked", String(on)); say(gNote, on ? "The first chime is soft, then it rises." : "Every chime at full level."); }
+      catch (e) { say(gNote, e.message, true); }
+    };
+    const testNote = note();
+    const test = el("button", { className: "secondary", type: "button", textContent: "Test the alarm on the speaker" });
+    test.onclick = async () => { try { await call("/api/alarms/test", jsonReq("POST", {})); say(testNote, "Playing it on the speaker now."); } catch (e) { say(testNote, e.message, true); } };
+    body.append(el("h3", { className: "set-h", textContent: "Alarm" }),
+      el("p", { className: "set-p", textContent: "How the wake-up sounds, separate from his everyday voice. It's never whispered or night-quiet, and night mode ends when it rings." }),
+      ...slider("Alarm voice", "alarm_volume", 10, 100, v.alarm_volume ?? 80, (x) => `${x}%`),
+      ...slider("Alarm chime", "alarm_chime", 0, 100, v.alarm_chime ?? 60, (x) => x === 0 ? "off" : `${x}%`),
+      el("div", { className: "set-row" }, el("span", { className: "set-p", textContent: "Gentle start: the first chime soft, rising over the next tries" }), gentle), gNote,
+      el("div", { className: "row" }, test), testNote);
     body.append(el("h3", { className: "set-h", textContent: "Night mode" }),
       el("p", { className: "set-p", textContent: "Night runs 10 pm to 7 am, or from when you say \"good night\" (lights fade out, music fades, notifications wait till morning, he whispers and keeps it short) until \"good morning\". Your Watch ends it when you're up." }),
       el("p", { className: "set-p", textContent: "To follow your iPhone's Sleep Focus: Shortcuts → Automation → New → Sleep (or Focus: Sleep) → When turning on → Get Contents of URL: POST to " + location.origin + "/api/night, header Authorization: Bearer <your Siri device token>, JSON body mode = night, by = sleep focus. Make a second one for When turning off with mode = day. Turn off Ask Before Running." }));

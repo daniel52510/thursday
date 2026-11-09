@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 import accounts
+import mind
 from agent_loop import MODEL, OLLAMA_KEEP_ALIVE, OLLAMA_OPTIONS, _post_ollama, initalize_db
 from agent_stream import STYLE, _system_prompt, stream_prompt, strip_voice_tags
 from voice_ws import SATELLITES, synthesize_ahead
@@ -147,7 +148,7 @@ async def _prepare_nudges(alarm: dict, first_line: str, out: list) -> None:
         lines = await asyncio.to_thread(_write_nudges, alarm, user, first_line)
         async with httpx.AsyncClient() as http:
             for line in lines:
-                out.append((line, await synthesize_ahead(http, line)))
+                out.append((line, await synthesize_ahead(http, line, mind.alarm_style(alarm["user_id"]))))
         logger.info("wake-up %s: %d nudges prepared in %d ms", alarm["time"], len(out),
                     round((time.monotonic() - started) * 1000))
     except asyncio.CancelledError:
@@ -199,7 +200,7 @@ async def prepare(alarm: dict, at: datetime) -> dict:
             reply = ev["reply"]
     llm_ms = round((time.monotonic() - started) * 1000)
     async with httpx.AsyncClient() as http:
-        audio = await synthesize_ahead(http, reply)
+        audio = await synthesize_ahead(http, reply, mind.alarm_style(alarm["user_id"]))
     logger.info("briefing for %s prepared: llm_ms=%d tts_ms=%d tools=%s chars=%d chunks=%d", alarm["time"], llm_ms,
                 round((time.monotonic() - started) * 1000) - llm_ms, ",".join(tools) or "none", len(reply), len(audio))
     return {"conversation_id": conv["id"], "audio": audio, "prompt": prompt, "reply": reply}
@@ -232,13 +233,17 @@ async def _ring(alarm: dict, at: datetime, now: datetime) -> bool:
     for sat in list(SATELLITES):
         if prepared and prepared["audio"]:
             conv_id = prepared["conversation_id"]
-            ok = await sat.announce(audio=prepared["audio"], conversation_id=conv_id, cue=cue)
+            ok = await sat.announce(audio=prepared["audio"], conversation_id=conv_id, cue=cue, alarm_try=1)
         else:
             conv_id = initalize_db().create_conversation("Wake-up" if mode == "wake" else "Morning briefing",
                                                          alarm["user_id"])["id"]
-            ok = await sat.announce(prompt=prompt, conversation_id=conv_id, context=_context(alarm), cue=cue, mode=mode)
+            ok = await sat.announce(prompt=prompt, conversation_id=conv_id, context=_context(alarm), cue=cue, mode=mode,
+                                    alarm_try=1)
         if ok:
             _prepared.pop(key, None)
+            import night
+            night.set_mode("day", "alarm rang")  # the morning starts: full voice, no whisper, notifications flow
+            await night.broadcast()
             logger.info("alarm %s rang with %s briefing", alarm["time"], "a prepared" if prepared else "a live")
             if mode == "wake":
                 _start_wakeup(alarm, sat, conv_id, prepared["reply"] if prepared else "")
@@ -288,9 +293,9 @@ async def _keep_waking(alarm: dict, sat, conversation_id: str, first_line: str =
             # The prepared lines assume silence; after an answer she reacts to it live.
             line, audio = ready[tries] if len(ready) > tries and not answered else ("", None)
             if audio:
-                ok = await sat.announce(audio=audio, conversation_id=conversation_id, cue=cue)
+                ok = await sat.announce(audio=audio, conversation_id=conversation_id, cue=cue, alarm_try=tries + 1)
             else:
-                ok = await sat.announce(prompt=prompt, conversation_id=conversation_id,
+                ok = await sat.announce(prompt=prompt, conversation_id=conversation_id, alarm_try=tries + 1,
                                         context=_context(alarm), cue=cue, mode="wake")
             if not ok:
                 continue  # busy this instant; a conversation in progress will idle again

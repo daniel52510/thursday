@@ -376,6 +376,7 @@ class Player:
         self._mgain = 0.0             # music gain now, ramped toward its target block by block
         self.ducking = lambda: False  # set by the satellite: is anyone talking to him?
         self.voice_gain = 1.0         # his voice volume for the cues and clips (server "voice"); replies have it already
+        self.alarm_until = 0.0        # an alarm is speaking: its speech already has the alarm level, no night gain
         self._ref_base: int | None = None  # mic sample index where this aplay's sample 0 plays
         self.gain = 1.0  # for the current reply stream
         self.rate = self.RATE  # of the current reply stream
@@ -615,7 +616,7 @@ class Player:
     async def start_stream(self, rate: int) -> None:
         """A reply follows in pieces (write); they join with no gap."""
         self._replace()
-        self.gain = night_gain()
+        self.gain = 1.0 if time.monotonic() < self.alarm_until else night_gain()
         self.rate = rate
         self._stream_heard, self._silent_run = False, 0
         self.underruns = self.underrun_ms = 0
@@ -1122,14 +1123,22 @@ class Satellite:
                 self.voice = str(ev.get("name") or self.voice)
             elif kind == "alarm":
                 # The server is about to speak unprompted: a cue first, speech waits for it.
-                # Alarms ring at full volume, night or not; announcements get the soft ping.
+                # An alarm sends its own chime level (his setting, softer on the first tries) and its speech
+                # is already at his alarm voice level: no night gain on either. Announcements: the soft ping.
                 cue = ev.get("cue", "alarm")
-                log.info(cue)
+                alarm = bool(ev.get("alarm"))
+                chime = max(0.0, min(1.0, float(ev.get("chime_gain", 1.0))))
+                log.info("%s%s", cue, f" (alarm, chime {chime:.2f})" if alarm else "")
                 await self.stop_playback()
                 self.state = "alarm"
-                self._chime = asyncio.create_task(
-                    self.player.play_file_and_wait(PING_WAV) if cue == "announce"
-                    else self.player.play_file_and_wait(ALARM_WAV, gain=1.0))
+                if alarm:
+                    self.player.alarm_until = time.monotonic() + 180
+                sound = PING_WAV if cue == "announce" else ALARM_WAV
+                if alarm and chime == 0:
+                    self._chime = asyncio.create_task(asyncio.sleep(0))  # chime off: straight to his voice
+                else:
+                    self._chime = asyncio.create_task(self.player.play_file_and_wait(
+                        sound, gain=chime if alarm else (None if cue == "announce" else 1.0)))
             elif kind == "overlay":
                 # A backchannel while the user talks: only when nothing else is playing. The server
                 # stops listening until overlay_ended (no echo cancellation here), so always answer.
