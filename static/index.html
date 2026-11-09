@@ -1986,7 +1986,8 @@ async function loadPlan() {
   box.append(chips);
   const d = plan.days.find((x) => x.date === MP.day);
   const sum = document.createElement("p"); sum.className = "mp-sum";
-  sum.textContent = `${d.weekday}: ${d.kind} day · ${d.totals.kcal.toLocaleString()} of ${d.targets.kcal.toLocaleString()} kcal · P ${d.totals.protein} / C ${d.totals.carbs} / F ${d.totals.fat} g`;
+  sum.textContent = `${d.weekday}: ${d.kind} day · ${d.totals.kcal.toLocaleString()} of ${d.targets.kcal.toLocaleString()} kcal · P ${d.totals.protein} / C ${d.totals.carbs} / F ${d.totals.fat} g`
+    + (d.adjusted ? ` · resized today (${d.adjusted})` : "");
   box.append(sum);
   d.meals.forEach((m, i) => {
     const c = document.createElement("div"); c.className = "mp-meal";

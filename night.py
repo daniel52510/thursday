@@ -391,8 +391,17 @@ async def run() -> None:
                 day = (now - timedelta(hours=6)).date().isoformat()
                 if 0 < lead <= 30 and nudged != day and not (_override(now) or {}).get("mode") == "night":
                     nudged = day
-                    line = (f"Bed by {bed.strftime('%-I:%M')} gets you your {SLEEP_TARGET_H:g} hours. "
-                            "Say good night when you're heading in and I'll handle the lights.")
+                    line = f"Bed by {bed.strftime('%-I:%M')} gets you your {SLEEP_TARGET_H:g} hours."
+                    try:  # his real pattern (coach.sleep_pattern): when he's actually been falling asleep
+                        import coach
+                        p = await asyncio.to_thread(coach.sleep_pattern)
+                        if p.get("usual_onset"):
+                            h, m = map(int, p["usual_onset"].split(":"))
+                            line += f" You've been falling asleep around {(h % 12) or 12}:{m:02d}"
+                            line += f" and averaging {p['avg_minutes'] // 60} h {p['avg_minutes'] % 60:02d}." if p.get("avg_minutes") else "."
+                    except Exception:
+                        pass
+                    line += " Say good night when you're heading in and I'll handle the lights."
                     await proactive.deliver("Wind down", line, tag="crescent_moon", urgent=True)
         except asyncio.CancelledError:
             raise

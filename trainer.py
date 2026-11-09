@@ -191,13 +191,32 @@ def training_today(args: Dict[str, Any]):
     elif felt == "great" and mode == "as planned" and ((ready or {}).get("score") or 0) >= 70:
         mode = "push"
         why += " He feels great and his body agrees: a day to push."
+    import coach  # what actually happened: a missed session, how he ate yesterday, how he's sleeping
+    moved, plan_day = None, day
+    if not args.get("tomorrow"):
+        fed = coach.fuel_yesterday(day)
+        if fed["underfed"]:
+            why += (f" He ate {fed['kcal']:,} of {fed['kcal_target']:,} kcal and {fed['protein']} g protein yesterday: "
+                    "fuel first, no max efforts today.")
+            if mode == "push":
+                mode = "as planned"
+        if mode != "recover" and (moved := coach.missed_session(day)):
+            plan_day = moved["day"]
+            title, exercises = _session(moved["weekday"], me.get("weight_lb"), "apartment" in str(me.get("home_equipment") or ""))
+            why += f" {moved['from']}'s session didn't happen, so it moves to today."
     if mode == "recover":
         title, exercises = WEEK[6]
     # This week so far, from his synced Watch workouts.
     rows = health.daily(7)
     done = [w for d in rows for w in d.get("workouts", []) if w.get("minutes", 0) >= 8]
     import lifts  # his journal sets the weights: what he lifted last time, and whether it's time to go up
-    loads = {} if mode == "recover" else {x["exercise"]: x for x in lifts.plan(day)["lifts"]}
+    loads = {} if mode == "recover" else {x["exercise"]: x for x in lifts.plan(plan_day)["lifts"]}
+    if loads and not args.get("tomorrow") and coach.short_streak(day) >= 2:
+        for x in loads.values():  # two short nights running: the weights come down 5 %
+            if x["weight_lb"]:
+                lighter = round(x["weight_lb"] * 0.95 / 5) * 5
+                x["weight_lb"] = max(5.0, lighter if lighter < x["weight_lb"] else x["weight_lb"] - 5)  # 50 → 45, not 47.5 → 50
+        why += " Two short nights in a row: the weights come down about 5 %."
     if mode == "lighter":
         for x in loads.values():
             x["sets"] = max(2, round(x["sets"] * 2 / 3))
@@ -207,7 +226,7 @@ def training_today(args: Dict[str, Any]):
         "loads": [{"exercise": x["exercise"], "do": f"{x['sets']} x {x['reps']}" + (
             f" at {x['weight_lb']:g} lb" if x["weight_lb"] else " bodyweight" if x["weight_lb"] == 0 else ""),
             "last_time": x["last"], "why": x["why"]} for x in loads.values()],
-        "nutrition": _food_view(), "feeling_this_morning": felt,
+        "nutrition": _food_view(), "feeling_this_morning": felt, "moved_from": moved["from"] if moved else None,
         "todays_protein_theme": food.protein_theme(day) if food.prefs()["waterson"]["rotation"] else None,
         "workouts_last_7_days": len(done), "him": me, "targets": targets(me),
         "note": "You're his personal trainer. Say the session in a sentence or two (the focus and the first couple "

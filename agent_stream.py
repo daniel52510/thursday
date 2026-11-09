@@ -52,6 +52,7 @@ import music
 import health
 import lights
 import asks
+import coach
 import food
 import lifts
 import mealplan
@@ -622,7 +623,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + gmail_tool.TOOL_SCHEMAS + email_threads.TOOL_SCHEMAS + asks.TOOL_SCHEMAS + night.TOOL_SCHEMAS + lifts.TOOL_SCHEMAS + food.TOOL_SCHEMAS + mealplan.TOOL_SCHEMAS + trainer.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + gmail_tool.TOOL_SCHEMAS + email_threads.TOOL_SCHEMAS + asks.TOOL_SCHEMAS + night.TOOL_SCHEMAS + lifts.TOOL_SCHEMAS + food.TOOL_SCHEMAS + mealplan.TOOL_SCHEMAS + coach.TOOL_SCHEMAS + trainer.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -887,7 +888,7 @@ _ASKED_MISSION_GOAL = re.compile(
 )
 _CANCEL_PENDING = re.compile(r"^\W*(?:no|nah|nope|never\s*mind|cancel|stop|abort|forget\s+it|don'?t|not\s+now)\b", re.I)
 # Tools that only read: a reply after them can still claim something no tool did (the claim guard keeps checking).
-_LOOKUP_TOOLS = {"reminder_list", "food_today", "meal_plan", "lift_history", "email_threads", "email_inbox", "email_search", "email_read", "training_today", "training_plan",
+_LOOKUP_TOOLS = {"reminder_list", "coach_today", "food_today", "meal_plan", "lift_history", "email_threads", "email_inbox", "email_search", "email_read", "training_today", "training_plan",
                  "mission_status", "get_time", "get_weather", "web_search", "calendar_events", "health_check",
                  "list_show", "note_find", "system_status", "music_now", "light_status", "alarm_list", "watch_list",
                  "routine_list", "approval_list", "improve_status", "project_list", "sports_scores", "launch_schedule",

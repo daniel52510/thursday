@@ -456,14 +456,38 @@ async def mealplan_source() -> None:
     await asyncio.to_thread(mealplan.start, "next")
 
 
+async def coach_source() -> None:
+    """Each morning, once he's up: the coach's briefing (coach.briefing), after his check-in or by 9:30. And all
+    day: today's meal plan keeps up with today's numbers (mealplan.refresh_today)."""
+    import coach
+    import food
+    import mealplan
+    import night
+    import proactive
+    try:
+        await asyncio.to_thread(mealplan.refresh_today)
+    except Exception:
+        logger.exception("meal plan refresh")
+    now = food._now()
+    key = f"coach:{now.date().isoformat()}"
+    if not 6 <= now.hour < 12 or night.is_night(now) or seen(key):
+        return
+    waiting = food.prefs()["waterson"]["checkin"] and not food.checkin_today() and food._day_kind(now) != "rest"
+    if waiting and (now.hour, now.minute) < (9, 30):
+        return
+    mark_seen(key)
+    b = await asyncio.to_thread(coach.briefing)
+    await proactive.deliver("Today's plan", b["text"], tag="muscle")
+
+
 HANDLERS.update(checkin=_checkin_handler, email=_email_handler, promise=_promise_handler, lifts=_lifts_handler, alarm_check=_alarm_check_handler)
 
 
 async def run() -> None:
     await asyncio.sleep(90)
     while True:
-        for source in (email_source, promise_source, lift_source, nutrition_source, checkin_source, fuel_source,
-                       mealplan_source):
+        for source in (email_source, promise_source, lift_source, nutrition_source, checkin_source, coach_source,
+                       fuel_source, mealplan_source):
             try:
                 await source()
             except asyncio.CancelledError:

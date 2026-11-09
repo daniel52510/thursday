@@ -201,12 +201,22 @@ def plan_today(day: datetime | None = None) -> dict:
         pace = next((p for gap, p in PACE if to_go > gap), 0.0)
         deficit = min(pace * 500, tdee * MAX_DEFICIT)
         kcal = max(MIN_KCAL, tdee - deficit)
+        if deficit and day.date() == _now().date():
+            import coach  # under 6 h last night: a smaller deficit today (short sleep on a diet costs more muscle)
+            slept = coach.last_night(day)
+            if slept is not None and slept < coach.SHORT_NIGHT_MIN:
+                kcal = min(tdee, kcal + coach.SHORT_SLEEP_KCAL)
+                why.append(f"+{coach.SHORT_SLEEP_KCAL} after a short night ({slept // 60} h {slept % 60:02d})")
         why.append(f"maintenance {tdee:,.0f}; {to_go:.0f} lb from {goal:.0f}, so losing {deficit / 500:.1f} lb a week "
                    f"(−{deficit:,.0f})" if pace else f"maintenance {tdee:,.0f}; at your goal, so no deficit")
-    kind = _day_kind(day)
+    kind, how = _day_kind(day), "planned"
+    if day.date() <= _now().date():  # today and before: what he did, not the plan (coach.effective_kind)
+        import coach
+        kind, how = coach.effective_kind(day)
     kcal += DAY_SHIFT[kind]
-    if DAY_SHIFT[kind]:
-        why.append(f"{'+' if DAY_SHIFT[kind] > 0 else '−'}{abs(DAY_SHIFT[kind])} for a {kind} day")
+    if DAY_SHIFT[kind] or how != "planned":
+        why.append(f"{'+' if DAY_SHIFT[kind] > 0 else '−' if DAY_SHIFT[kind] else '±'}{abs(DAY_SHIFT[kind])} for a {kind} day"
+                   + (f" ({how})" if how != "planned" else ""))
     own = _own_kcal()
     if own:
         kcal = own + DAY_SHIFT[kind]

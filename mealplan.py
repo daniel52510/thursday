@@ -220,6 +220,38 @@ def start(which: str = "this", notify: bool = True) -> str:
     return "started"
 
 
+REFRESH_KCAL = 150
+
+
+def refresh_today() -> str | None:
+    """Today's plan follows today's numbers: when they've moved more than REFRESH_KCAL (a skipped session, a short
+    night, a new weigh-in), the meals he hasn't eaten are resized to what's left. Why it changed, or None."""
+    import food
+    now = food._now()
+    with _lock:
+        data = _load()
+        week = data.get(key(week_start("this")))
+        d = next((x for x in (week or {}).get("days", []) if x["date"] == now.date().isoformat()), None)
+        if not d:
+            return None
+        t = food.plan_today(now)
+        if abs(t["kcal"] - d["targets"]["kcal"]) <= REFRESH_KCAL:
+            return None
+        eaten = set(d.get("eaten", []))
+        left = [m for i, m in enumerate(d["meals"]) if i not in eaten]
+        if not left:
+            return None
+        done = sum(m["kcal"] for i, m in enumerate(d["meals"]) if i in eaten)
+        _scale(left, (t["kcal"] - done) / max(1, sum(m["kcal"] for m in left)))
+        before = d["targets"]["kcal"]
+        d["targets"] = {k: t[k] for k in ("kcal", "protein", "carbs", "fat")}
+        d["totals"] = _totals(d["meals"])
+        d["adjusted"] = f"{before:,} → {t['kcal']:,} kcal: {t['why']}"
+        _save(data)
+    logger.info("meal plan %s resized: %s", d["date"], d["adjusted"])
+    return d["adjusted"]
+
+
 def today() -> dict | None:
     import food
     week = get("this")
