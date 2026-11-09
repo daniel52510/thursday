@@ -1,5 +1,6 @@
 import asyncio
 import json
+from urllib.parse import parse_qsl
 import logging
 import os
 import threading
@@ -293,10 +294,30 @@ async def ask(body: AskIn, user: dict = Depends(current_user)):
     return {"reply": text or "Sorry, I didn't get anything back.", "conversation_id": cid}
 
 
+async def _shortcut_body(request: Request) -> AskIn:
+    """What a Shortcut sends, however it was set up: JSON or Form, and "text" in any case ("Text" is what the field
+    box suggests). A 422 for these was silent on the phone (2026-11-09); now it says what was missing."""
+    raw = await request.body()
+    try:
+        data = json.loads(raw) if raw[:1] in (b"{", b"[") else dict(parse_qsl(raw.decode("utf-8", "replace")))
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    lower = {str(k).strip().lower(): v for k, v in data.items()}
+    text = " ".join(str(lower.get("text") or "").split())[:2000]
+    if not text:
+        logging.getLogger("thursday.voice").warning("phone: no text in the request (fields: %s, type %s)",
+                                                    sorted(lower)[:8], request.headers.get("content-type", "?"))
+        raise HTTPException(status_code=422, detail="Send what he said in a field named text")
+    return AskIn(text=text, conversation_id=lower.get("conversation_id") or None)
+
+
 @app.post("/api/phone")
-async def phone_turn(body: AskIn, user: dict = Depends(current_user)):
+async def phone_turn(request: Request, user: dict = Depends(current_user)):
     """The iPhone Shortcut ("Hey Siri, THURSDAY", phone.py): his words in; what to say, and the one thing his phone
     should do (call, message, open, timer), out. Follow-ups within 10 minutes keep the conversation."""
+    body = await _shortcut_body(request)
     cid = body.conversation_id
     if not cid and (last := _siri_threads.get(user["id"])) and time.time() - last[1] < 600:
         cid = last[0]

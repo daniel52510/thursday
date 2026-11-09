@@ -69,3 +69,26 @@ def test_phone_requests_are_recognised(said, hit):
 def test_phone_tools_are_only_for_phone_turns():
     names = {t["function"]["name"] for t in agent_stream.TOOLS}
     assert not names & {"phone_call", "phone_message", "phone_music"}
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"json": {"text": "what time is it"}}, {"json": {"Text": "what time is it"}}, {"json": {" TEXT ": "what time is it"}},
+    {"data": {"text": "what time is it"}}, {"data": {"Text": "what time is it"}}])
+def test_shortcut_body_any_shape(kwargs, monkeypatch):
+    """JSON or Form, "text" in any case: a Shortcut's field boxes make all of these."""
+    from fastapi.testclient import TestClient
+    import server
+    monkeypatch.setattr(server, "stream_prompt", _fake_stream)
+    server.app.dependency_overrides[server.current_user] = lambda: {"id": "owner"}
+    try:
+        r = TestClient(server.app).post("/api/phone", **kwargs)
+        assert r.status_code == 200 and r.json()["speak"] == "It's noon."
+        assert TestClient(server.app).post("/api/phone", json={"words": "hi"}).status_code == 422
+    finally:
+        server.app.dependency_overrides.clear()
+
+
+async def _fake_stream(text, mode, conversation_id=None, context=None, user=None):
+    assert text == "what time is it" and context["channel"] == "phone"
+    yield {"type": "conversation", "id": "c1"}
+    yield {"type": "done", "reply": "It's noon."}
