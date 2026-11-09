@@ -31,7 +31,7 @@ PREFS_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "phone.jso
 MUSIC_APPS = {
     "youtube": ("YouTube Music", "https://music.youtube.com/search?q={q}"),
     "apple": ("Apple Music", "https://music.apple.com/us/search?term={q}"),
-    "spotify": ("Spotify", "spotify:search:{q}"),
+    "spotify": ("Spotify", "https://open.spotify.com/search/{q}"),  # https like the rest: the Shortcut opens it only if it contains "http"
 }
 
 

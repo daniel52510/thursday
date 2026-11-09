@@ -109,3 +109,17 @@ async def _fake_stream(text, mode, conversation_id=None, context=None, user=None
     assert text == "what time is it" and context["channel"] == "phone"
     yield {"type": "conversation", "id": "c1"}
     yield {"type": "done", "reply": "It's noon."}
+
+
+def test_every_link_is_https_for_the_shortcuts_check():
+    """The Shortcut opens url only when it "contains http" (its "has any value" passed with no url, 2026-11-09)."""
+    box, t = _turn()
+    try:
+        for app in phone.MUSIC_APPS:
+            phone.set_prefs(app)
+            phone.phone_music({"query": "Tame Impala"})
+            assert box["url"].startswith("https://")
+        phone.phone_directions({"destination": "home"})
+        assert box["url"].startswith("https://")
+    finally:
+        phone.ACTION.reset(t)
