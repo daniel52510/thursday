@@ -249,6 +249,8 @@ class MemoryDB:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(messages)")}
         if "conversation_id" not in cols:
             conn.execute("ALTER TABLE messages ADD COLUMN conversation_id TEXT")
+        if "attachments_json" not in cols:
+            conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT")  # photos/documents sent with it
         conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id)")
         span = conn.execute(
             "SELECT MIN(created_at) AS first, MAX(created_at) AS last FROM messages WHERE conversation_id IS NULL"
@@ -768,12 +770,14 @@ class MemoryDB:
         tool_args: Optional[dict] = None,
         tool_result: Optional[dict] = None,
         conversation_id: Optional[str] = None,
+        attachments: Optional[list] = None,
     ) -> None:
         now = now_iso()
         with self._connect() as conn:
             conn.execute("""
-                INSERT INTO messages(role, content, tool_name, tool_args_json, tool_result_json, created_at, conversation_id)
-                         VALUES (?,?,?,?,?,?,?)
+                INSERT INTO messages(role, content, tool_name, tool_args_json, tool_result_json, created_at, conversation_id,
+                                     attachments_json)
+                         VALUES (?,?,?,?,?,?,?,?)
                          """, (
                              role,
                              content,
@@ -782,6 +786,7 @@ class MemoryDB:
                              json.dumps(tool_result, ensure_ascii=False) if tool_result is not None else None,
                              now,
                              conversation_id,
+                             json.dumps(attachments, ensure_ascii=False) if attachments else None,
                          ))
             if conversation_id:
                 # Most recently used conversations sort to the top of the sidebar.
@@ -810,7 +815,7 @@ class MemoryDB:
         where, args = ("WHERE conversation_id = ?", (conversation_id, limit)) if conversation_id else ("", (limit,))  # constant SQL text
         with self._connect() as conn:
             rows = conn.execute(f"""
-                SELECT role, content, tool_name, tool_args_json, tool_result_json, created_at
+                SELECT role, content, tool_name, tool_args_json, tool_result_json, created_at, attachments_json
                 FROM messages
                 {where}
                 ORDER BY id DESC
@@ -826,6 +831,7 @@ class MemoryDB:
                 "tool_args": json.loads(r["tool_args_json"]) if r["tool_args_json"] else None,
                 "tool_result": json.loads (r["tool_result_json"]) if r["tool_result_json"] else None,
                 "created_at": r["created_at"],
+                "attachments": json.loads(r["attachments_json"]) if r["attachments_json"] else None,
             })
         return out
 

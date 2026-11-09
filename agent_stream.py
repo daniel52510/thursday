@@ -1067,6 +1067,13 @@ def _context_note(ctx: dict) -> str:
     return " ".join(lines)
 
 
+def _with_attachments(text: str, rows: list[dict]) -> str:
+    """A user turn as the model reads it: each document's text (marked as not instructions) and a line per photo,
+    then what he typed. The pixels themselves ride only on the turn they're sent (_stream_prompt)."""
+    import attachments
+    return "\n\n".join([*(attachments.for_model(r) for r in rows), text])
+
+
 def _build_messages(
     db, user: dict, user_prompt: str, mode: str, conversation_id: str, ctx: dict
 ) -> tuple[list[dict], list[dict]]:
@@ -1122,6 +1129,10 @@ def _build_messages(
         if m["role"] not in ("user", "assistant") or not m["content"]:
             continue
         turn = {"role": m["role"], "content": m["content"]}
+        if m["role"] == "user" and m.get("attachments"):
+            import attachments
+            rows = [r for a in m["attachments"] if (r := attachments.get(user["id"], a["id"]))]
+            turn["content"] = _with_attachments(m["content"], rows)
         if m["role"] == "assistant" and pending:
             turn["tools"] = pending
         pending = []
@@ -1373,6 +1384,7 @@ async def _stream_prompt(
     *,
     user: dict,
     no_wake: bool = False,
+    attachments: list[dict] | None = None,  # rows from attachments.get: photos and documents sent with this turn
 ) -> AsyncIterator[dict[str, Any]]:
     started = time.monotonic()
     timing: dict[str, int] = {}
@@ -1407,7 +1419,13 @@ async def _stream_prompt(
         # A follow-up window: the mic stayed open after his last reply, no wake word. Not everything said in the
         # room is for THURSDAY (a coworker, the TV, someone reading aloud): those he lets pass, silently.
         messages.insert(-1, {"role": "system", "content": SKIP_NOTE})
-    db.log_message(role="user", content=user_prompt, conversation_id=cid)
+    if attachments:
+        import attachments as uploads
+        messages[-1]["content"] = _with_attachments(user_prompt, attachments)
+        if images := [uploads.image_b64(r) for r in attachments if r["kind"] == "image"]:
+            messages[-1]["images"] = images
+    db.log_message(role="user", content=user_prompt, conversation_id=cid,
+                   attachments=[uploads.meta(r) for r in attachments] if attachments else None)
     # What calendar_confirm checks (and whose calendar); to_thread copies it into the tool's thread.
     missions.touch()  # a turn is starting: background missions give up the GPU
     calendar_turn.set({"conversation": cid, "turn": uuid.uuid4().hex, "user_said": user_prompt, "user": user["id"],

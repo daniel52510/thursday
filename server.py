@@ -103,6 +103,7 @@ class StreamChatIn(BaseModel):
     text: str
     conversation_id: str | None = None  # omitted: start a new conversation
     context: dict | None = None  # {"timezone", "location"} from the page
+    attachments: list[str] = []  # upload ids from /api/upload, sent with this message
 
 
 # ---------------- who is asking ----------------
@@ -811,10 +812,37 @@ def conversation_messages(conversation_id: str, limit: int = 500, user: dict = D
         raise HTTPException(status_code=404, detail="conversation not found")
     rows = db.recent_messages(min(limit, 2000), conversation_id=conversation_id)
     return [
-        {"role": m["role"], "content": m["content"], "created_at": m["created_at"]}
+        {"role": m["role"], "content": m["content"], "created_at": m["created_at"],
+         **({"attachments": m["attachments"]} if m.get("attachments") else {})}
         for m in rows
-        if not m["tool_name"] and m["role"] in ("user", "assistant") and m["content"]
+        if not m["tool_name"] and m["role"] in ("user", "assistant") and (m["content"] or m.get("attachments"))
     ]
+
+
+class UploadIn(BaseModel):
+    name: str
+    data: str  # base64 (a data: URL is fine too)
+
+
+@app.post("/api/upload")
+def upload(body: UploadIn, user: dict = Depends(current_user)):
+    """A photo or document for the next chat message; returns its id and what the page shows."""
+    import attachments
+    try:
+        return attachments.save(user["id"], body.name, body.data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/upload/{upload_id}")
+def upload_file(upload_id: str, user: dict = Depends(current_user)):
+    """One of his own uploads, for the chat's thumbnails and document links."""
+    import attachments
+    row = attachments.get(user["id"], upload_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(row["path"], media_type=row["mime"], filename=row["name"],
+                        content_disposition_type="inline", headers={"Cache-Control": "private, max-age=86400"})
 
 
 class RenameIn(BaseModel):
@@ -1452,11 +1480,16 @@ def abort_mission(mission_id: str, user: dict = Depends(owner_only)):
 async def api_chat(body: StreamChatIn, user: dict = Depends(current_user)):
     # Server-sent events: one `data: {...}` line per stream_prompt event.
     # If the client disconnects (stop button), the generator is closed and Ollama stops.
+    import attachments
+    rows = [r for i in body.attachments[:attachments.MAX_PER_MESSAGE] if (r := attachments.get(user["id"], i))]
+    text = body.text.strip() or ("" if not rows else "What do you make of this?" if any(r["kind"] == "image" for r in rows)
+                                 else "Have a look at this.")
+
     async def events():
         started = time.monotonic()
         try:
-            async for ev in stream_prompt(body.text, mode="chat", conversation_id=body.conversation_id,
-                                          context=body.context, user=user):
+            async for ev in stream_prompt(text, mode="chat", conversation_id=body.conversation_id,
+                                          context=body.context, user=user, attachments=rows or None):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as exc:
             logger.exception("api_chat failed: stage=LLM chars=%d elapsed_ms=%d",
