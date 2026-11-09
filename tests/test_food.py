@@ -107,3 +107,12 @@ def test_weight_by_voice_and_the_weekly_summary(monkeypatch):
     asyncio.run(asks.nutrition_source())
     asyncio.run(asks.nutrition_source())                              # once a week
     assert len(told) == 1 and "Today's target is" in told[0] and "maintenance" in told[0]
+
+
+def test_day_kinds_follow_the_week():
+    import importlib
+    from datetime import datetime, timedelta
+    fresh = importlib.reload(importlib.import_module("food"))       # the real _day_kind, not the fixture's
+    monday = datetime(2026, 11, 9, 12, tzinfo=fresh._now().tzinfo)
+    kinds = [fresh._day_kind(monday + timedelta(days=i)) for i in range(7)]
+    assert kinds == ["lift", "lift", "cardio", "lift", "lift", "cardio", "rest"]

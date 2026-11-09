@@ -130,3 +130,7 @@ def test_custom_exercise_is_kept_for_next_time_and_a_workout_saves_in_one_go():
 def test_history_spans_a_lifts_name_variants():
     _log("Dumbbell bench press", "2026-11-02", 45, [12, 12, 12, 12])               # picked from the library
     assert lifts.next_weight("Dumbbell bench press (3 s down)", 4, 8, 12)["weight_lb"] == 50  # the program's name
+
+
+def test_intervals_are_not_sets_of_reps():
+    assert lifts.parse("8 x 1 min hard / 1 min easy") is None and lifts.parse("4 x 6-8") == (4, 6, 8)

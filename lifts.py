@@ -235,8 +235,8 @@ def _say_sets(sets: list[dict]) -> str:
 def parse(prescription: str) -> tuple[int, int, int] | None:
     """"4 x 6-8, heavy" → (4, 6, 8); "3 x 12 each leg" → (3, 12, 12); anything timed or unnumbered → None."""
     m = _PRESCRIPTION.search(prescription or "")
-    if not m:
-        return None
+    if not m or re.match(r"\s*(?:min|sec|s\b)", prescription[m.end():]):
+        return None  # "8 x 1 min hard / 1 min easy" is intervals, not sets of reps
     lo = int(m[2])
     return int(m[1]), lo, int(m[3] or lo)
 

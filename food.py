@@ -102,15 +102,13 @@ def current_weight() -> float | None:
 
 
 def _day_kind(day: datetime) -> str:
-    try:
-        import lifts
-        if lifts.plan(day)["lifts"]:
-            return "lift"
-    except Exception:
-        pass
+    """From the session's own title: conditioning and easy cardio days, the rest day, and lifting otherwise
+    (push, pull, legs, the Bond circuit)."""
     import trainer
     title = trainer.WEEK[day.weekday()][0].lower()
-    return "rest" if "rest" in title else "cardio"
+    if "rest" in title:
+        return "rest"
+    return "cardio" if re.search(r"conditioning|cardio|zone 2", title) else "lift"
 
 
 def _active_kcal() -> float | None:
