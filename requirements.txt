@@ -16,3 +16,4 @@ tzdata==2025.3
 caldav==2.2.6
 cryptography==50.0.2
 trafilatura==2.0.0
+pypdf==6.21.4
