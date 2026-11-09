@@ -1420,7 +1420,7 @@ async def _stream_prompt(
         if on_phone and name in drop:
             # The prompt names music_play and call_place, so the model calls them by name even when they aren't
             # offered: on his phone they become the phone's own (phone.py).
-            name, args = (("phone_music", {"query": args.get("query") or ""}) if name == "music_play"
+            name, args = (("phone_music", {"query": args.get("query") or "", "kind": args.get("kind") or ""}) if name == "music_play"
                           else ("phone_call", {"contact": args.get("to") or args.get("contact") or ""})
                           if name == "call_place" else (name, args))
         if refused := await speaker.gate(name):  # a sensitive tool, and the voice isn't his (satellite only)

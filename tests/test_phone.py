@@ -123,3 +123,49 @@ def test_every_link_is_https_for_the_shortcuts_check():
         assert box["url"].startswith("https://")
     finally:
         phone.ACTION.reset(t)
+
+
+def test_apple_music_opens_the_page_itself_from_the_artists_catalog(monkeypatch):
+    import httpx
+
+    def fake_get(url, params=None, **kw):
+        if url.endswith("/search"):     # the artist
+            data = {"results": [{"artistId": 1, "artistName": "Tame Impala", "artistLinkUrl": "https://music.apple.com/a/1?uo=4"}]}
+        else:                           # that artist's songs
+            data = {"results": [{"trackName": "The Less I Know the Better (Club Edit)", "trackViewUrl": "https://music.apple.com/x?i=1&uo=4"},
+                                {"trackName": "The Less I Know the Better", "trackViewUrl": "https://music.apple.com/y?i=2&uo=4"},
+                                {"trackName": "Borderline", "trackViewUrl": "https://music.apple.com/z?i=3&uo=4"}]}
+        return type("R", (), {"json": lambda self: data})()
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert phone._apple_page("The Less I Know The Better", "song", "Tame Impala") == "https://music.apple.com/y?i=2"
+    assert phone._apple_page("Tame Impala", "artist") == "https://music.apple.com/a/1"
+    assert phone._apple_page("The Less I Know The Better", "song") is None   # no artist: the search page, not a guess
+    phone.set_prefs("apple")
+    box, t = _turn()
+    try:
+        assert phone.phone_music({"query": "The Less I Know The Better", "artist": "Tame Impala", "kind": "song"}).data["straight_to_it"]
+        assert box["url"] == "https://music.apple.com/y?i=2"
+        phone.phone_music({"query": "workout", "kind": "playlist"})            # playlists: the search page
+        assert "search?term=workout" in box["url"]
+    finally:
+        phone.ACTION.reset(t)
+
+
+def test_kind_and_artist_are_read_from_his_words(monkeypatch):
+    seen = []
+    monkeypatch.setattr(phone, "_apple_page", lambda q, kind, artist="", exact=False: seen.append((q, kind, artist, exact)) or None)
+    phone.set_prefs("apple")
+    box, t = _turn()
+    try:
+        phone.phone_music({"query": "The Less I Know The Better by Tame Impala"})
+        phone.phone_music({"query": "the album Currents by Tame Impala"})
+        from calendar_tool import TURN
+        TURN.set({"user": "owner", "conversation": "c", "turn": 1, "user_said": "play some Tame Impala"})
+        phone.phone_music({"query": "Tame Impala"})
+        TURN.set({"user": "owner", "conversation": "c", "turn": 2, "user_said": "play Blinding Lights"})
+        phone.phone_music({"query": "Blinding Lights"})                 # a bare title: no artist guess
+        assert "search?term=Blinding" in box["url"]
+    finally:
+        phone.ACTION.reset(t)
+    assert seen == [("The Less I Know The Better", "song", "Tame Impala", False),
+                    ("Currents", "album", "Tame Impala", False), ("Tame Impala", "artist", "", True)]

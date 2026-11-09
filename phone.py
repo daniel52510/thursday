@@ -116,17 +116,95 @@ def confirm_message(user_id: str, said: str) -> dict | None:
     return None
 
 
+_NOT_ASKED = re.compile(r"remix|edit|karaoke|tribute|cover|instrumental|live|sped up|slowed|8-bit|lullaby", re.I)
+_ENTITY = {"artist": ("musicArtist", "artistLinkUrl", "artistName"), "album": ("album", "collectionViewUrl", "collectionName"),
+           "song": ("song", "trackViewUrl", "trackName")}
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9 ]", "", re.sub(r"\s*[(\[].*?[)\]]", "", (text or "").lower())).strip()
+
+
+def _apple_page(query: str, kind: str, artist: str = "", exact: bool = False) -> str | None:
+    """The Apple Music page itself (the artist, album or song, play button right there), from Apple's public
+    iTunes API, instead of a search results page. None when nothing fits: then the search page.
+    Its text search ranks covers and club edits above the real song (the original "The Less I Know The Better"
+    wasn't in its top 8), so with an artist it looks in that artist's own catalog and matches the title there."""
+    import difflib
+    import httpx
+    entity, link, name = _ENTITY.get(kind, _ENTITY["song"])
+    api = "https://itunes.apple.com"
+
+    def get(path: str, **params) -> list[dict]:
+        try:
+            return httpx.get(f"{api}/{path}", params={"country": "us", **params}, timeout=4).json().get("results") or []
+        except (httpx.HTTPError, ValueError):
+            return []
+
+    who = artist or (query if kind == "artist" else "")
+    artist_hit = next((x for x in get("search", term=who, entity="musicArtist", limit=3)), None) if who else None
+    if kind == "artist":
+        if not artist_hit or not artist_hit.get("artistLinkUrl") or (exact and _norm(artist_hit.get("artistName", "")) != _norm(who)):
+            return None  # a guess at "is this an artist?" that didn't name one exactly
+        return str(artist_hit["artistLinkUrl"]).replace("?uo=4", "")
+    if not artist_hit:
+        return None  # a song or album with no artist: its search guessed piano covers; the search page is safer
+    title = query
+    if artist and artist.lower() in query.lower():
+        title = re.sub(re.escape(artist), "", query, flags=re.I).strip()
+    pool = [x for x in get("lookup", id=artist_hit["artistId"], entity=entity, limit=200) if x.get(link)]
+    asked_for = bool(_NOT_ASKED.search(query))
+    want = _norm(title)
+
+    def score(x: dict) -> float:
+        got = _norm(str(x.get(name) or ""))
+        version_penalty = 0.5 if (not asked_for and _NOT_ASKED.search(str(x.get(name) or ""))) else 0
+        return difflib.SequenceMatcher(None, want, got).ratio() + (0.3 if got == want else 0) - version_penalty
+    best = max(pool, key=score, default=None)
+    if not best or score(best) < 0.6:
+        return None
+    return str(best[link]).replace("&uo=4", "").replace("?uo=4", "")
+
+
+def _sounds_like_artist(query: str) -> bool:
+    """His own words say it's an artist: "play some X", "music by X", "X's music", "anything by X"."""
+    from calendar_tool import TURN
+    said = ((TURN.get() or {}).get("user_said") or "").lower()
+    q = re.escape(query.lower())
+    return bool(re.search(rf"\b(?:some|music by|songs by|anything by|stuff by|something by)\s+{q}\b|\b{q}'?s?\s+(?:music|songs)\b", said))
+
+
 def phone_music(args: Dict[str, Any]):
     from tools import ToolResult
     query = " ".join(str(args.get("query") or "").split())[:120]
+    kind = str(args.get("kind") or "").lower()
+    artist = " ".join(str(args.get("artist") or "").split())[:80]
     if not query:
         return ToolResult(ok=False, tool_name="phone_music", error="ask what to play")
-    app, url = MUSIC_APPS[prefs()["music_app"]]
-    if not _record({"do": "open", "url": url.format(q=quote(query))}):
+    if ACTION.get() is None:
         return _not_phone("phone_music")
+    music_app = prefs()["music_app"]
+    app, url = MUSIC_APPS[music_app]
+    page = None
+    if music_app == "apple":
+        # The model often sends just his words ("The Less I Know The Better by Tame Impala", "the album Currents"),
+        # so the kind and artist are read from them too.
+        if m := re.match(r"^(?:the\s+)?album\s+(.+)$", query, re.I):
+            query, kind = m[1], "album"
+        if not artist and (m := re.match(r"^(.+?)\s+by\s+(.+)$", query, re.I)):
+            query, artist = m[1], m[2]
+            kind = kind if kind in ("song", "album") else "song"
+        if kind in _ENTITY:
+            page = _apple_page(query, kind, artist)
+        elif not artist and _sounds_like_artist(query):  # "play some Tame Impala", "music by Drake"
+            page = _apple_page(query, "artist", exact=True)
+        # Otherwise a bare title ("play Blinding Lights"): an artist is literally named that, so no guessing:
+        # the search page, where his song is the first hit.
+    _record({"do": "open", "url": page or url.format(q=quote(query))})
     return ToolResult(ok=True, tool_name="phone_music", data={
-        "opening": query, "app": app,
-        "note": f"Say you're pulling up {query} in {app}; he taps play (a Shortcut can't start the track itself)."})
+        "opening": query, "app": app, "straight_to_it": bool(page),
+        "note": f"Say you're pulling up {query} in {app}" + ("; he taps play." if page else
+                "; he picks it and taps play (a Shortcut can't start the track itself).")})
 
 
 def phone_directions(args: Dict[str, Any]):
@@ -185,7 +263,10 @@ PHONE_SCHEMAS = [
     {"type": "function", "function": {
         "name": "phone_music", "description": "Play music on his iPhone: a song, playlist, album or artist ('play "
                                               "some Tame Impala', 'put on my workout playlist').",
-        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "The song, album or artist name ('The Less I Know The Better')"},
+            "artist": {"type": "string", "description": "Who it's by, when he said or you know it ('Tame Impala')"},
+            "kind": {"type": "string", "enum": ["song", "artist", "album", "playlist"]}}, "required": ["query"]}}},
     {"type": "function", "function": {
         "name": "phone_directions", "description": "Directions in Apple Maps on his iPhone ('take me to Whole Foods', "
                                                    "'directions home').",
