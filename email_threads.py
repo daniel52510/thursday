@@ -294,34 +294,74 @@ def _pick(threads: list[dict], tid: str) -> list[dict]:
     return live
 
 
+def live_addresses() -> set[str]:
+    """Who has a conversation in progress (asks.py leaves their new emails to it)."""
+    with _lock:
+        return {t["to"] for t in _load() if t["status"] in ("active", "needs_you")}
+
+
+def listing(days: int = 7) -> list[dict]:
+    """Recent and live threads, newest first, for his tools and the Email page."""
+    since = time.time() - days * 86400
+    with _lock:
+        rows = [t for t in _load() if t["status"] in ("active", "needs_you") or t["created"] > since]
+    return [{"id": t["id"], "with": _name(t["to"]), "address": t["to"], "subject": t["subject"], "goal": t["goal"],
+             "status": t["status"], "replies_sent": t["replies"], "max_replies": MAX_REPLIES, "outcome": t["outcome"],
+             "created": t["created"], "expires": t["expires"], "notes": t["notes"],
+             "transcript": [{"who": x["who"], "at": x["at"], "text": x["text"]} for x in t["transcript"]]}
+            for t in reversed(rows[-20:])]
+
+
+def stop(tid: str) -> list[str]:
+    """Stops one thread (id or name) or, with "all", every live one: what was stopped."""
+    with _lock:
+        threads = _load()
+        hit = [t for t in _pick(threads, tid or "all") if t["status"] in ("active", "needs_you")]
+        for t in hit:
+            t["status"], t["outcome"] = "stopped", "Stopped by you."
+        _save(threads)
+    return [f"{_name(t['to'])}: {t['subject']}" for t in hit]
+
+
+def steer(tid: str, note: str) -> dict:
+    """His answer for a thread: noted, and the thread answers their last email with it. {"error"} if unclear."""
+    note = (note or "").strip()[:400]
+    if not note:
+        return {"error": "no_guidance: ask what to tell them"}
+    with _lock:
+        threads = _load()
+        hit = _pick(threads, tid or "")
+        if len(hit) != 1:
+            return {"error": ("which_thread: " + ", ".join(f"{t['id']} ({_name(t['to'])})" for t in hit))
+                    if hit else "no_live_thread"}
+        t = hit[0]
+        t["notes"].append(note)
+        t["status"], t["pending"] = "active", bool(t["latest"])
+        t["expires"] = max(t["expires"], time.time() + 86400)
+        _save(threads)
+    _wake.set()
+    return {"thread": f"{_name(t['to'])}: {t['subject']}", "now": bool(t["latest"])}
+
+
 def email_threads(args: Dict[str, Any]):
     from tools import ToolResult
     if not gmail_tool._owner():
         return ToolResult(ok=False, tool_name="email_threads", error="email_is_daniels_only")
-    week = time.time() - 7 * 86400
-    with _lock:
-        rows = [t for t in _load() if t["status"] in ("active", "needs_you") or t["created"] > week]
-    return ToolResult(ok=True, tool_name="email_threads", data={"threads": [{
-        "id": t["id"], "with": _name(t["to"]), "subject": t["subject"], "goal": t["goal"], "status": t["status"],
-        "replies_sent": t["replies"], "outcome": t["outcome"],
-        "their_last": next((x["text"][:300] for x in reversed(t["transcript"]) if x["who"] == "them"), "")}
-        for t in rows[-10:]], "note": gmail_tool.UNTRUSTED})
+    rows = [{**{k: t[k] for k in ("id", "with", "subject", "goal", "status", "replies_sent", "outcome")},
+             "their_last": next((x["text"][:300] for x in reversed(t["transcript"]) if x["who"] == "them"), "")}
+            for t in listing()[:10]]
+    return ToolResult(ok=True, tool_name="email_threads", data={"threads": rows, "note": gmail_tool.UNTRUSTED})
 
 
 def email_thread_stop(args: Dict[str, Any]):
     from tools import ToolResult
     if not gmail_tool._owner():
         return ToolResult(ok=False, tool_name="email_thread_stop", error="email_is_daniels_only")
-    with _lock:
-        threads = _load()
-        hit = _pick(threads, str(args.get("id") or "all"))
-        for t in hit:
-            t["status"], t["outcome"] = "stopped", "Stopped by you."
-        _save(threads)
-    if not hit:
+    stopped = stop(str(args.get("id") or "all"))
+    if not stopped:
         return ToolResult(ok=False, tool_name="email_thread_stop", error="no_live_thread")
     return ToolResult(ok=True, tool_name="email_thread_stop", data={
-        "stopped": [f"{_name(t['to'])}: {t['subject']}" for t in hit], "note": "Nothing more goes out on these."})
+        "stopped": stopped, "note": "Nothing more goes out on these."})
 
 
 def email_thread_steer(args: Dict[str, Any]):
@@ -330,24 +370,12 @@ def email_thread_steer(args: Dict[str, Any]):
     from tools import ToolResult
     if not gmail_tool._owner():
         return ToolResult(ok=False, tool_name="email_thread_steer", error="email_is_daniels_only")
-    note = str(args.get("guidance") or "").strip()[:400]
-    if not note:
-        return ToolResult(ok=False, tool_name="email_thread_steer", error="no_guidance: ask what to tell them")
-    with _lock:
-        threads = _load()
-        hit = _pick(threads, str(args.get("id") or ""))
-        if len(hit) != 1:
-            return ToolResult(ok=False, tool_name="email_thread_steer", error=(
-                "which_thread: " + ", ".join(f"{t['id']} ({_name(t['to'])})" for t in hit) if hit else "no_live_thread"))
-        t = hit[0]
-        t["notes"].append(note)
-        t["status"], t["pending"] = "active", bool(t["latest"])
-        t["expires"] = max(t["expires"], time.time() + 86400)
-        _save(threads)
-    _wake.set()
+    out = steer(str(args.get("id") or ""), str(args.get("guidance") or ""))
+    if "error" in out:
+        return ToolResult(ok=False, tool_name="email_thread_steer", error=out["error"])
     return ToolResult(ok=True, tool_name="email_thread_steer", data={
-        "thread": f"{_name(t['to'])}: {t['subject']}", "status": "resumed",
-        "note": "Tell him you'll answer them with that" + (" now." if t["latest"] else " when they reply.")})
+        "thread": out["thread"], "status": "resumed",
+        "note": "Tell him you'll answer them with that" + (" now." if out["now"] else " when they reply.")})
 
 
 TOOL_SCHEMAS = [

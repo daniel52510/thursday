@@ -607,6 +607,41 @@
   dialog input:not(.slim), dialog select { font-family: var(--sans); font-size: 15px; }
   .hint { font: 12px var(--sans); letter-spacing: 0; text-transform: none; color: var(--text-faint); }
 
+  /* Email page: what he's asking, the conversations he's handling, what went out. */
+  dialog.alarms.email { width: min(640px, calc(100vw - 32px)); }
+  .nav-count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font: 600 11.5px/20px var(--sans); text-align: center; }
+  .em-sec { margin-top: 18px; }
+  .em-sec h3 { margin: 0 0 8px; font: 600 14px var(--sans); }
+  .em-sec h3 small { font-weight: 400; color: var(--text-faint); margin-left: 6px; }
+  .em-hint { margin: -4px 0 10px; font-size: 13px; color: var(--text-muted); }
+  .em-empty { font-size: 13.5px; color: var(--text-muted); padding: 10px 14px; border-radius: 14px; background: var(--soft); }
+  .em-card { padding: 14px 16px; border-radius: 18px; background: var(--soft); margin-bottom: 8px; }
+  .em-card.hl { box-shadow: 0 0 0 2px var(--text); }
+  .em-q { font-size: 15px; line-height: 1.45; color: var(--text); margin: 0; }
+  .em-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .em-btns button { height: 34px; padding: 0 16px; border-radius: 999px; background: var(--soft-2); font-size: 13.5px; }
+  .em-btns button.yes { background: var(--inverse-bg); color: var(--inverse-text); }
+  .em-btns button:disabled { opacity: .5; }
+  .em-meta { font-size: 12px; color: var(--text-faint); margin-top: 6px; }
+  .em-top { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 0; }
+  .em-top b { flex: 1; min-width: 0; font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .em-pill { flex: none; font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--soft-2); color: var(--text-muted); }
+  .em-pill.needs_you { background: var(--inverse-bg); color: var(--inverse-text); }
+  .em-goal { font-size: 13px; color: var(--text-muted); margin: 4px 0 0; }
+  .em-log { display: grid; gap: 8px; margin: 12px 0 0; max-height: 300px; overflow-y: auto; }
+  .em-msg { padding: 8px 12px; border-radius: 14px; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface); }
+  .em-msg.you { background: var(--soft-2); margin-left: 18%; }
+  .em-msg.them { margin-right: 18%; }
+  .em-msg small { display: block; font-size: 11.5px; color: var(--text-faint); margin-bottom: 2px; }
+  .em-steer { display: flex; gap: 8px; margin-top: 12px; }
+  .em-steer input { flex: 1; min-width: 0; height: 38px; padding: 0 14px; border-radius: 999px; border: 0; background: var(--surface); color: var(--text); font: 14px var(--sans); }
+  .em-steer button, .em-stop { height: 38px; padding: 0 14px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-size: 13.5px; flex: none; }
+  .em-stop { background: transparent; color: var(--signal-text); padding: 0 4px; height: auto; margin-top: 10px; }
+  .em-sent { display: flex; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--rule); font-size: 13.5px; }
+  .em-sent span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+  .em-sent b { font-weight: 500; flex: none; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .em-sent time { flex: none; color: var(--text-faint); font-size: 12px; }
+
   /* ---------- phone ---------- */
   @media (max-width: 800px) {
     aside {
@@ -653,7 +688,7 @@
       border: 0; border-radius: 26px 26px 0 0; padding: 10px 18px calc(18px + env(safe-area-inset-bottom));
       box-shadow: 0 -10px 40px rgba(0,0,0,.3); overscroll-behavior: contain;
     }
-    dialog.alarms.body, dialog.alarms.music { min-height: 75dvh; }  /* full panels: open at size, not grow as data lands */
+    dialog.alarms.body, dialog.alarms.music, dialog.alarms.email { min-height: 75dvh; }  /* full panels: open at size, not grow as data lands */
     dialog.alarms[open], dialog.settings[open] { animation: sheet-up .3s cubic-bezier(.2,.8,.2,1); }
     dialog.alarms::before, dialog.settings::before { content: ""; display: block; width: 38px; height: 5px; border-radius: 3px;
       background: var(--rule-strong); margin: 0 auto 8px; }
@@ -805,6 +840,7 @@
   <symbol id="i-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h4v4M4 20 20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/></symbol>
   <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3M3 11V9a4 4 0 0 1 4-4h13M7 22l-3-3 3-3M21 13v2a4 4 0 0 1-4 4H4"/></symbol>
   <symbol id="i-like" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 11v9H4v-9h3zm0 0 4-7a2 2 0 0 1 3 1.7V10h5a2 2 0 0 1 2 2.3l-1.2 6A2 2 0 0 1 17.8 20H7"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></symbol>
   <symbol id="i-music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
   <symbol id="i-redo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></symbol>
   <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></symbol>
@@ -819,6 +855,7 @@
   <button class="nav-btn" id="voiceNav"><svg><use href="#i-wave"/></svg>Voice mode</button>
   <button class="nav-btn" id="alarmsNav"><svg><use href="#i-bell"/></svg>Alarms</button>
   <button class="nav-btn" id="musicNav"><svg><use href="#i-music"/></svg>Music</button>
+  <button class="nav-btn" id="emailNav" hidden><svg><use href="#i-mail"/></svg>Email<span class="nav-count" id="emailCount" hidden></span></button>
   <button class="nav-btn" id="bodyNav"><svg><use href="#i-heart"/></svg>Health</button>
   <button class="nav-btn" id="healthNav"><svg><use href="#i-pulse"/></svg>System</button>
   <button class="nav-btn" id="contactsNav"><svg><use href="#i-phone"/></svg>Contacts</button>
@@ -1086,6 +1123,13 @@
   <div id="mvQueue" class="mv-queue"></div>
 </dialog>
 
+<dialog id="emailDialog" class="alarms email">
+  <div class="alarms-head"><h2>Email</h2><button class="icon-btn" id="emailClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <div class="em-sec"><h3>Questions from THURSDAY</h3><div id="emAsks"></div></div>
+  <div class="em-sec"><h3>Conversations</h3><p class="em-hint">Emails he's following up for you. Say "email Sam and find a time for lunch" to start one.</p><div id="emThreads"></div></div>
+  <div class="em-sec"><h3>Sent <small id="emSentCount"></small></h3><div id="emSent"></div></div>
+</dialog>
+
 <dialog id="bodyDialog" class="alarms body">
   <div class="alarms-head"><h2>Health</h2><button class="icon-btn" id="bodyClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <div class="lat-head"><p class="body-sub" id="bodySub">From your Apple Watch, synced by Health Auto Export.</p>
@@ -1211,6 +1255,7 @@ async function loadMe() {
   $("healthNav").hidden = ME.role !== "admin";         // system status
   $("bodyNav").hidden = ME.id !== "owner";             // his Apple Health data
   $("musicNav").hidden = ME.role !== "admin";          // the house's music
+  $("emailNav").hidden = ME.id !== "owner";            // his Gmail: questions, conversations, sent
   $("announceNav").hidden = !ME.family_memory;          // admin and family
   $("agenticTop").hidden = ME.id !== "owner";           // missions run on the owner's GPU, with his calendar
 }
@@ -1795,6 +1840,98 @@ $("emailContactForm").onsubmit = async (e) => {
   $("emailContactName").value = ""; $("emailContactAddr").value = "";
   loadEmailContacts();
 };
+// ---------- email: his questions (asks.py), conversations (email_threads.py), sent ----------
+const EM = { timer: 0, hl: "", openThreads: new Set() };
+const STATUS_WORDS = { active: "Working on it", needs_you: "Needs you", done: "Done", expired: "No reply", stopped: "Stopped" };
+const ago = (t) => { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+async function emGet(url) { try { const r = await api(url); return r.ok ? await r.json() : null; } catch { return null; } }
+async function loadEmailCount() {
+  if ($("emailNav").hidden) return;
+  const a = await emGet("/api/asks");
+  const n = a ? a.pending.length : 0;
+  $("emailCount").hidden = !n; $("emailCount").textContent = n;
+}
+async function loadEmail() {
+  const [a, threads, sent] = await Promise.all([emGet("/api/asks"), emGet("/api/email/threads"), emGet("/api/email/sent")]);
+  const box = $("emAsks"); box.innerHTML = "";
+  const pend = a ? a.pending : [];
+  $("emailCount").hidden = !pend.length; $("emailCount").textContent = pend.length;
+  if (!pend.length) box.innerHTML = `<div class="em-empty">Nothing waiting on you.</div>`;
+  for (const q of pend) {
+    const card = document.createElement("div"); card.className = "em-card" + (q.id === EM.hl ? " hl" : "");
+    card.innerHTML = `<p class="em-q"></p><div class="em-btns"></div><div class="em-meta"></div>`;
+    card.querySelector(".em-q").textContent = q.question;
+    card.querySelector(".em-meta").textContent = ago(q.created);
+    q.options.forEach((o, i) => {
+      const b = document.createElement("button"); b.textContent = o.label; if (i === 0) b.className = "yes";
+      b.onclick = async () => {
+        for (const x of card.querySelectorAll("button")) x.disabled = true;
+        const r = await api(`/api/asks/${q.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ choice: o.key }) });
+        const out = await r.json().catch(() => ({}));
+        card.querySelector(".em-meta").textContent = r.ok ? `Done: ${out.result}` : `Couldn't: ${out.detail || r.status}`;
+        setTimeout(loadEmail, 1500);
+      };
+      card.querySelector(".em-btns").append(b);
+    });
+    box.append(card);
+  }
+  const tb = $("emThreads"); tb.innerHTML = "";
+  if (!threads || !threads.length) tb.innerHTML = `<div class="em-empty">No conversations yet.</div>`;
+  for (const t of threads || []) {
+    const card = document.createElement("div"); card.className = "em-card";
+    card.innerHTML = `<button class="em-top"><b></b><span class="em-pill"></span></button><p class="em-goal"></p><div class="em-meta"></div><div class="em-more" hidden><div class="em-log"></div></div>`;
+    card.querySelector("b").textContent = `${t.with} · ${t.subject}`;
+    const pill = card.querySelector(".em-pill"); pill.textContent = STATUS_WORDS[t.status] || t.status; pill.classList.add(t.status);
+    card.querySelector(".em-goal").textContent = t.outcome && t.status !== "active" ? t.outcome : `Goal: ${t.goal}`;
+    card.querySelector(".em-meta").textContent = `${t.replies_sent} of ${t.max_replies} replies · started ${ago(t.created)}`;
+    const more = card.querySelector(".em-more"), log = card.querySelector(".em-log");
+    for (const m of t.transcript) {
+      const d = document.createElement("div"); d.className = `em-msg ${m.who === "you" ? "you" : "them"}`;
+      d.innerHTML = "<small></small>"; d.querySelector("small").textContent = `${m.who === "you" ? "You (THURSDAY)" : t.with} · ${ago(m.at)}`;
+      d.append(m.text); log.append(d);
+    }
+    if (t.status === "active" || t.status === "needs_you") {
+      const f = document.createElement("form"); f.className = "em-steer";
+      f.innerHTML = `<input maxlength="400" placeholder="Tell THURSDAY what to say…" aria-label="Your answer for this conversation"><button type="submit">Send</button>`;
+      f.onsubmit = async (e) => {
+        e.preventDefault(); const v = f.querySelector("input").value.trim(); if (!v) return;
+        f.querySelector("button").disabled = true;
+        await api(`/api/email/threads/${t.id}/steer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guidance: v }) });
+        loadEmail();
+      };
+      const stop = document.createElement("button"); stop.className = "em-stop"; stop.textContent = "Stop this conversation";
+      stop.onclick = async () => { if (!confirm(`Stop handling this conversation with ${t.with}?`)) return; await api(`/api/email/threads/${t.id}/stop`, { method: "POST" }); loadEmail(); };
+      more.append(f, stop);
+    }
+    if (EM.openThreads.has(t.id) || t.status === "needs_you") more.hidden = false;
+    card.querySelector(".em-top").onclick = () => { more.hidden = !more.hidden; EM.openThreads[more.hidden ? "delete" : "add"](t.id); };
+    tb.append(card);
+  }
+  const sb = $("emSent"); sb.innerHTML = "";
+  $("emSentCount").textContent = sent ? `${sent.today} of ${sent.cap} today` : "";
+  if (!sent || !sent.sent.length) sb.innerHTML = `<div class="em-empty">Nothing sent yet.</div>`;
+  for (const r of (sent && sent.sent) || []) {
+    const row = document.createElement("div"); row.className = "em-sent";
+    row.innerHTML = "<b></b><span></span><time></time>";
+    row.querySelector("b").textContent = r.to; row.querySelector("span").textContent = r.subject; row.querySelector("time").textContent = ago(r.at);
+    sb.append(row);
+  }
+}
+function openEmail(highlight = "") {
+  closeNav(); EM.hl = highlight;
+  $("emailDialog").showModal(); loadEmail();
+  clearInterval(EM.timer); EM.timer = setInterval(loadEmail, 10000);
+}
+$("emailNav").onclick = () => openEmail();
+$("emailClose").onclick = () => $("emailDialog").close();
+$("emailDialog").addEventListener("close", () => clearInterval(EM.timer));
+setInterval(loadEmailCount, 60000);
+window.addEventListener("hashchange", () => {  // a pushed question tapped while the app is already open
+  if (!location.hash.startsWith("#ask=")) return;
+  const id = decodeURIComponent(location.hash.slice(5));
+  history.replaceState(null, "", location.pathname);
+  openEmail(id);
+});
 $("contactsClose").onclick = () => $("contactsDialog").close();
 $("contactsNav").onclick = () => { closeNav(); $("contactNote").textContent = $("emailContactNote").textContent = ""; $("contactsDialog").showModal(); loadContacts(); loadEmailContacts(); };
 $("alarmsNav").onclick = () => { closeNav(); showAlarmList(); $("alarmsDialog").showModal(); loadAlarms(); };
@@ -3322,8 +3459,10 @@ autosize();
   if (conversationId) await openConversation(conversationId);
   // Phone pushes (approvals.push) open /#agentic (the approval cards) or /#c=<id> (a mission's write-up).
   const hash = location.hash;
-  if (hash === "#agentic" || hash.startsWith("#c=")) history.replaceState(null, "", location.pathname);
-  if (hash === "#agentic") openAgentic();
+  if (hash === "#agentic" || hash.startsWith("#c=") || hash.startsWith("#ask=")) history.replaceState(null, "", location.pathname);
+  loadEmailCount();
+  if (hash.startsWith("#ask=")) openEmail(decodeURIComponent(hash.slice(5)));  // a question pushed to his phone (asks.py)
+  else if (hash === "#agentic") openAgentic();
   else if (hash.startsWith("#c=")) await openConversation(decodeURIComponent(hash.slice(3)));
   else if (!TOUCH) input.focus();
 })();

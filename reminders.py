@@ -94,6 +94,20 @@ def _owner_turn(name: str):
     return turn, None
 
 
+def add(user_id: str, text: str, due: datetime, conversation: str | None = None) -> str:
+    """A reminder straight into the queue (reminder_set's checks done by the caller): its id."""
+    rid = uuid.uuid4().hex[:8]
+    with _connect() as conn:
+        conn.execute("INSERT INTO reminders(id, user_id, text, due, created, conversation) VALUES (?,?,?,?,?,?)",
+                     (rid, user_id, text[:200], due.isoformat(), _now().isoformat(), conversation))
+    return rid
+
+
+def close_promise(pid: str, status: str = "done") -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE promises SET status = ? WHERE id = ? AND status = 'open'", (status, pid))
+
+
 def reminder_set(args: Dict[str, Any]):
     from tools import ToolResult
     turn, err = _owner_turn("reminder_set")

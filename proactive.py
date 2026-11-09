@@ -55,9 +55,11 @@ def _quiet(now: datetime) -> bool:
     return now.hour >= QUIET[0] or now.hour < QUIET[1]
 
 
-async def deliver(title: str, text: str, *, tag: str = "bell", urgent: bool = False, say: str | None = None) -> None:
+async def deliver(title: str, text: str, *, tag: str = "bell", urgent: bool = False, say: str | None = None,
+                  click: str | None = None) -> str:
     """Reach him the way that fits where he is (presence.channel): out loud in the room when he's home and awake,
-    a push when he's out or in a meeting, held for the morning when he's asleep (unless urgent)."""
+    a push when he's out or in a meeting, held for the morning when he's asleep (unless urgent). Returns how:
+    "speak", "push" or "hold". click: where a tap on the push opens (default the Agentic page)."""
     import approvals
     import presence
     state = await asyncio.to_thread(presence.now_state)
@@ -67,12 +69,13 @@ async def deliver(title: str, text: str, *, tag: str = "bell", urgent: bool = Fa
             conn.execute("INSERT INTO proactive_held(title, text, tag, at) VALUES (?,?,?,?)",
                          (title, text, tag, datetime.now(_zone()).isoformat()))
         logger.info("proactive: '%s' held (asleep or night)", title)
-        return
+        return "hold"
     if how == "speak" and await _speak(say or text):
         logger.info("proactive: said '%s' (he's home)", title)
-        return
-    await asyncio.to_thread(approvals.push, title, text, tags=(tag,), priority=4 if urgent else 3)
+        return "speak"
+    await asyncio.to_thread(approvals.push, title, text, tags=(tag,), priority=4 if urgent else 3, click=click)
     logger.info("proactive: pushed '%s' (%s)", title, "in a meeting" if state["meeting"] else f"phone {state['phone']}")
+    return "push"
 
 
 async def _speak(line: str) -> bool:

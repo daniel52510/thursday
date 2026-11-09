@@ -142,6 +142,14 @@ def email_search(args: Dict[str, Any]):
         "emails": _search(m, q, 10), "note": UNTRUSTED}))
 
 
+def body_of(m, uid: str) -> str:
+    """One inbox email's text, unread left unread."""
+    m.select("INBOX", readonly=True)
+    typ, parts = m.uid("FETCH", uid, "(BODY.PEEK[])")
+    raw = next((p[1] for p in parts if isinstance(p, tuple)), None)
+    return _text(email.message_from_bytes(raw, policy=default_policy))[:4000] if raw else ""
+
+
 def email_read(args: Dict[str, Any]):
     from tools import ToolResult
 
@@ -344,6 +352,33 @@ def email_confirm(args: Dict[str, Any]):
         data["note"] = ("Sent. Tell him in a few words, and that you'll handle their replies toward the goal and "
                         "let him know how it goes (or if they ask something only he can answer).")
     return ToolResult(ok=True, tool_name="email_confirm", data=data)
+
+
+def reply_to(uid: str, body: str, send: bool) -> str:
+    """Answers the inbox email `uid` with body, in its thread: sent (only to an email contact) or saved to Drafts.
+    For asks.py, after his yes; returns what happened, in a few words."""
+    from accounts import OWNER
+    creds = vault.shared().get(OWNER, CREDENTIAL)
+    m = _connect(OWNER)
+    try:
+        msg = EmailMessage()
+        to, subject = _as_reply(m, msg, uid, "", "")
+        addr = parseaddr(to)[1].lower()
+        msg["From"], msg["To"], msg["Subject"] = creds["username"], addr, re.sub(r"[\r\n]+", " ", subject)[:200]
+        msg.set_content(body)
+        if not send:
+            m.append('"[Gmail]/Drafts"', "\\Draft", imaplib.Time2Internaldate(time.time()), msg.as_bytes())
+            return "saved to your Gmail Drafts"
+    finally:
+        try:
+            m.logout()
+        except Exception:
+            pass
+    if addr not in email_contacts().values():
+        return "not sent: they're not in your email contacts"
+    msg["Message-ID"] = make_msgid(domain=creds["username"].rsplit("@", 1)[-1])
+    err = smtp_send(msg)
+    return f"not sent ({err})" if err else f"sent to {addr}"
 
 
 def smtp_send(msg: EmailMessage) -> str | None:

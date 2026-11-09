@@ -22,6 +22,7 @@ import improvements
 import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
+import asks
 import email_threads
 import gmail_tool
 import greetings
@@ -67,11 +68,13 @@ async def lifespan(app: FastAPI):
     on_reminders = asyncio.create_task(reminders.run())  # due reminders: push, and out loud at home
     on_proactive = asyncio.create_task(proactive.run())  # he speaks first: calendar, workouts, health, evening
     on_email = asyncio.create_task(email_threads.run())  # email conversations: replies toward his goal
+    on_asks = asyncio.create_task(asks.run())  # he asks first: emails that want an answer, promises not kept
     yield
     on_greetings.cancel()
     on_reminders.cancel()
     on_proactive.cancel()
     on_email.cancel()
+    on_asks.cancel()
     on_missions.cancel()
     on_improvements.cancel()
     on_review.cancel()
@@ -976,6 +979,60 @@ class MissionIn(BaseModel):
 def list_missions(user: dict = Depends(owner_only)):
     # Watch checks that found nothing new stay off the page; their watch shows what they found.
     return [m for m in initalize_db().list_missions(user["id"], limit=60) if m["announced_at"] != "quiet"][:30]
+
+
+# Questions THURSDAY asked him first (asks.py), and his email conversations (email_threads.py): the Email page.
+class AskAnswerIn(BaseModel):
+    choice: str = Field(max_length=20)
+
+
+class SteerIn(BaseModel):
+    guidance: str = Field(min_length=1, max_length=400)
+
+
+@app.get("/api/asks")
+def list_asks(user: dict = Depends(owner_only)):
+    return {"pending": asks.pending(), "recent": asks.recent()}
+
+
+@app.post("/api/asks/{ask_id}")
+async def answer_ask(ask_id: str, body: AskAnswerIn, user: dict = Depends(owner_only)):
+    # His tap on the page is the answer (owner session, same-origin checked in current_user), like approvals.
+    out = await asyncio.to_thread(asks.answer, ask_id, body.choice)
+    if "error" in out:
+        raise HTTPException(status_code=409 if out["error"] in ("already_answered", "expired") else 404,
+                            detail=out["error"])
+    return out
+
+
+@app.get("/api/email/threads")
+def list_email_threads(user: dict = Depends(owner_only)):
+    return email_threads.listing(days=14)
+
+
+@app.post("/api/email/threads/{thread_id}/stop")
+def stop_email_thread(thread_id: str, user: dict = Depends(owner_only)):
+    if not email_threads.stop(thread_id):
+        raise HTTPException(status_code=404, detail="no live conversation with that id")
+    return {"status": "stopped"}
+
+
+@app.post("/api/email/threads/{thread_id}/steer")
+def steer_email_thread(thread_id: str, body: SteerIn, user: dict = Depends(owner_only)):
+    out = email_threads.steer(thread_id, body.guidance)
+    if "error" in out:
+        raise HTTPException(status_code=404, detail=out["error"])
+    return out
+
+
+@app.get("/api/email/sent")
+def list_sent_email(user: dict = Depends(owner_only)):
+    try:
+        with open(gmail_tool.SENT_LOG) as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+    except (OSError, ValueError):
+        rows = []
+    return {"sent": rows[-15:][::-1], "today": gmail_tool._sent_recently(time.time()), "cap": gmail_tool.DAILY_CAP}
 
 
 @app.get("/api/approvals")
