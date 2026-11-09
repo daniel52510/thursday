@@ -42,6 +42,7 @@ def _connect() -> sqlite3.Connection:
         fat REAL NOT NULL, source TEXT)""")
     conn.execute("CREATE INDEX IF NOT EXISTS entries_day ON entries (day)")
     conn.execute("CREATE TABLE IF NOT EXISTS weights (day TEXT PRIMARY KEY, lb REAL NOT NULL, at REAL NOT NULL)")
+    conn.execute("CREATE TABLE IF NOT EXISTS checkins (day TEXT PRIMARY KEY, level TEXT NOT NULL, at REAL NOT NULL)")
     return conn
 
 
@@ -54,12 +55,32 @@ def _meal(now: datetime) -> str:
     return "breakfast" if now.hour < 11 else "lunch" if now.hour < 16 else "dinner" if now.hour < 21 else "snack"
 
 
-def _own_kcal() -> int:
+# His food settings (brain/food.json): his own calories, the Waterson-mode switches, and notes for the meal planner.
+WATERSON = {"timing": 1, "rotation": 1, "alcohol": 1, "checkin": 1}
+
+
+def prefs() -> dict:
     try:
         with open(PREFS) as f:
-            return int(json.load(f).get("kcal") or 0)
+            p = json.load(f)
     except (OSError, ValueError):
-        return 0
+        p = {}
+    return {"kcal": int(p.get("kcal") or 0), "waterson": WATERSON | (p.get("waterson") or {}),
+            "notes": str(p.get("notes") or "")[:600]}
+
+
+def save_prefs(**changes) -> dict:
+    p = prefs()
+    if "waterson" in changes:
+        p["waterson"] = p["waterson"] | {k: int(bool(v)) for k, v in changes.pop("waterson").items() if k in WATERSON}
+    p.update(changes)
+    with open(PREFS, "w") as f:
+        json.dump(p, f)
+    return prefs()
+
+
+def _own_kcal() -> int:
+    return prefs()["kcal"]
 
 
 def log_weight(lb: float, day: str | None = None) -> dict:
@@ -206,9 +227,67 @@ def targets() -> dict:
 
 
 def set_target(kcal: int | None) -> dict:
-    with open(PREFS, "w") as f:
-        json.dump({"kcal": int(kcal) if kcal else 0}, f)
+    save_prefs(kcal=int(kcal) if kcal else 0)
     return targets()
+
+
+# ---------- Waterson mode (Simon Waterson, Daniel Craig's Bond trainer, as reported in his interviews) ----------
+# "Fuelling... eating the right food at the right time": protein over 5 feedings, a few hours apart. Variety, nothing
+# cut out: each day has a protein theme (plant-based, fish, white meat, vegetarian; red meat on Fridays). Alcohol
+# "isn't really on the cards": none Monday to Thursday. Each one is a switch (prefs()["waterson"]).
+FEEDINGS = 5
+FEED_GAP_H = 3
+ROTATION = {0: "plant-based", 1: "fish", 2: "white meat", 3: "vegetarian", 4: "red meat", 5: "fish", 6: "white meat"}
+_ALCOHOL = re.compile(r"\b(beer|lager|ipa|stout|guinness|wine|prosecco|champagne|vodka|whisk(?:e)?y|bourbon|rum|gin|"
+                      r"tequila|mezcal|cocktail|margarita|martini|negroni|seltzer|cider|sake|shots?)\b", re.I)
+
+
+CHECKIN = ("great", "good", "okay", "low")  # his morning energy and mood (Waterson reads it before every session)
+
+
+def record_checkin(level: str) -> str:
+    level = level if level in CHECKIN else "okay"
+    with _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO checkins VALUES (?, ?, ?)", (_now().date().isoformat(), level, time.time()))
+    return level
+
+
+def checkin_today() -> str | None:
+    with _connect() as conn:
+        r = conn.execute("SELECT level FROM checkins WHERE day = ?", (_now().date().isoformat(),)).fetchone()
+    return r[0] if r else None
+
+
+def protein_theme(day: datetime | None = None) -> str:
+    return ROTATION[(day or _now()).weekday()]
+
+
+def fuel(d: dict | None = None) -> dict:
+    """Today's feedings: how many, protein per feeding, and when the next one is due."""
+    d = d or day()
+    t = d["targets"]
+    times = sorted({round(e["at"] / 1800) * 1800 for e in d["entries"]})  # entries within ~30 min are one feeding
+    feeds = []
+    for at in times:
+        if not feeds or at - feeds[-1] >= 3600:
+            feeds.append(at)
+    out = {"feedings": len(feeds), "of": FEEDINGS, "protein_per_feeding_g": round(t["protein"] / FEEDINGS),
+           "theme": protein_theme()}
+    if feeds:
+        nxt = datetime.fromtimestamp(feeds[-1] + FEED_GAP_H * 3600, _now().tzinfo)
+        out["next_by"] = nxt.strftime("%-I:%M %p")
+        out["hours_since_food"] = round((_now().timestamp() - feeds[-1]) / 3600, 1)
+    return out
+
+
+def drinks_note(saved: list[dict], when: datetime | None = None) -> str | None:
+    """Waterson's alcohol line, once, for a drink logged Monday to Thursday."""
+    when = when or _now()
+    if not prefs()["waterson"]["alcohol"] or when.weekday() > 3:
+        return None
+    drinks = [s["name"] for s in saved if _ALCOHOL.search(s["name"])]
+    return (f"Logged {', '.join(drinks)}. Waterson's rule is no alcohol Monday to Thursday; mention it once, "
+            "lightly, no lecture.") if drinks else None
 
 
 def estimate(text: str) -> list[dict]:
@@ -329,11 +408,16 @@ def food_log(args: Dict[str, Any]):
     if not items:
         return ToolResult(ok=False, tool_name="food_log", error="couldn't tell what food that was: ask him")
     saved = add(items, str(args.get("meal") or "").lower() or None)
-    return ToolResult(ok=True, tool_name="food_log", data={
-        "logged": [f"{s['name']} ({s['qty']}): {s['kcal']:.0f} kcal, {s['protein']:.0f} g protein" for s in saved],
-        **_left_line(day()),
-        "note": "Say the total for this in a few words and what's left today (calories, and protein if it's "
-                "behind). They're estimates; no lecture."})
+    d = day()
+    data = {"logged": [f"{s['name']} ({s['qty']}): {s['kcal']:.0f} kcal, {s['protein']:.0f} g protein" for s in saved],
+            **_left_line(d),
+            "note": "Say the total for this in a few words and what's left today (calories, and protein if it's "
+                    "behind). They're estimates; no lecture."}
+    if prefs()["waterson"]["timing"]:
+        data["feeding"] = fuel(d)
+    if note := drinks_note(saved):
+        data["alcohol"] = note
+    return ToolResult(ok=True, tool_name="food_log", data=data)
 
 
 def food_today(args: Dict[str, Any]):

@@ -397,13 +397,73 @@ async def nutrition_source() -> None:
     await proactive.deliver("Nutrition this week", text.strip(), tag="green_salad")
 
 
-HANDLERS.update(email=_email_handler, promise=_promise_handler, lifts=_lifts_handler, alarm_check=_alarm_check_handler)
+async def checkin_source() -> None:
+    """Training mornings: energy and mood, the way Waterson asks before a session (it sets the day's intensity)."""
+    import food
+    import night
+    if not food.prefs()["waterson"]["checkin"]:
+        return
+    now = food._now()
+    if not 7 <= now.hour < 11 or night.is_night(now) or food._day_kind(now) == "rest" or food.checkin_today():
+        return
+    await ask("checkin", "Morning. How's your energy and mood today: great, good, okay, or low?",
+              [{"key": k, "label": k.capitalize()} for k in food.CHECKIN], {}, key=f"checkin:{now.date().isoformat()}",
+              say="Morning. How's your energy today: great, good, okay, or low?", expires_h=5)
+
+
+def _checkin_handler(choice: str, data: dict) -> str:
+    import food
+    level = food.record_checkin(choice)
+    return {"great": "noted: a day to push if your body agrees", "low": "noted: I'll take today down a step"}.get(
+        level, "noted, thanks")
+
+
+async def fuel_source() -> None:
+    """Training days: four hours without food (when he's logging today) gets a nudge toward the next feeding."""
+    import food
+    import mealplan
+    import night
+    import proactive
+    if not food.prefs()["waterson"]["timing"]:
+        return
+    now = food._now()
+    if not 9 <= now.hour < 20 or night.is_night(now) or food._day_kind(now) == "rest":
+        return
+    f = food.fuel()
+    if f["feedings"] == 0 or f.get("hours_since_food", 0) < 4 or f["feedings"] >= food.FEEDINGS:
+        return
+    key = f"fuel:{now.date().isoformat()}:{f['feedings']}"
+    if seen(key):
+        return
+    mark_seen(key)
+    plan = mealplan.today()
+    nxt = next((m for i, m in enumerate((plan or {}).get("meals", [])) if i not in plan.get("eaten", [])), None)
+    idea = f" Next on your plan: {nxt['name']}." if nxt else f" Something with about {f['protein_per_feeding_g']} g protein."
+    await proactive.deliver("Time to eat", f"{f['hours_since_food']:.0f} hours since you ate.{idea}", tag="fork_and_knife")
+
+
+async def mealplan_source() -> None:
+    """Sunday evening: next week's meal plan, made in the background (a push when it's ready)."""
+    import food
+    import mealplan
+    now = food._now()
+    if now.weekday() != 6 or not 17 <= now.hour < 22 or mealplan.get("next"):
+        return
+    key = f"mealplan:{mealplan.key(mealplan.week_start('next'))}"
+    if seen(key):
+        return
+    mark_seen(key)
+    await asyncio.to_thread(mealplan.start, "next")
+
+
+HANDLERS.update(checkin=_checkin_handler, email=_email_handler, promise=_promise_handler, lifts=_lifts_handler, alarm_check=_alarm_check_handler)
 
 
 async def run() -> None:
     await asyncio.sleep(90)
     while True:
-        for source in (email_source, promise_source, lift_source, nutrition_source):
+        for source in (email_source, promise_source, lift_source, nutrition_source, checkin_source, fuel_source,
+                       mealplan_source):
             try:
                 await source()
             except asyncio.CancelledError:

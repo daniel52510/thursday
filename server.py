@@ -27,6 +27,7 @@ import diagnostics  # noqa: F401  (starts remembering warnings for the health pa
 import asks
 import food
 import lifts
+import mealplan
 import night
 import phone
 import email_threads
@@ -1283,6 +1284,51 @@ class WeightIn(BaseModel):
 def log_weight(body: WeightIn, user: dict = Depends(owner_only)):
     food.log_weight(body.lb)
     return food.day()
+
+
+class FoodPrefsIn(BaseModel):
+    notes: str | None = Field(default=None, max_length=600)
+    waterson: dict[str, bool] | None = None
+
+
+@app.get("/api/food/prefs")
+def get_food_prefs(user: dict = Depends(owner_only)):
+    return {**food.prefs(), "fuel": food.fuel(), "theme": food.protein_theme()}
+
+
+@app.put("/api/food/prefs")
+def set_food_prefs(body: FoodPrefsIn, user: dict = Depends(owner_only)):
+    changes = {k: v for k, v in (("notes", body.notes), ("waterson", body.waterson)) if v is not None}
+    return food.save_prefs(**changes)
+
+
+# The weekly meal plan (mealplan.py): made in the background; "Ate it" logs a meal with its exact numbers.
+class MealPlanIn(BaseModel):
+    week: Literal["this", "next"] = "this"
+
+
+class MealEatIn(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    index: int = Field(ge=0, le=10)
+
+
+@app.get("/api/mealplan")
+def get_mealplan(week: Literal["this", "next"] = "this", user: dict = Depends(owner_only)):
+    k = mealplan.key(mealplan.week_start(week))
+    running = (th := mealplan._running.get(k)) is not None and th.is_alive()
+    return {"week": k, "plan": mealplan.get(week), "planning": running}
+
+
+@app.post("/api/mealplan", status_code=202)
+def make_mealplan(body: MealPlanIn, user: dict = Depends(owner_only)):
+    return {"status": mealplan.start(body.week)}
+
+
+@app.post("/api/mealplan/eat", status_code=201)
+def eat_planned(body: MealEatIn, user: dict = Depends(owner_only)):
+    if not (saved := mealplan.eat(body.date, body.index)):
+        raise HTTPException(status_code=404)
+    return {"saved": saved, **food.day()}
 
 
 @app.put("/api/food/target")

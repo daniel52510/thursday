@@ -760,6 +760,35 @@
   .fd-weigh small { font-size: 12.5px; color: var(--text-muted); align-self: center; }
   .fd-target button { color: var(--text-muted); text-decoration: underline; font-size: 12.5px; }
 
+  .fd-fuel { margin: 6px 0 0; font-size: 13px; color: var(--text-muted); }
+  .fd-plan { margin-top: 24px; }
+  .fd-plan-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .fd-plan-head h3 { margin: 0; font: 600 15px var(--sans); }
+  .fd-plan .mv-seg { --mv-soft: var(--soft); --mv-on: var(--soft-2); }
+  .mp-days { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 12px 0 4px; }
+  .mp-days::-webkit-scrollbar { display: none; }
+  .mp-days button { flex: none; padding: 6px 12px; border-radius: 12px; background: var(--soft); font-size: 12.5px; text-align: center; line-height: 1.3; }
+  .mp-days button small { display: block; color: var(--text-faint); font-size: 11px; }
+  .mp-days button[aria-pressed="true"] { background: var(--inverse-bg); color: var(--inverse-text); }
+  .mp-days button[aria-pressed="true"] small { color: inherit; opacity: .7; }
+  .mp-sum { font-size: 12.5px; color: var(--text-muted); margin: 6px 0 4px; }
+  .mp-meal { padding: 12px 14px; border-radius: 16px; background: var(--soft); margin-top: 8px; }
+  .mp-meal header { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .mp-meal header small { font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
+  .mp-meal b { display: block; font-weight: 600; font-size: 14.5px; margin-top: 2px; }
+  .mp-meal p { margin: 4px 0 0; font-size: 12.5px; color: var(--text-muted); }
+  .mp-meal .mac { font-size: 12.5px; color: var(--text-body); font-variant-numeric: tabular-nums; margin-top: 6px; }
+  .mp-meal button { margin-top: 8px; height: 32px; padding: 0 14px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-size: 13px; }
+  .mp-meal button:disabled { background: var(--soft-2); color: var(--text-muted); }
+  .mp-groc { margin-top: 12px; font-size: 13.5px; }
+  .mp-groc summary { cursor: pointer; padding: 6px 0; color: var(--text-muted); }
+  .mp-groc ul { margin: 4px 0 0; padding-left: 18px; columns: 2; column-gap: 18px; font-size: 13px; line-height: 1.6; }
+  .mp-empty { margin-top: 12px; }
+  .mp-empty button { margin-top: 10px; height: 40px; padding: 0 18px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font: 600 14px var(--sans); }
+  .mp-again { margin-top: 10px; font-size: 12.5px; color: var(--text-muted); text-decoration: underline; }
+  .fd-prefs textarea { width: 100%; margin-top: 6px; padding: 10px 12px; border-radius: 12px; border: 0; background: var(--soft); color: var(--text); font: 14px/1.4 var(--sans); }
+  .fd-prefs .row button { height: 36px; padding: 0 14px; border-radius: 999px; background: var(--soft-2); font-size: 13px; }
+
   /* ---------- phone ---------- */
   @media (max-width: 800px) {
     aside {
@@ -1257,6 +1286,7 @@
   <div id="foodView" hidden>
     <div class="fd-head"><b id="fdLeft">–</b><span id="fdLeftLabel">calories left</span><small id="fdOf"></small></div>
     <div class="fd-bars" id="fdBars"></div>
+    <p class="fd-fuel" id="fdFuel"></p>
     <form class="fd-add" id="fdAdd"><input id="fdText" maxlength="400" placeholder="What did you eat? e.g. two eggs and toast" aria-label="What did you eat" autocomplete="off"><button type="submit" id="fdLog">Log</button></form>
     <p class="em-meta" id="fdNote">THURSDAY estimates the calories and macros. Or just tell him: "I had a chicken burrito".</p>
     <div class="fd-recent" id="fdRecent"></div>
@@ -1265,6 +1295,15 @@
         <div class="fd-nums"><label>kcal<input id="fmK" type="number" inputmode="decimal" min="0" max="5000" required></label><label>Protein<input id="fmP" type="number" inputmode="decimal" min="0" max="500"></label><label>Carbs<input id="fmC" type="number" inputmode="decimal" min="0" max="1000"></label><label>Fat<input id="fmF" type="number" inputmode="decimal" min="0" max="500"></label></div>
         <button type="submit">Add</button></form></details>
     <div id="fdList"></div>
+    <section class="fd-plan">
+      <div class="fd-plan-head"><h3>This week's meals</h3><div class="mv-seg" id="mpWeek" role="group" aria-label="Week"><button type="button" data-week="this" aria-pressed="true">This week</button><button type="button" data-week="next" aria-pressed="false">Next</button></div></div>
+      <div id="mpBody"></div>
+    </section>
+    <details class="fd-manual fd-prefs"><summary>Planner notes and Waterson mode</summary>
+      <label class="field">What the planner should know (likes, dislikes, allergies, budget, cooking time)<textarea id="fpNotes" maxlength="600" rows="3" placeholder="e.g. no mushrooms, love Mexican, chicken and rice batch on Sundays, about $120 a week"></textarea></label>
+      <div class="row"><button type="button" id="fpSave">Save notes</button></div>
+      <div id="fpSwitches"></div>
+    </details>
     <form class="fd-weigh" id="fdWeigh"><label>Weigh-in<input id="fdLb" type="number" inputmode="decimal" min="80" max="700" step="0.1" placeholder="lb"></label><button type="submit">Save</button><small id="fdWeightNow"></small></form>
     <p class="fd-target"><span id="fdTarget"></span> <button type="button" id="fdTargetBtn">Use my own</button></p>
   </div>
@@ -1895,7 +1934,7 @@ $("fdAdd").onsubmit = async (e) => {
   if (!r.ok) { $("fdNote").textContent = `Couldn't: ${typeof out.detail === "string" ? out.detail : r.status}`; return; }
   $("fdText").value = "";
   $("fdNote").textContent = "Logged: " + out.saved.map((x) => `${x.name} ${r0(x.kcal)} kcal`).join(", ") + ".";
-  loadFood();
+  loadFood(); loadFoodPrefs();
 };
 $("fdManual").onsubmit = async (e) => {
   e.preventDefault();
@@ -1915,12 +1954,94 @@ $("fdTargetBtn").onclick = async () => {
   await api("/api/food/target", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kcal: v.trim() ? +v : null }) });
   loadFood();
 };
+// ---------- the weekly meal plan (mealplan.py) and Waterson mode (food.py) ----------
+const MP = { week: "this", day: null, timer: 0 };
+const fmtG = (g) => g >= 1000 ? `${(g / 1000).toFixed(1)} kg` : `${g} g`;
+async function loadPlan() {
+  let res = null;
+  try { const r = await api(`/api/mealplan?week=${MP.week}`); if (r.ok) res = await r.json(); } catch {}
+  const box = $("mpBody"); box.innerHTML = "";
+  clearTimeout(MP.timer);
+  if (!res) return;
+  if (res.planning) {
+    box.innerHTML = `<div class="em-empty mp-empty">Planning the week… (about a minute; your phone gets a ping)</div>`;
+    MP.timer = setTimeout(loadPlan, 8000); return;
+  }
+  const plan = res.plan;
+  if (!plan || !plan.days.length) {
+    const e = document.createElement("div"); e.className = "em-empty mp-empty";
+    e.innerHTML = `${MP.week === "next" ? "Next week isn't planned yet (it's made Sunday evening)." : "No plan for this week yet."}<br>`;
+    const b = document.createElement("button"); b.type = "button"; b.textContent = MP.week === "next" ? "Plan next week now" : "Plan my week";
+    b.onclick = async () => { await api("/api/mealplan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ week: MP.week }) }); loadPlan(); };
+    e.append(b); box.append(e); return;
+  }
+  const todayIso = new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+  if (!plan.days.some((d) => d.date === MP.day)) MP.day = (plan.days.find((d) => d.date === todayIso) || plan.days[0]).date;
+  const chips = document.createElement("div"); chips.className = "mp-days";
+  for (const d of plan.days) {
+    const b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-pressed", String(d.date === MP.day));
+    b.innerHTML = `${d.weekday.slice(0, 3)}<small></small>`; b.querySelector("small").textContent = d.theme;
+    b.onclick = () => { MP.day = d.date; loadPlan(); }; chips.append(b);
+  }
+  box.append(chips);
+  const d = plan.days.find((x) => x.date === MP.day);
+  const sum = document.createElement("p"); sum.className = "mp-sum";
+  sum.textContent = `${d.weekday}: ${d.kind} day · ${d.totals.kcal.toLocaleString()} of ${d.targets.kcal.toLocaleString()} kcal · P ${d.totals.protein} / C ${d.totals.carbs} / F ${d.totals.fat} g`;
+  box.append(sum);
+  d.meals.forEach((m, i) => {
+    const c = document.createElement("div"); c.className = "mp-meal";
+    c.innerHTML = `<header><small></small><span class="mac"></span></header><b></b><p class="how"></p><p class="ing"></p>`;
+    c.querySelector("small").textContent = m.slot; c.querySelector("b").textContent = m.name;
+    c.querySelector(".mac").textContent = `${m.kcal} kcal · P ${m.protein}`;
+    c.querySelector(".how").textContent = m.how || "";
+    c.querySelector(".ing").textContent = m.ingredients.map((x) => `${x.item} ${fmtG(x.grams)}`).join(" · ");
+    if (MP.week === "this" && d.date === todayIso) {
+      const b = document.createElement("button"); b.type = "button";
+      const eaten = (d.eaten || []).includes(i); b.textContent = eaten ? "Logged ✓" : "Ate it"; b.disabled = eaten;
+      b.onclick = async () => { b.disabled = true; const r = await api("/api/mealplan/eat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ date: d.date, index: i }) }); if (r.ok) { loadFood(); loadFoodPrefs(); loadPlan(); } };
+      c.append(b);
+    }
+    box.append(c);
+  });
+  const g = document.createElement("details"); g.className = "mp-groc";
+  g.innerHTML = `<summary>Grocery list · ${plan.groceries.length} items</summary><ul></ul>`;
+  for (const it of plan.groceries) { const li = document.createElement("li"); li.textContent = `${it.item} · ${fmtG(it.grams)}`; g.querySelector("ul").append(li); }
+  box.append(g);
+  const again = document.createElement("button"); again.type = "button"; again.className = "mp-again"; again.textContent = "Plan it again";
+  again.onclick = async () => { if (!confirm("Replace this week's plan with a new one?")) return; await api("/api/mealplan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ week: MP.week }) }); loadPlan(); };
+  box.append(again);
+}
+for (const b of document.querySelectorAll("#mpWeek button")) b.onclick = () => {
+  MP.week = b.dataset.week; MP.day = null;
+  for (const o of document.querySelectorAll("#mpWeek button")) o.setAttribute("aria-pressed", String(o === b));
+  loadPlan();
+};
+const WATERSON_LABELS = { timing: "Fuel timing: protein over 5 feedings, a nudge after 4 hours without food", rotation: "Protein rotation: a theme a day (fish, white meat, plant-based, red meat Fridays)",
+  alcohol: "No alcohol Monday to Thursday (noted once if logged)", checkin: "Morning check-in: energy and mood set the day's intensity" };
+async function loadFoodPrefs() {
+  let p = null;
+  try { const r = await api("/api/food/prefs"); if (r.ok) p = await r.json(); } catch {}
+  if (!p) return;
+  const f = p.fuel;
+  $("fdFuel").textContent = p.waterson.timing ? `Feeding ${f.feedings} of ${f.of} · about ${f.protein_per_feeding_g} g protein each` + (f.next_by ? ` · next by ${f.next_by}` : "") + (p.waterson.rotation ? ` · today's protein: ${p.theme}` : "") : "";
+  $("fpNotes").value = p.notes || "";
+  const box = $("fpSwitches"); box.innerHTML = "";
+  for (const k of Object.keys(WATERSON_LABELS)) {
+    const row = document.createElement("div"); row.className = "set-toggle";
+    row.innerHTML = `<span></span><button class="switch" type="button" role="switch"></button>`;
+    row.querySelector("span").textContent = WATERSON_LABELS[k];
+    const sw = row.querySelector("button"); sw.setAttribute("aria-checked", String(!!p.waterson[k])); sw.setAttribute("aria-label", WATERSON_LABELS[k]);
+    sw.onclick = async () => { const on = sw.getAttribute("aria-checked") !== "true"; const r = await api("/api/food/prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ waterson: { [k]: on } }) }); if (r.ok) sw.setAttribute("aria-checked", String(on)); };
+    box.append(row);
+  }
+}
+$("fpSave").onclick = async () => { await api("/api/food/prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes: $("fpNotes").value }) }); $("fpSave").textContent = "Saved"; setTimeout(() => ($("fpSave").textContent = "Save notes"), 1500); };
 function showBodyView(v) {
   for (const b of document.querySelectorAll(".body-tabs button")) b.setAttribute("aria-pressed", String(b.dataset.view === v));
   $("liftsView").hidden = v !== "lifts"; $("foodView").hidden = v !== "food";
   $("bodyView").hidden = v !== "body"; $("bodyHead").hidden = v !== "body";
   if (v === "lifts") loadLifts();
-  if (v === "food") loadFood();
+  if (v === "food") { loadFood(); loadFoodPrefs(); loadPlan(); }
 }
 for (const b of document.querySelectorAll(".body-tabs button")) b.onclick = () => showBodyView(b.dataset.view);
 $("bodyClose").onclick = () => $("bodyDialog").close();

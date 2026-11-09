@@ -180,6 +180,17 @@ def training_today(args: Dict[str, Any]):
     mode, why = adjust(ready["score"] if ready else None)
     if args.get("tomorrow"):
         why = "Tomorrow's intensity depends on how he sleeps tonight; it's set in the morning."
+    # Waterson reads energy and mood before a session: his morning check-in (asks.checkin_source) moves the day
+    # one step, never past what his body's readiness allows.
+    import food
+    felt = food.checkin_today() if not args.get("tomorrow") else None
+    steps = ["recover", "lighter", "as planned", "push"]
+    if felt == "low" and mode in steps[1:]:
+        mode = steps[steps.index(mode) - 1]
+        why += " He said his energy is low this morning: one step easier."
+    elif felt == "great" and mode == "as planned" and ((ready or {}).get("score") or 0) >= 70:
+        mode = "push"
+        why += " He feels great and his body agrees: a day to push."
     if mode == "recover":
         title, exercises = WEEK[6]
     # This week so far, from his synced Watch workouts.
@@ -196,7 +207,8 @@ def training_today(args: Dict[str, Any]):
         "loads": [{"exercise": x["exercise"], "do": f"{x['sets']} x {x['reps']}" + (
             f" at {x['weight_lb']:g} lb" if x["weight_lb"] else " bodyweight" if x["weight_lb"] == 0 else ""),
             "last_time": x["last"], "why": x["why"]} for x in loads.values()],
-        "nutrition": _food_view(),
+        "nutrition": _food_view(), "feeling_this_morning": felt,
+        "todays_protein_theme": food.protein_theme(day) if food.prefs()["waterson"]["rotation"] else None,
         "workouts_last_7_days": len(done), "him": me, "targets": targets(me),
         "note": "You're his personal trainer. Say the session in a sentence or two (the focus and the first couple "
                 "of moves with their weights from loads), the intensity and why, and offer the full list. Encouraging, "
