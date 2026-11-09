@@ -3713,7 +3713,8 @@ const PANES = {
         } catch (e) { out.replaceChildren(el("p", { className: "set-note err", textContent: e.message })); }
       })), out);
     // The iPhone Shortcut (phone.py, /api/phone): "Hey Siri, THURSDAY", and his phone does calls, texts, music.
-    const prefs = await call("/api/phone/prefs").catch(() => ({ music_app: "youtube" }));
+    const prefs = await call("/api/phone/prefs").catch(() => ({ music_app: "youtube", base_url: location.origin }));
+    const base = prefs.base_url || location.origin;
     const app = el("select", {}, ...[["youtube", "YouTube Music"], ["apple", "Apple Music"], ["spotify", "Spotify"]].map(([v, t]) => el("option", { value: v, textContent: t })));
     app.value = prefs.music_app;
     const appNote = el("p", { className: "set-note" });
@@ -3722,8 +3723,8 @@ const PANES = {
       "Above, create a token named \"iPhone\" acting as you, and copy it. Your iPhone needs Tailscale on (it's how it reaches the Mac away from home).",
       "Shortcuts app → + → name it THURSDAY.",
       "Add Dictate Text (Stop Listening: After Pause).",
-      `Add Get Contents of URL: ${location.origin}/api/phone, Method POST, Header Authorization = Bearer <your token>, Request Body JSON with one Text field: text = Dictated Text.`,
-      "Add Speak Text with Dictionary Value of \"speak\" in Contents of URL. (Run from Siri, Siri's voice reads it.)",
+      `Add Get Contents of URL: ${base}/api/phone. Show More: Method POST. Headers → Add new header: Key Authorization, Text "Bearer " then your token. Request Body JSON → Add new field → Text: Key text, Text = (Select Variable) Dictated Text.`,
+      "Add Get Dictionary Value: Key speak, in Contents of URL. Then Speak Text: Dictionary Value (Wait Until Finished on).",
       "Add If: Dictionary Value \"do\" is \"call\" → Find Contacts where Name contains Dictionary Value \"contact\" (Limit 1) → Call Contacts.",
       "Add If: \"do\" is \"message\" → Find Contacts (as above) → Send Message: Dictionary Value \"body\" to Contacts. Leave Show When Run on: you confirm each text.",
       "Add If: \"do\" is \"open\" → Open URLs: Dictionary Value \"url\".",

@@ -324,7 +324,8 @@ class PhonePrefsIn(BaseModel):
 
 @app.get("/api/phone/prefs")
 def get_phone_prefs(user: dict = Depends(owner_only)):
-    return phone.prefs()
+    # The address his phone uses (the tailnet URL), not the page's own: opened on the Mac, that was localhost.
+    return {**phone.prefs(), "base_url": approvals.PUBLIC_URL}
 
 
 @app.put("/api/phone/prefs")
