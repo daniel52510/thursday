@@ -39,6 +39,11 @@ RING_WINDOW = timedelta(minutes=2)
 PREP_LEAD = timedelta(minutes=5)
 PREP_GRACE = timedelta(seconds=45)  # past ring time, stop waiting for preparation and brief live
 DEFAULT_BRIEF = "the weather, my calendar for today, and the top three news headlines"
+MUSIC_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "alarm_music.json")
+MUSIC_LEAD_S = 60            # music fades in this long before he speaks
+MUSIC_VOLUME = (8, 35)       # YouTube Music volume: from, to
+PHONE_AFTER_TRIES = 3        # a wake-up he hasn't answered after this many tries also goes to his phone
+PHONE_AFTER_S = 180          # a briefing he hasn't said a word to: a gentle push after this long
 NUDGE_GAP_S = 30  # quiet after her last try (she spoke, listened, heard nothing) before she tries again
 MAX_NUDGES = 6
 CHIME_FROM = 4  # nudges from this one on open with the full alarm chime, not the soft ping
@@ -169,11 +174,66 @@ def ring_prompt(alarm: dict, at: datetime) -> tuple[str, str]:
 def briefing_prompt(alarm: dict, at: datetime) -> str:
     local = at.astimezone(ZoneInfo(alarm["timezone"]))
     when = f"{local:%A, %B} {local.day} at {local:%I:%M %p}".replace(" 0", " ")
+    training = (" Then today's training: call training_today and say the session and the first lift with its weight "
+                "in one sentence, and my readiness only if it's low." if prefs(alarm["user_id"])["alarm_training"] else "")
     return (
         f"It's {when} and my alarm just went off. Give me my morning briefing covering "
         f"{alarm['brief'] or DEFAULT_BRIEF}. Use your tools for each topic so everything is current. "
-        "If my location is unknown, skip the weather and say so in one short line."
+        f"If my location is unknown, skip the weather and say so in one short line.{training}"
     )
+
+
+# ---------- wake-up extras (Settings → Voice → Alarm) ----------
+
+def music_query() -> str:
+    try:
+        with open(MUSIC_FILE) as f:
+            return str(json.load(f).get("query") or "")[:120]
+    except (OSError, ValueError):
+        return ""
+
+
+def set_music_query(query: str) -> str:
+    query = " ".join(str(query or "").split())[:120]
+    with open(MUSIC_FILE, "w") as f:
+        json.dump({"query": query}, f)
+    return query
+
+
+def prefs(user_id: str) -> dict:
+    s = mind.VOICE | {k: v for k, v in initalize_db().get_settings(user_id).items() if k in mind.VOICE}
+    return {k: s[k] for k in ("alarm_training", "alarm_phone", "alarm_music", "alarm_check")} | {"music_query": music_query()}
+
+
+_music_started: dict[tuple, float] = {}   # alarm key -> when its music started
+_phoned: set[tuple] = set()                # alarm keys already pushed to his phone
+
+
+async def _music_fade_in(query: str) -> None:
+    """His wake-up music, quiet at first and rising over MUSIC_LEAD_S (the satellite plays it; it ducks under
+    his voice like any music)."""
+    import music
+    try:
+        r = await asyncio.to_thread(music.music_play, {"query": query, "kind": "playlist" if "playlist" in query.lower() else "song"})
+        if not r.ok:
+            logger.warning("wake-up music didn't start: %s", r.error)
+            return
+        lo, hi = MUSIC_VOLUME
+        for i in range(7):
+            await asyncio.to_thread(music._cmd, "setVolume", round(lo + (hi - lo) * i / 6))
+            await asyncio.sleep(MUSIC_LEAD_S / 6)
+    except Exception as exc:
+        logger.warning("wake-up music: %s", type(exc).__name__)
+
+
+def _phone(alarm: dict, key: tuple, why: str, urgent: bool = True) -> None:
+    """The alarm on his phone too, once per ring."""
+    import approvals
+    if key in _phoned or not prefs(alarm["user_id"])["alarm_phone"]:
+        return
+    _phoned.add(key)
+    approvals.push(f"Alarm {alarm['time']}", why, tags=("alarm_clock",), priority=5 if urgent else 3)
+    logger.info("alarm %s: pushed to his phone (%s)", alarm["time"], why)
 
 
 def _context(alarm: dict) -> dict:
@@ -224,21 +284,40 @@ def _start_prep(alarm: dict, at: datetime) -> None:
 
 async def _ring(alarm: dict, at: datetime, now: datetime) -> bool:
     key = _key(alarm, at)
+    p = prefs(alarm["user_id"])
+    # Music wake-up: it starts first and fades in; he speaks over it MUSIC_LEAD_S later, with no chime.
+    music_wake = bool(p["alarm_music"] and p["music_query"])
+    if music_wake:
+        started = _music_started.get(key)
+        if started is None:
+            _music_started[key] = time.monotonic()
+            asyncio.create_task(_music_fade_in(p["music_query"]))
+            logger.info("alarm %s: wake-up music fading in", alarm["time"])
+            return False
+        if time.monotonic() - started < MUSIC_LEAD_S:
+            return False
     if key in _preparing and now < at + PREP_GRACE:
         return False  # nearly done: wait a tick rather than brief live
+    try:
+        import presence
+        if presence.phone() == "away":
+            _phone(alarm, key, "It's time, and you're not home, so it's ringing here.")
+    except Exception:
+        pass
     prepared = _prepared.get(key)
     prompt, mode = ring_prompt(alarm, at)
     # Her own wake-ups start with the soft ping, not the alarm chime.
     cue = "announce" if mode == "wake" else "alarm"
+    chime = 0.0 if music_wake else None
     for sat in list(SATELLITES):
         if prepared and prepared["audio"]:
             conv_id = prepared["conversation_id"]
-            ok = await sat.announce(audio=prepared["audio"], conversation_id=conv_id, cue=cue, alarm_try=1)
+            ok = await sat.announce(audio=prepared["audio"], conversation_id=conv_id, cue=cue, alarm_try=1, chime=chime)
         else:
             conv_id = initalize_db().create_conversation("Wake-up" if mode == "wake" else "Morning briefing",
                                                          alarm["user_id"])["id"]
             ok = await sat.announce(prompt=prompt, conversation_id=conv_id, context=_context(alarm), cue=cue, mode=mode,
-                                    alarm_try=1)
+                                    alarm_try=1, chime=chime)
         if ok:
             _prepared.pop(key, None)
             import night
@@ -247,6 +326,8 @@ async def _ring(alarm: dict, at: datetime, now: datetime) -> bool:
             logger.info("alarm %s rang with %s briefing", alarm["time"], "a prepared" if prepared else "a live")
             if mode == "wake":
                 _start_wakeup(alarm, sat, conv_id, prepared["reply"] if prepared else "")
+            else:
+                asyncio.create_task(_briefing_heard(alarm, key, sat, time.monotonic()))
             return True
     return False
 
@@ -264,6 +345,13 @@ def _start_wakeup(alarm: dict, sat, conversation_id: str, first_line: str = "") 
     _wakeups[alarm["user_id"]] = asyncio.create_task(_keep_waking(alarm, sat, conversation_id, first_line))
 
 
+async def _briefing_heard(alarm: dict, key: tuple, sat, rang: float) -> None:
+    """A briefing alarm he hasn't said a word to in PHONE_AFTER_S: a gentle push, in case he slept through it."""
+    await asyncio.sleep(PHONE_AFTER_S)
+    if sat.heard_at < rang:
+        _phone(alarm, key, "Your alarm went off and I didn't hear from you.", urgent=False)
+
+
 async def _keep_waking(alarm: dict, sat, conversation_id: str, first_line: str = "") -> None:
     """Try again, in the same conversation, each time the satellite has been quiet
     NUDGE_GAP_S since her last try: she spoke, listened, and heard nothing (or they
@@ -272,6 +360,7 @@ async def _keep_waking(alarm: dict, sat, conversation_id: str, first_line: str =
     they answered, is written live. Ends when they dismiss or snooze (end_wakeup),
     after MAX_NUDGES, or if the satellite goes away or its mic is muted."""
     tried_at, tries = time.monotonic(), 0
+    began = tried_at
     ready: list[tuple[str, list[bytes]]] = []
     writer = asyncio.create_task(_prepare_nudges(alarm, first_line, ready))
     db = initalize_db()
@@ -303,6 +392,8 @@ async def _keep_waking(alarm: dict, sat, conversation_id: str, first_line: str =
                 db.log_message(role="user", content=prompt, conversation_id=conversation_id)
                 db.log_message(role="assistant", content=strip_voice_tags(line), conversation_id=conversation_id)
             tried_at, tries = time.monotonic(), tries + 1
+            if tries >= PHONE_AFTER_TRIES and sat.heard_at < began:  # not a word from him since it started
+                _phone(alarm, ("wake", alarm["id"], alarm["time"]), f"I've tried {tries} times to wake you.")
             logger.info("wake-up %s: %s, nudge %d/%d (%s)", alarm["time"], "answered then quiet" if answered
                         else "no answer", tries, MAX_NUDGES, "prepared" if audio else "live")
         logger.info("wake-up %s: gave up after %d nudges", alarm["time"], MAX_NUDGES)
@@ -325,6 +416,8 @@ async def run_scheduler() -> None:
                     continue
                 if not SATELLITES:
                     logger.warning("alarm %s %s due but no satellite is connected", alarm["time"], alarm["timezone"])
+                    _phone(alarm, _key(alarm, scheduled_today(alarm, now)), "It's time. The speaker isn't connected, "
+                           "so this is your alarm.")
                     continue
                 if not await _ring(alarm, scheduled_today(alarm, now), now):
                     logger.info("alarm %s due; satellite busy or briefing still preparing, retrying", alarm["time"])

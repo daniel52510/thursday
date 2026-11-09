@@ -216,20 +216,46 @@ def _first_alarm(after: datetime) -> datetime | None:
     return best.astimezone(_zone()) if best else None
 
 
-def _first_event(day: datetime) -> str:
+def _first_event_at(day: datetime) -> tuple[str, datetime | None]:
+    """The day's first timed event: (title, start), or ("", None)."""
     import calendar_tool
     try:
         r = calendar_tool.calendar_events({"start_date": day.date().isoformat(), "days": 1, "timezone": str(_zone())})
         ev = next((e for e in ((r.data or {}).get("events", []) if r.ok else []) if not e.get("all_day")), None)
+        start = datetime.fromisoformat(str(ev["start"])) if ev else None
     except Exception:
-        return ""
+        return "", None
     if not ev:
-        return "nothing on the calendar"
-    try:
-        when = datetime.fromisoformat(str(ev["start"])).strftime("%-I:%M %p")
-    except ValueError:
-        when = ""
-    return f"{ev.get('title', 'an event')} at {when}".strip()
+        return "", None
+    return str(ev.get("title") or "an event"), start if start.tzinfo else start.replace(tzinfo=_zone())
+
+
+def _first_event(day: datetime) -> str:
+    title, start = _first_event_at(day)
+    return f"{title} at {start.strftime('%-I:%M %p')}" if start else "nothing on the calendar"
+
+
+ALARM_LEAD = timedelta(minutes=90)   # the bedtime check: up this long before the first event
+
+
+def alarm_check(now: datetime, alarm: datetime | None, title: str, start: datetime | None) -> dict | None:
+    """When tomorrow's first event is early and the alarm is missing or too late: the alarm he'd want."""
+    if not start or start - now > timedelta(hours=20) or start <= now:
+        return None
+    if alarm and alarm <= start - timedelta(minutes=60):
+        return None  # an hour or more of room already
+    if not alarm and start.hour >= 12:
+        return None  # nothing in the morning: sleep in
+    want = start - ALARM_LEAD
+    want = want.replace(minute=want.minute - want.minute % 5, second=0, microsecond=0)
+    want = max(want, want.replace(hour=5, minute=0))
+    if want <= now + timedelta(hours=3):
+        return None  # too soon to be worth waking for
+    have = f"your alarm is at {alarm.strftime('%-I:%M')}" if alarm else "you don't have an alarm set"
+    return {"time": want.strftime("%H:%M"), "say": want.strftime("%-I:%M %p"), "tz": str(_zone()),
+            "why": f"{title} at {start.strftime('%-I:%M %p')}",
+            "question": f"Your first thing tomorrow is {title} at {start.strftime('%-I:%M')}, and {have}. "
+                        f"Want an alarm at {want.strftime('%-I:%M')}?"}
 
 
 def good_night() -> dict:
@@ -244,7 +270,15 @@ def good_night() -> dict:
     tomorrow = now + timedelta(days=1) if now.hour >= 12 else now
     alarm = _first_alarm(now)
     done["first_alarm"] = alarm.strftime("%-I:%M %p") if alarm else "no alarm set"
-    done["tomorrow"] = _first_event(tomorrow)
+    title, start = _first_event_at(tomorrow)
+    done["tomorrow"] = f"{title} at {start.strftime('%-I:%M %p')}" if start else "nothing on the calendar"
+    import alarms
+    from accounts import OWNER
+    if alarms.prefs(OWNER)["alarm_check"] and (check := alarm_check(now, alarm, title, start)):
+        import asks
+        if asks.record("alarm_check", check["question"], [{"key": "set", "label": "Set it"}, {"key": "no", "label": "No"}],
+                       check, key=f"alarm_check:{tomorrow.date().isoformat()}"):
+            done["ask_him"] = check["question"]
     if alarm:
         hours = (alarm - now).total_seconds() / 3600
         done["sleep_if_now"] = f"about {hours:.1f} hours before the alarm"
@@ -258,6 +292,15 @@ def good_morning() -> dict:
     if now.hour < 11:
         out["lights"] = _lights_up()
     out["today"] = _first_event(now)
+    try:
+        import alarms
+        import trainer
+        from accounts import OWNER
+        if alarms.prefs(OWNER)["alarm_training"] and (t := trainer.training_today({})).ok:
+            out["training"] = {"session": t.data["session"], "intensity": t.data["intensity"],
+                               "first_lift": (t.data.get("loads") or [{}])[0]}
+    except Exception:
+        pass
     try:  # where he is: what a satellite said on connect (as the alarm briefing does), else THURSDAY_LOCATION
         import tools
         import voice_ws
@@ -294,7 +337,8 @@ def night_mode(args: Dict[str, Any]):
     if action == "good_night":
         data = good_night()
         note = ("Say good night in one or two quiet sentences: when his alarm is and the first thing tomorrow, and "
-                "that the lights are fading. Nothing else.")
+                "that the lights are fading. Nothing else." + (" Then ask ask_him, word for word; his yes or no is "
+                                                               "handled for you." if data.get("ask_him") else ""))
     elif action == "good_morning":
         data = good_morning()
         note = ("A short, warm good morning: the first thing on today's calendar, the weather in a few words, and "

@@ -714,6 +714,9 @@
   .lf-actions .yes { background: var(--inverse-bg); color: var(--inverse-text); }
   .lf-actions button:disabled { opacity: .5; }
 
+  .set-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 0; }
+  .set-toggle span { flex: 1; min-width: 0; font-size: 14px; line-height: 1.45; color: var(--text-body); }
+
   /* ---------- phone ---------- */
   @media (max-width: 800px) {
     aside {
@@ -3501,14 +3504,22 @@ const PANES = {
       ...slider("Speaking speed", "speed", 65, 135, v.speed ?? 100, (x) => x === 100 ? "normal" : `${x}%`),
       el("p", { className: "set-p", textContent: "Saying \"talk louder\", \"quieter\" or \"slow down\" to THURSDAY changes the same settings. At night he whispers automatically." }));
     // Alarms have their own levels (mind.alarm_style / alarm_chime): never whispered or night-quiet.
-    const gentle = el("button", { className: "switch", type: "button", role: "switch" });
-    gentle.setAttribute("aria-checked", String(v.alarm_gentle !== false)); gentle.setAttribute("aria-label", "Gentle start");
-    const gNote = note();
-    gentle.onclick = async () => {
-      const on = gentle.getAttribute("aria-checked") !== "true";
-      try { await call("/api/voice", jsonReq("PUT", { alarm_gentle: on })); gentle.setAttribute("aria-checked", String(on)); say(gNote, on ? "The first chime is soft, then it rises." : "Every chime at full level."); }
-      catch (e) { say(gNote, e.message, true); }
+    // Each wake-up extra is a switch, saved the moment it's flipped (alarms.py / night.py read them at ring time).
+    const toggle = (key, label, onText, offText) => {
+      const sw = el("button", { className: "switch", type: "button", role: "switch" });
+      sw.setAttribute("aria-checked", String(!!v[key])); sw.setAttribute("aria-label", label);
+      const n = note();
+      sw.onclick = async () => {
+        const on = sw.getAttribute("aria-checked") !== "true";
+        try { await call("/api/voice", jsonReq("PUT", { [key]: on })); sw.setAttribute("aria-checked", String(on)); say(n, on ? onText : offText); }
+        catch (e) { say(n, e.message, true); }
+      };
+      return [el("div", { className: "set-toggle" }, el("span", { textContent: label }), sw), n];
     };
+    const mq = el("input", { type: "text", maxLength: 120, placeholder: "e.g. Morning Coffee playlist, or an artist", value: v.alarm_music_query || "" });
+    mq.setAttribute("aria-label", "Wake-up music");
+    const mqNote = note();
+    mq.onchange = async () => { try { await call("/api/voice", jsonReq("PUT", { alarm_music_query: mq.value })); say(mqNote, mq.value ? "Saved: it fades in a minute before he speaks." : "Cleared."); } catch (e) { say(mqNote, e.message, true); } };
     const testNote = note();
     const test = el("button", { className: "secondary", type: "button", textContent: "Test the alarm on the speaker" });
     test.onclick = async () => { try { await call("/api/alarms/test", jsonReq("POST", {})); say(testNote, "Playing it on the speaker now."); } catch (e) { say(testNote, e.message, true); } };
@@ -3516,7 +3527,12 @@ const PANES = {
       el("p", { className: "set-p", textContent: "How the wake-up sounds, separate from his everyday voice. It's never whispered or night-quiet, and night mode ends when it rings." }),
       ...slider("Alarm voice", "alarm_volume", 10, 100, v.alarm_volume ?? 80, (x) => `${x}%`),
       ...slider("Alarm chime", "alarm_chime", 0, 100, v.alarm_chime ?? 60, (x) => x === 0 ? "off" : `${x}%`),
-      el("div", { className: "set-row" }, el("span", { className: "set-p", textContent: "Gentle start: the first chime soft, rising over the next tries" }), gentle), gNote,
+      ...toggle("alarm_gentle", "Gentle start: the first chime soft, rising over the next tries", "The first chime is soft, then it rises.", "Every chime at full level."),
+      ...toggle("alarm_training", "Today's training in the morning briefing", "He'll add the session and your first lift's weight.", "No training in the briefing."),
+      ...toggle("alarm_phone", "Phone backup: a push when you don't answer or aren't home", "If you sleep through it or you're out, your phone gets it too.", "The speaker only."),
+      ...toggle("alarm_check", "Bedtime check: \"good night\" checks tomorrow's alarm against your first event", "He'll offer an earlier alarm when your morning needs one.", "No alarm check at good night."),
+      ...toggle("alarm_music", "Music wake-up: music fades in instead of the chime", "Music first, then his voice a minute later.", "The chime, as usual."),
+      el("label", { className: "field" }, "Wake-up music", mq), mqNote,
       el("div", { className: "row" }, test), testNote);
     body.append(el("h3", { className: "set-h", textContent: "Night mode" }),
       el("p", { className: "set-p", textContent: "Night runs 10 pm to 7 am, or from when you say \"good night\" (lights fade out, music fades, notifications wait till morning, he whispers and keeps it short) until \"good morning\". Your Watch ends it when you're up." }),

@@ -78,7 +78,11 @@ VOICE = {"voice_volume": 100, "whisper": 0, "night_whisper": 1, "normal_until": 
          "voice_tara": 0,  # 1 = Tara's voice (plain Orpheus "tara"), 0 = Rocky's (leo + rocky_voice.py)
          # Alarms have their own levels: a wake-up isn't whispered or night-quiet, and the chime isn't a blast.
          # Gentle: the first chime at half his level, rising to all of it by the third try.
-         "alarm_volume": 80, "alarm_chime": 60, "alarm_gentle": 1}
+         "alarm_volume": 80, "alarm_chime": 60, "alarm_gentle": 1,
+         # Wake-up extras (alarms.py), each a switch in Settings → Voice → Alarm: today's training in the briefing,
+         # a phone push when he doesn't answer or isn't home, music fading in instead of the chime (the search is in
+         # brain/alarm_music.json), and an alarm check when he says good night (night.py).
+         "alarm_training": 1, "alarm_phone": 1, "alarm_music": 0, "alarm_check": 1}
 VOICE_STEP = 20  # "louder" / "quieter"
 SPEED_STEP = 12  # "faster" / "slower"
 # Night: he whispers on his own, the same hours the satellite plays quieter (satellite NIGHT, 22-7).

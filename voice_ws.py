@@ -1547,7 +1547,8 @@ class Session:
 
     async def announce(self, *, audio: list[bytes] | None = None, prompt: str = "",
                        conversation_id: str | None = None, context: dict | None = None,
-                       cue: str = "alarm", mode: str = "briefing", alarm_try: int = 0) -> bool:
+                       cue: str = "alarm", mode: str = "briefing", alarm_try: int = 0,
+                       chime: float | None = None) -> bool:
         """Server-initiated speech (alarms): an "alarm" cue, then either audio
         made ahead of time or a live reply to `prompt` (mode "briefing"). The
         session continues in `conversation_id`, so follow-up questions have the
@@ -1563,7 +1564,8 @@ class Session:
         if alarm_try:  # an alarm (alarms.py): its own chime level, and the wake-up isn't night-quiet or whispered
             self._alarm_until = time.monotonic() + 180
             await self.ws.send_json({"type": "alarm", "cue": cue, "alarm": True,
-                                     "chime_gain": round(mind.alarm_chime(self.user["id"], alarm_try), 3)})
+                                     "chime_gain": round(mind.alarm_chime(self.user["id"], alarm_try) if chime is None
+                                                         else chime, 3)})
         else:
             await self.ws.send_json({"type": "alarm", "cue": cue})
         self._speech_end = time.monotonic()

@@ -101,6 +101,20 @@ async def ask(kind: str, question: str, options: list[dict], data: dict, *, key:
     return aid
 
 
+def record(kind: str, question: str, options: list[dict], data: dict, *, key: str, expires_h: float = 1) -> str | None:
+    """A question he's hearing right now in a reply (the good-night alarm check): kept as asked out loud, so his
+    plain yes or no next answers it (voice_answer). Not delivered again, and not counted against the cap."""
+    if seen(key):
+        return None
+    aid, now = uuid.uuid4().hex[:8], time.time()
+    with _connect() as conn:
+        conn.execute("INSERT INTO asks(id, kind, question, options, data, created, expires, spoken_at, key) "
+                     "VALUES (?,?,?,?,?,?,?,?,?)", (aid, kind, question, json.dumps(options), json.dumps(data),
+                                                    now - MIN_GAP_S, now + expires_h * 3600, now, key))
+    mark_seen(key)
+    return aid
+
+
 def pending() -> list[dict]:
     with _connect() as conn:
         conn.execute("UPDATE asks SET status = 'expired' WHERE status = 'pending' AND expires < ?", (time.time(),))
@@ -352,7 +366,17 @@ def _lifts_handler(choice: str, data: dict) -> str:
     return "okay, nothing logged"
 
 
-HANDLERS.update(email=_email_handler, promise=_promise_handler, lifts=_lifts_handler)
+def _alarm_check_handler(choice: str, data: dict) -> str:
+    """Yes to "set one for 6:30?": a one-time alarm (it switches itself off after ringing)."""
+    from accounts import OWNER
+    from agent_loop import initalize_db
+    if choice != "set":
+        return "left the alarm as it is"
+    initalize_db().create_alarm(data["time"], [], data["tz"], data.get("why", ""), user_id=OWNER, style="wake")
+    return f"alarm set for {data['say']}"
+
+
+HANDLERS.update(email=_email_handler, promise=_promise_handler, lifts=_lifts_handler, alarm_check=_alarm_check_handler)
 
 
 async def run() -> None:

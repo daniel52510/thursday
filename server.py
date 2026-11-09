@@ -37,6 +37,7 @@ from memory import now_iso as memory_now
 from accounts import FAMILY, FAMILY_ROLES, OWNER, LoginThrottle, public
 from agent_loop import MODEL, URL as OLLAMA_URL, initalize_db, preload_model
 from agent_stream import stream_prompt, strip_voice_tags
+import alarms
 from alarms import run_scheduler as run_alarm_scheduler
 from episodic import run_memory_writer
 from mind import run_reflection, voice_style
@@ -228,6 +229,11 @@ class VoiceIn(BaseModel):
     alarm_volume: int | None = Field(default=None, ge=10, le=100)  # his voice when an alarm wakes him
     alarm_chime: int | None = Field(default=None, ge=0, le=100)    # the chime; 0 = none
     alarm_gentle: bool | None = None                               # chime starts soft and rises
+    alarm_training: bool | None = None                             # today's workout in the briefing
+    alarm_phone: bool | None = None                                # push to his phone if he doesn't answer
+    alarm_music: bool | None = None                                # music fades in instead of the chime
+    alarm_check: bool | None = None                                # "good night" checks tomorrow's alarm
+    alarm_music_query: str | None = Field(default=None, max_length=120)
 
 
 # Whose voice speaks to this user (mind.voice_style): the UI's Tara/Rocky toggle. "switch to Tara" by voice
@@ -251,7 +257,9 @@ def get_voice(user: dict = Depends(current_user)):
     s = mind.VOICE | {k: v for k, v in initalize_db().get_settings(user["id"]).items() if k in mind.VOICE}
     return {"voice": "tara" if voice_style(user["id"])["voice"] == "tara" else "rocky",
             "volume": s["voice_volume"], "speed": s["voice_speed"], "alarm_volume": s["alarm_volume"],
-            "alarm_chime": s["alarm_chime"], "alarm_gentle": bool(s["alarm_gentle"])}
+            "alarm_chime": s["alarm_chime"], "alarm_gentle": bool(s["alarm_gentle"]),
+            **{k: bool(s[k]) for k in ("alarm_training", "alarm_phone", "alarm_music", "alarm_check")},
+            "alarm_music_query": alarms.music_query()}
 
 
 class AskIn(BaseModel):
@@ -309,8 +317,11 @@ def set_voice(body: VoiceIn, user: dict = Depends(current_user)):
     for key in ("alarm_volume", "alarm_chime"):
         if getattr(body, key) is not None:
             db.set_setting(user["id"], key, getattr(body, key))
-    if body.alarm_gentle is not None:
-        db.set_setting(user["id"], "alarm_gentle", int(body.alarm_gentle))
+    for key in ("alarm_gentle", "alarm_training", "alarm_phone", "alarm_music", "alarm_check"):
+        if getattr(body, key) is not None:
+            db.set_setting(user["id"], key, int(getattr(body, key)))
+    if body.alarm_music_query is not None:
+        alarms.set_music_query(body.alarm_music_query)
     return get_voice(user)
 
 

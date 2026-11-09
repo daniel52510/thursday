@@ -24,7 +24,9 @@ def client(monkeypatch, tmp_path):
 
 
 def test_voice_volume_and_speed(client):
-    alarm = {"alarm_volume": 80, "alarm_chime": 60, "alarm_gentle": True}
+    import alarms
+    alarm = {"alarm_volume": 80, "alarm_chime": 60, "alarm_gentle": True, "alarm_training": True, "alarm_phone": True,
+             "alarm_music": False, "alarm_check": True, "alarm_music_query": alarms.music_query()}
     assert client.get("/api/voice").json() == {"voice": "rocky", "volume": 100, "speed": 100, **alarm}
     assert client.put("/api/voice", json={"volume": 55}).json()["volume"] == 55
     assert client.put("/api/voice", json={"speed": 90}).json() == {"voice": "rocky", "volume": 55, "speed": 90, **alarm}
@@ -33,6 +35,8 @@ def test_voice_volume_and_speed(client):
     out = client.put("/api/voice", json={"alarm_chime": 0, "alarm_volume": 95, "alarm_gentle": False}).json()
     assert (out["alarm_chime"], out["alarm_volume"], out["alarm_gentle"]) == (0, 95, False)
     assert client.put("/api/voice", json={"alarm_volume": 5}).status_code == 422  # never too quiet to wake him
+    out = client.put("/api/voice", json={"alarm_music": True, "alarm_phone": False, "alarm_music_query": "Morning   Coffee"}).json()
+    assert out["alarm_music"] and not out["alarm_phone"] and out["alarm_music_query"] == "Morning Coffee"
 
 
 def test_music_now_and_controls(client, monkeypatch):
