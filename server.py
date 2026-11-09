@@ -25,6 +25,7 @@ import diagnostics  # noqa: F401  (starts remembering warnings for the health pa
 import asks
 import lifts
 import night
+import phone
 import email_threads
 import gmail_tool
 import greetings
@@ -290,6 +291,45 @@ async def ask(body: AskIn, user: dict = Depends(current_user)):
     _siri_threads[user["id"]] = (cid, time.time())
     text = strip_voice_tags(reply or "".join(parts)).strip()
     return {"reply": text or "Sorry, I didn't get anything back.", "conversation_id": cid}
+
+
+@app.post("/api/phone")
+async def phone_turn(body: AskIn, user: dict = Depends(current_user)):
+    """The iPhone Shortcut ("Hey Siri, THURSDAY", phone.py): his words in; what to say, and the one thing his phone
+    should do (call, message, open, timer), out. Follow-ups within 10 minutes keep the conversation."""
+    cid = body.conversation_id
+    if not cid and (last := _siri_threads.get(user["id"])) and time.time() - last[1] < 600:
+        cid = last[0]
+    box: dict = {}
+    token = phone.ACTION.set(box)  # the phone_ tools write here; copied into their threads with the context
+    try:
+        parts, reply = [], ""
+        context = {"timezone": os.getenv("THURSDAY_TZ", "America/New_York"), "channel": "phone"}
+        async for ev in stream_prompt(body.text, "voice", conversation_id=cid, context=context, user=user):
+            if ev["type"] == "conversation":
+                cid = ev["id"]
+            elif ev["type"] == "delta":
+                parts.append(ev["text"])
+            elif ev["type"] == "done":
+                reply = ev.get("reply") or ""
+        _siri_threads[user["id"]] = (cid, time.time())
+        return {**phone.respond(strip_voice_tags(reply or "".join(parts))), "conversation_id": cid}
+    finally:
+        phone.ACTION.reset(token)
+
+
+class PhonePrefsIn(BaseModel):
+    music_app: Literal["youtube", "apple", "spotify"]
+
+
+@app.get("/api/phone/prefs")
+def get_phone_prefs(user: dict = Depends(owner_only)):
+    return phone.prefs()
+
+
+@app.put("/api/phone/prefs")
+def set_phone_prefs(body: PhonePrefsIn, user: dict = Depends(owner_only)):
+    return phone.set_prefs(body.music_app)
 
 
 @app.post("/api/voice/diag")

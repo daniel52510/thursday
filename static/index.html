@@ -714,6 +714,7 @@
   .lf-actions .yes { background: var(--inverse-bg); color: var(--inverse-text); }
   .lf-actions button:disabled { opacity: .5; }
 
+  .set-steps { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13.5px; line-height: 1.5; color: var(--text-body); overflow-wrap: anywhere; }
   .set-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 0; }
   .set-toggle span { flex: 1; min-width: 0; font-size: 14px; line-height: 1.45; color: var(--text-body); }
 
@@ -3711,6 +3712,29 @@ const PANES = {
             el("div", { className: "set-token", textContent: d.token }));
         } catch (e) { out.replaceChildren(el("p", { className: "set-note err", textContent: e.message })); }
       })), out);
+    // The iPhone Shortcut (phone.py, /api/phone): "Hey Siri, THURSDAY", and his phone does calls, texts, music.
+    const prefs = await call("/api/phone/prefs").catch(() => ({ music_app: "youtube" }));
+    const app = el("select", {}, ...[["youtube", "YouTube Music"], ["apple", "Apple Music"], ["spotify", "Spotify"]].map(([v, t]) => el("option", { value: v, textContent: t })));
+    app.value = prefs.music_app;
+    const appNote = el("p", { className: "set-note" });
+    app.onchange = async () => { try { await call("/api/phone/prefs", jsonReq("PUT", { music_app: app.value })); appNote.textContent = "Saved."; } catch (e) { appNote.textContent = e.message; } };
+    const steps = [
+      "Above, create a token named \"iPhone\" acting as you, and copy it. Your iPhone needs Tailscale on (it's how it reaches the Mac away from home).",
+      "Shortcuts app → + → name it THURSDAY.",
+      "Add Dictate Text (Stop Listening: After Pause).",
+      `Add Get Contents of URL: ${location.origin}/api/phone, Method POST, Header Authorization = Bearer <your token>, Request Body JSON with one Text field: text = Dictated Text.`,
+      "Add Speak Text with Dictionary Value of \"speak\" in Contents of URL. (Run from Siri, Siri's voice reads it.)",
+      "Add If: Dictionary Value \"do\" is \"call\" → Find Contacts where Name contains Dictionary Value \"contact\" (Limit 1) → Call Contacts.",
+      "Add If: \"do\" is \"message\" → Find Contacts (as above) → Send Message: Dictionary Value \"body\" to Contacts. Leave Show When Run on: you confirm each text.",
+      "Add If: \"do\" is \"open\" → Open URLs: Dictionary Value \"url\".",
+      "Add If: \"do\" is \"timer\" → Start Timer: Dictionary Value \"minutes\" minutes.",
+      "Add If: Dictionary Value \"listen\" is true → Run Shortcut: THURSDAY (he asked you something: it listens again).",
+      "Say \"Hey Siri, THURSDAY\". For a silent start: Settings → Accessibility → Touch → Back Tap → Double Tap → THURSDAY. It's also in Control Center and on CarPlay and your Watch.",
+    ];
+    body.append(el("h3", { className: "set-h", textContent: "iPhone: Hey Siri, THURSDAY" }),
+      el("p", { className: "set-p", textContent: "THURSDAY answers from your phone and can call, text, play music, start directions and set timers on it. Calls and texts are always confirmed on the phone first." }),
+      el("label", { className: "field" }, "Music app on your iPhone", app), appNote,
+      el("ol", { className: "set-steps" }, ...steps.map((t) => el("li", { textContent: t }))));
   },
 };
 

@@ -53,6 +53,7 @@ import health
 import lights
 import asks
 import lifts
+import phone
 import night
 import email_threads
 import gmail_tool
@@ -901,6 +902,8 @@ _LIGHT_ASK = re.compile(r"\b(?:turn|switch|flip|put)\s+(?:the\s+|my\s+)?(?:\w+\s
                         r"\b(?:turn|switch|flip)\s+(?:on|off)\s+(?:the\s+|my\s+)?(?:\w+\s+)?lights?\b|"
                         r"\blights?\s+(?:on|off)\b|\b(?:dim|brighten)\s+(?:the\s+|my\s+)?lights?\b|"
                         r"\blights?\s+(?:to\s+)?\d+\s*(?:%|percent)", re.I)
+_PHONE_ASK = re.compile(r"\b(?:call|phone|ring|dial|text|message|play|put on|listen to|directions?|navigate|"
+                        r"take me|timer)\b|\btell (?!me\b|us\b)\w+", re.I)
 _CALL_ASK = re.compile(r"\b(?:call|phone|dial|ring)\s+(?:me\b|my\b|\+?\d)|\bgive\s+\w+\s+a\s+(?:call|ring)\b", re.I)
 _AGENTIC_TOPIC = re.compile(r"\b(?:mission|agentic|mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
 
@@ -1370,6 +1373,14 @@ async def _stream_prompt(
 ) -> AsyncIterator[dict[str, Any]]:
     started = time.monotonic()
     timing: dict[str, int] = {}
+    on_phone = (context or {}).get("channel") == "phone"  # the iPhone Shortcut (phone.py): its own tools
+    drop: set[str] = set()
+    if on_phone:
+        # On his phone, a call or a song happens on the phone: Twilio's call_place and the Mac's music_play are
+        # taken away (he picked them over the phone tools even when told, 2026-11-09), unless he names the speaker.
+        to_house = bool(re.search(r"\b(?:speaker|satellite|mac|living room|at home|the house)\b", user_prompt, re.I))
+        drop = {"call_place", "call_confirm"} | (set() if to_house else {"music_play"})
+        phone_tools = [t for t in TOOLS if t["function"]["name"] not in drop] + phone.PHONE_SCHEMAS
     db = initalize_db()
     # An unknown or missing id (or someone else's) starts a new conversation, titled by its first message.
     conv = db.get_conversation(conversation_id, user["id"]) if conversation_id else None
@@ -1406,6 +1417,12 @@ async def _stream_prompt(
 
     async def run_and_record(name: str, args: dict):
         t = time.monotonic()
+        if on_phone and name in drop:
+            # The prompt names music_play and call_place, so the model calls them by name even when they aren't
+            # offered: on his phone they become the phone's own (phone.py).
+            name, args = (("phone_music", {"query": args.get("query") or ""}) if name == "music_play"
+                          else ("phone_call", {"contact": args.get("to") or args.get("contact") or ""})
+                          if name == "call_place" else (name, args))
         if refused := await speaker.gate(name):  # a sensitive tool, and the voice isn't his (satellite only)
             result = ToolResult(ok=False, tool_name=name, error=refused)
         else:
@@ -1496,7 +1513,7 @@ async def _stream_prompt(
             return
         messages.append({"role": "system", "content": f"{name} already ran for what he just said: follow its note, "
                          "and don't call it again this turn." if result.ok else f"{name} failed ({result.error}). Say so."})
-    elif music_call := (_music_intent(user_prompt) if mode in ("voice", "chat") else None):
+    elif music_call := (_music_intent(user_prompt) if mode in ("voice", "chat") and not on_phone else None):
         name, args = music_call
         yield {"type": "tool", "name": name, "args": args}
         result = await run_and_record(name, args)
@@ -1592,6 +1609,11 @@ async def _stream_prompt(
                  "tomorrow's workout, training_plan for the program or what to eat, otherwise health_check (topic "
                  "recovery for how he's doing, sleep, heart, activity, workouts or weight). Answer from its result. "
                  "You do have his Apple Watch data and his training plan through those tools; never say you can't.")
+    elif not hold_first and not executed and mode in ("voice", "chat") and on_phone and _PHONE_ASK.search(user_prompt):
+        # From his iPhone: calls, texts and music happen on the phone (phone.py), not through Twilio or the Mac.
+        hold_first = True
+        nudge = ("He's on his iPhone. Calls, texts, music, directions and timers go through the phone_ tools "
+                 "(phone_call, phone_message, phone_music, phone_directions, phone_timer): call the right one now.")
     elif not hold_first and not executed and mode in ("voice", "chat") and _CALL_ASK.search(user_prompt):
         hold_first = True
         nudge = ("He's asking you to phone someone. Call call_place now with the number (or 'me') and the message, "
@@ -1636,7 +1658,7 @@ async def _stream_prompt(
             # in text instead of looping on tool calls.
             final_round = final_round or round_no == MAX_TOOL_ROUNDS
             if not final_round:
-                payload["tools"] = TOOLS
+                payload["tools"] = phone_tools if on_phone else TOOLS
             calls: list[dict] = []
             round_text: list[str] = []
             # A deliberate turn is his opinion, not a lookup: no retry for skipping a tool (it doubled a 15 s think).
