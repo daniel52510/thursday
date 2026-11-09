@@ -16,16 +16,33 @@ def _turn():
     return box, phone.ACTION.set(box)
 
 
-def test_call_and_message_go_to_his_phone():
+def test_call_goes_to_his_phone():
     box, t = _turn()
     try:
         assert phone.phone_call({"contact": "my Mom"}).ok and box == {"do": "call", "contact": "Mom"}
-        r = phone.phone_message({"contact": "Sam", "text": "Running   10 late"})
-        assert r.ok and box == {"do": "message", "contact": "Sam", "body": "Running 10 late"}   # the last one wins
-        out = phone.respond("Texting Sam.")
-        assert (out["do"], out["contact"], out["body"], out["listen"]) == ("message", "Sam", "Running 10 late", False)
     finally:
         phone.ACTION.reset(t)
+
+
+def test_a_text_sends_only_after_his_spoken_yes():
+    from calendar_tool import TURN
+    TURN.set({"user": "owner", "conversation": "c", "turn": 1, "user_said": "text Sam"})
+    box, t = _turn()
+    try:
+        r = phone.phone_message({"contact": "Sam", "text": "Running   10 late"})
+        assert r.ok and "NOT SENT" in r.data["status"] and box == {}       # nothing for the phone yet
+        out = phone.respond("Text Sam: 'Running 10 late.' Send it?")
+        assert out["do"] == "" and out["listen"] is True                    # it listens for his answer
+    finally:
+        phone.ACTION.reset(t)
+    assert phone.confirm_message("owner", "what's the weather") is None     # not an answer: the model takes over
+    assert phone.confirm_message("owner", "yes") is None                    # and the pending text was dropped
+    phone._pending["owner"] = {"contact": "Sam", "body": "Running 10 late", "at": __import__("time").monotonic()}
+    assert phone.confirm_message("owner", "nope")["do"] == ""
+    phone._pending["owner"] = {"contact": "Sam", "body": "Running 10 late", "at": __import__("time").monotonic()}
+    sent = phone.confirm_message("owner", "yes, send it")
+    assert (sent["do"], sent["contact"], sent["body"]) == ("message", "Sam", "Running 10 late")
+    assert phone.confirm_message("owner", "yes") is None                    # one yes, one text
 
 
 def test_music_opens_in_his_app_and_directions_and_timer():

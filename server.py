@@ -320,6 +320,8 @@ async def phone_turn(request: Request, user: dict = Depends(current_user)):
     """The iPhone Shortcut ("Hey Siri, THURSDAY", phone.py): his words in; what to say, and the one thing his phone
     should do (call, message, open, timer), out. Follow-ups within 10 minutes keep the conversation."""
     body = await _shortcut_body(request)
+    if answered := phone.confirm_message(user["id"], body.text):  # "yes" to "Send it?": no model needed
+        return {**answered, "conversation_id": body.conversation_id}
     cid = body.conversation_id
     if not cid and (last := _siri_threads.get(user["id"])) and time.time() - last[1] < 600:
         cid = last[0]

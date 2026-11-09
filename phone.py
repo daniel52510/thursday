@@ -3,7 +3,8 @@ speaks the reply, and does the one thing the reply asks of the phone:
 
   call     the Shortcut finds the contact on his iPhone (any contact, not the Twilio allowlist) and calls; iOS asks
            him to confirm before it dials
-  message  finds the contact and sends a message; the Shortcut shows it to him before sending (Show When Run)
+  message  read back first ("Text Sam: '...'. Send it?"); only his plain yes on the next turn sends it, checked
+           here in code (confirm_message), so the Shortcut can send with no compose sheet
   open     a URL: his music app at the song / playlist / artist (one tap to play: no music app lets a Shortcut
            start an arbitrary track), or Apple Maps directions
   timer    an iPhone timer for N minutes
@@ -18,11 +19,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from contextvars import ContextVar
 from typing import Any, Dict
 from urllib.parse import quote
 
 ACTION: ContextVar[dict | None] = ContextVar("phone_action", default=None)
+CONFIRM_S = 120
+_pending: dict[str, dict] = {}  # user id -> a text waiting for his yes
 PREFS_FILE = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "phone.json")
 MUSIC_APPS = {
     "youtube": ("YouTube Music", "https://music.youtube.com/search?q={q}"),
@@ -85,11 +89,33 @@ def phone_message(args: Dict[str, Any]):
     who, body = _contact(args), " ".join(str(args.get("text") or "").split())[:600]
     if not who or not body:
         return ToolResult(ok=False, tool_name="phone_message", error="ask who it's to and what to say")
-    if not _record({"do": "message", "contact": who, "body": body}):
+    if ACTION.get() is None:
         return _not_phone("phone_message")
+    from calendar_tool import TURN
+    _pending[(TURN.get() or {}).get("user", "")] = {"contact": who, "body": body, "at": time.monotonic()}
     return ToolResult(ok=True, tool_name="phone_message", data={
-        "to": who, "text": body,
-        "note": "Read back who and the message in one line; his phone shows it to him before it sends."})
+        "status": "NOT SENT YET - waiting for his yes", "to": who, "text": body,
+        "note": "Read it back in one line, exactly: who, then the text, then ask 'Send it?'. It sends only after "
+                "his yes (handled for you)."})
+
+
+def confirm_message(user_id: str, said: str) -> dict | None:
+    """His answer to "Send it?": the Shortcut's response (send, or not), or None when it isn't one."""
+    from calendar_tool import plain_yes
+    p = _pending.get(user_id)
+    if not p or time.monotonic() - p["at"] > CONFIRM_S:
+        _pending.pop(user_id, None)
+        return None
+    if plain_yes(said):
+        del _pending[user_id]
+        return {"speak": "Sent.", "do": "message", "contact": p["contact"], "body": p["body"], "url": "",
+                "minutes": 0, "listen": False}
+    if re.match(r"^\W*(?:no|nope|nah|don't|do not|cancel|never ?mind|stop)\b", said or "", re.I):
+        del _pending[user_id]
+        return {"speak": "Okay, not sending it.", "do": "", "contact": "", "body": "", "url": "", "minutes": 0,
+                "listen": False}
+    _pending.pop(user_id, None)  # something else (a change, a new request): the model takes it from here
+    return None
 
 
 def phone_music(args: Dict[str, Any]):
