@@ -203,7 +203,18 @@ def _wav_pcm(wav: bytes) -> tuple[int, bytes]:
         return w.getframerate(), w.readframes(w.getnframes())
 
 
+# The server says when it's night (night.py: "good night", his Sleep Focus, his Watch, the clock); until it
+# does (an old server, or not connected yet), the satellite's own NIGHT hours decide.
+SERVER_NIGHT: dict = {"on": None}
+
+
+def is_night() -> bool:
+    return night_gain() != 1.0
+
+
 def night_gain() -> float:
+    if SERVER_NIGHT["on"] is not None:
+        return NIGHT_GAIN if SERVER_NIGHT["on"] else 1.0
     try:
         start, end = (int(h) for h in NIGHT.split("-"))
     except ValueError:
@@ -982,7 +993,7 @@ class Satellite:
         self._failed = False
         self.state = "listening"
         if not follow_up:
-            if self.greetings:
+            if self.greetings and not is_night():  # at night a soft ping, never a spoken "Hey Daniel!"
                 self._greet_at = time.monotonic() + GREET_WAIT_S  # decided in the mic loop: pause -> greet
             else:
                 await self.player.play_file(PING_WAV)
@@ -1100,6 +1111,9 @@ class Satellite:
             kind = ev.get("type")
             if kind == "state":
                 await self._on_state(ev["state"])
+            elif kind == "night":  # night mode on or off (night.py)
+                SERVER_NIGHT["on"] = bool(ev.get("on"))
+                log.info("night mode %s", "on" if SERVER_NIGHT["on"] else "off")
             elif kind == "greetings":  # the Mac's batch for this hour (greetings.py)
                 self.greetings = [base64.b64decode(c) for c in ev.get("clips") or []]
                 log.info("greetings: %d clips", len(self.greetings))
@@ -1151,7 +1165,8 @@ class Satellite:
             log.info("thinking (listened %d ms)", _ms(self._woke_at))
             if self._overlay and not self._overlay.done():
                 await asyncio.wait({self._overlay}, timeout=1.0)  # starting the cue would cut the clip off
-            await self.player.loop_file(THINKING_WAV)
+            if not is_night():  # at night the LEDs show it; no looping sound in a dark bedroom
+                await self.player.loop_file(THINKING_WAV)
         elif state == "idle" and self.state == "interrupting":
             # The cancelled turn is gone: listen for what the user wants instead. Cut off by
             # speech, they're mid-sentence: no ping, and what they've said so far goes first.

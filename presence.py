@@ -94,14 +94,16 @@ def free_satellite() -> bool:
 
 def now_state() -> dict:
     t = datetime.now(_zone())
+    import night
     return {"phone": phone(), "asleep": asleep(t), "meeting": in_meeting(now=t), "satellite": free_satellite(),
-            "hour": t.hour}
+            "hour": t.hour, "quiet": night.quiet(t)}
 
 
 def channel(state: dict, urgent: bool = False) -> str:
     """How to reach him: speak (home, awake, a satellite free), push (away, in a meeting, or no satellite),
     or hold (asleep or night, unless urgent)."""
-    night = state["hour"] >= 22 or state["hour"] < 8
+    # night.quiet: "good night" / Sleep Focus starts it early, "good morning" ends it early; else 22-08.
+    night = state.get("quiet", state["hour"] >= 22 or state["hour"] < 8)
     if (state["asleep"] or night) and not urgent:
         return "hold"
     if state["meeting"]:

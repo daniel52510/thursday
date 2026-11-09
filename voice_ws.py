@@ -921,6 +921,8 @@ class Session:
                 import greetings
                 if greetings.clips:  # this hour's wake greetings, so its first wake already has one
                     await self.ws.send_json(greetings.message())
+                import night
+                await self.ws.send_json(night.message())  # night or day, from the start (night.py)
                 self._warm()
         elif kind == "diag":
             # The phone's own audio state, a few times as voice mode opens: whether its audio runs, the mic is

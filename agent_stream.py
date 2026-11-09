@@ -52,6 +52,7 @@ import music
 import health
 import lights
 import asks
+import night
 import email_threads
 import gmail_tool
 import presence
@@ -328,6 +329,9 @@ def _system_prompt(user: dict) -> str:
         system += "\n\n" + life
     if user["id"] == OWNER and (promises := reminders.prompt_note(user["id"])):
         system += "\n\n" + promises
+    if night.is_night():  # winding down or in bed (night.py): quiet and brief
+        system += ("\n\nIt's night: he's winding down or in bed. Keep replies to one short, quiet sentence unless he "
+                   "asks for more; no questions back, no jokes unless he starts it.")
     if user["id"] == OWNER and (questions := asks.prompt_line()):
         system += "\n\n" + questions  # what he asked first (asks.py), so "draft it instead" reaches ask_answer
     # Last, so a change only re-reads the end of the prompt (Ollama's cache keeps everything before it).
@@ -614,7 +618,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + gmail_tool.TOOL_SCHEMAS + email_threads.TOOL_SCHEMAS + asks.TOOL_SCHEMAS + trainer.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + gmail_tool.TOOL_SCHEMAS + email_threads.TOOL_SCHEMAS + asks.TOOL_SCHEMAS + night.TOOL_SCHEMAS + trainer.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -1127,7 +1131,7 @@ _REMEMBERED_TOOLS = {"list_add", "list_show", "list_remove", "note_save", "note_
                      "alarm_cancel", "alarm_snooze", "calendar_create", "calendar_delete", "calendar_confirm",
                      "mission_start", "mission_abort", "watch_start", "watch_stop", "approval_list", "approval_decide",
                      "routine_start", "routine_stop", "send_to_phone", "improve_start", "call_place", "call_confirm",
-                     "light_set", "email_send", "email_confirm", "email_thread_stop", "email_thread_steer", "ask_answer"}
+                     "light_set", "email_send", "email_confirm", "email_thread_stop", "email_thread_steer", "ask_answer", "night_mode"}
 
 
 def _with_tool_calls(turns: list[dict]) -> list[dict]:
@@ -1448,6 +1452,14 @@ async def _stream_prompt(
         result = await run_and_record("call_confirm", {})
         yield {"type": "tool_result", "name": "call_confirm", "ok": result.ok}
         executed.add("call_confirm:{}")
+    elif user["id"] == OWNER and (night.GOOD_NIGHT.match(user_prompt) or night.GOOD_MORNING.match(user_prompt)):
+        # "Good night" / "good morning": the routine runs here, not left to the model (it says good night back
+        # and skips the tool). Its result is what he hears.
+        args = {"action": "good_night" if night.GOOD_NIGHT.match(user_prompt) else "good_morning"}
+        yield {"type": "tool", "name": "night_mode", "args": args}
+        result = await run_and_record("night_mode", args)
+        yield {"type": "tool_result", "name": "night_mode", "ok": result.ok}
+        executed.add(f"night_mode:{json.dumps(args, sort_keys=True)}")
     elif user["id"] == OWNER and (heard := asks.voice_answer(user_prompt)):  # a yes or no to his own question
         aid, choice = heard
         yield {"type": "tool", "name": "ask_answer", "args": {"id": aid, "choice": choice}}

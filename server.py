@@ -23,6 +23,7 @@ import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
 import asks
+import night
 import email_threads
 import gmail_tool
 import greetings
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
     on_proactive = asyncio.create_task(proactive.run())  # he speaks first: calendar, workouts, health, evening
     on_email = asyncio.create_task(email_threads.run())  # email conversations: replies toward his goal
     on_asks = asyncio.create_task(asks.run())  # he asks first: emails that want an answer, promises not kept
+    on_night = asyncio.create_task(night.run())  # night starts and ends for the satellites; the bedtime nudge
     diagnostics.start_watchdog()  # logs any stall of the event loop, with what was running
     yield
     on_greetings.cancel()
@@ -76,6 +78,7 @@ async def lifespan(app: FastAPI):
     on_proactive.cancel()
     on_email.cancel()
     on_asks.cancel()
+    on_night.cancel()
     on_missions.cancel()
     on_improvements.cancel()
     on_review.cancel()
@@ -1034,6 +1037,25 @@ def list_sent_email(user: dict = Depends(owner_only)):
     except (OSError, ValueError):
         rows = []
     return {"sent": rows[-15:][::-1], "today": gmail_tool._sent_recently(time.time()), "cap": gmail_tool.DAILY_CAP}
+
+
+# Night mode (night.py). GET for every page (its night look); POST is his: the web toggle, or his iPhone's Sleep
+# Focus through a Shortcuts automation with his device token ("night" when it turns on, "day" when it turns off).
+class NightIn(BaseModel):
+    mode: str = Field(pattern="^(night|day|auto)$")
+    by: str = Field(default="web", max_length=40)
+
+
+@app.get("/api/night")
+def get_night(user: dict = Depends(current_user)):
+    return night.state()
+
+
+@app.post("/api/night")
+async def set_night(body: NightIn, user: dict = Depends(owner_only)):
+    out = await asyncio.to_thread(night.set_mode, body.mode, body.by)
+    await night.broadcast()
+    return out
 
 
 @app.get("/api/approvals")

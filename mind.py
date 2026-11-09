@@ -96,7 +96,8 @@ def _night_ends(now: datetime) -> datetime | None:
 def voice_style(user_id: str, now: datetime | None = None) -> dict:
     s = VOICE | {k: v for k, v in initalize_db().get_settings(user_id).items() if k in VOICE}
     now = now or datetime.now(VOICE_TZ)
-    night = bool(s["night_whisper"]) and _night_ends(now) is not None and now.timestamp() >= s["normal_until"]
+    import night as night_mode  # "good night" whispers early, "good morning" speaks up early (night.py)
+    night = bool(s["night_whisper"]) and night_mode.is_night(now) and now.timestamp() >= s["normal_until"]
     # Ears hear level in decibels: percent squared, so 50% is ~-12 dB, 20% ~-28 dB, 10% -40 dB (linear made
     # 50% sound nearly full, 2026-11-01). 1% is near silence.
     out = {"volume": (max(1, min(100, s["voice_volume"])) / 100) ** 2, "whisper": bool(s["whisper"]) or night,
