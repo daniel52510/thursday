@@ -752,7 +752,12 @@
   .fd-item .k { font-variant-numeric: tabular-nums; font-size: 14px; }
   .fd-item button { grid-row: 1 / span 2; grid-column: 3; width: 32px; height: 32px; border-radius: 999px; display: grid; place-items: center; color: var(--text-faint); }
   .fd-item button svg { width: 14px; height: 14px; }
-  .fd-target { margin-top: 18px; font-size: 12.5px; color: var(--text-faint); }
+  .fd-target { margin-top: 10px; font-size: 12.5px; line-height: 1.5; color: var(--text-faint); }
+  .fd-weigh { display: flex; align-items: end; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+  .fd-weigh label { display: grid; gap: 3px; font-size: 12px; color: var(--text-muted); }
+  .fd-weigh input { width: 110px; height: 40px; padding: 0 12px; border-radius: 12px; border: 0; background: var(--soft); color: var(--text); font: 15px var(--sans); }
+  .fd-weigh button { height: 40px; padding: 0 16px; border-radius: 999px; background: var(--soft-2); font-size: 14px; }
+  .fd-weigh small { font-size: 12.5px; color: var(--text-muted); align-self: center; }
   .fd-target button { color: var(--text-muted); text-decoration: underline; font-size: 12.5px; }
 
   /* ---------- phone ---------- */
@@ -1260,7 +1265,8 @@
         <div class="fd-nums"><label>kcal<input id="fmK" type="number" inputmode="decimal" min="0" max="5000" required></label><label>Protein<input id="fmP" type="number" inputmode="decimal" min="0" max="500"></label><label>Carbs<input id="fmC" type="number" inputmode="decimal" min="0" max="1000"></label><label>Fat<input id="fmF" type="number" inputmode="decimal" min="0" max="500"></label></div>
         <button type="submit">Add</button></form></details>
     <div id="fdList"></div>
-    <p class="fd-target"><span id="fdTarget"></span> <button type="button" id="fdTargetBtn">Change</button></p>
+    <form class="fd-weigh" id="fdWeigh"><label>Weigh-in<input id="fdLb" type="number" inputmode="decimal" min="80" max="700" step="0.1" placeholder="lb"></label><button type="submit">Save</button><small id="fdWeightNow"></small></form>
+    <p class="fd-target"><span id="fdTarget"></span> <button type="button" id="fdTargetBtn">Use my own</button></p>
   </div>
   <div id="liftsView" hidden>
     <div class="lf-card" id="lfPlan"></div>
@@ -1862,7 +1868,8 @@ function drawFood(d) {
     }
     list.append(sec);
   }
-  $("fdTarget").textContent = `Daily target ${d.targets.kcal.toLocaleString()} kcal, ${d.targets.protein} g protein (${d.targets.why}).`;
+  $("fdTarget").textContent = `Today: ${d.targets.kcal.toLocaleString()} kcal, ${d.targets.protein} g protein, worked out fresh each morning. ${d.targets.why}`;
+  $("fdWeightNow").textContent = d.targets.weight_lb ? `7-day average ${d.targets.weight_lb} lb` : "";
 }
 async function loadFood() {
   try { const r = await api("/api/food"); if (r.ok) drawFood(await r.json()); } catch {}
@@ -1885,8 +1892,14 @@ $("fdManual").onsubmit = async (e) => {
   const r = await api("/api/food", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (r.ok) { for (const id of ["fmName", "fmK", "fmP", "fmC", "fmF"]) $(id).value = ""; loadFood(); }
 };
+$("fdWeigh").onsubmit = async (e) => {
+  e.preventDefault();
+  const lb = +$("fdLb").value; if (!lb) return;
+  const r = await api("/api/food/weight", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lb }) });
+  if (r.ok) { $("fdLb").value = ""; loadFood(); }
+};
 $("fdTargetBtn").onclick = async () => {
-  const v = prompt("Daily calories (leave empty for the trainer's number):", FD.data ? FD.data.targets.kcal : "");
+  const v = prompt("Your own base calories (training days adjust it). Leave empty to let THURSDAY work it out daily:", "");
   if (v === null) return;
   await api("/api/food/target", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kcal: v.trim() ? +v : null }) });
   loadFood();

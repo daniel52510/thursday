@@ -1269,6 +1269,16 @@ def delete_food(entry_id: str, user: dict = Depends(owner_only)):
         raise HTTPException(status_code=404)
 
 
+class WeightIn(BaseModel):
+    lb: float = Field(ge=80, le=700)
+
+
+@app.post("/api/food/weight", status_code=201)
+def log_weight(body: WeightIn, user: dict = Depends(owner_only)):
+    food.log_weight(body.lb)
+    return food.day()
+
+
 @app.put("/api/food/target")
 def set_food_target(body: FoodTargetIn, user: dict = Depends(owner_only)):
     return food.set_target(body.kcal)

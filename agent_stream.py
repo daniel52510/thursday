@@ -1136,7 +1136,7 @@ _REMEMBERED_TOOLS = {"list_add", "list_show", "list_remove", "note_save", "note_
                      "alarm_cancel", "alarm_snooze", "calendar_create", "calendar_delete", "calendar_confirm",
                      "mission_start", "mission_abort", "watch_start", "watch_stop", "approval_list", "approval_decide",
                      "routine_start", "routine_stop", "send_to_phone", "improve_start", "call_place", "call_confirm",
-                     "light_set", "email_send", "email_confirm", "email_thread_stop", "email_thread_steer", "ask_answer", "night_mode", "lift_log", "lift_undo", "food_log", "food_undo"}
+                     "light_set", "email_send", "email_confirm", "email_thread_stop", "email_thread_steer", "ask_answer", "night_mode", "lift_log", "lift_undo", "food_log", "food_undo", "weight_log"}
 
 
 def _with_tool_calls(turns: list[dict]) -> list[dict]:

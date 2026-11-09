@@ -377,28 +377,27 @@ def _alarm_check_handler(choice: str, data: dict) -> str:
 
 
 async def nutrition_source() -> None:
-    """Sunday: two weeks of his food journal and weigh-ins; when the trainer wants a new calorie target, he asks."""
+    """Sunday: the week's nutrition in a line (food.py works the numbers out daily; nothing to approve)."""
     import food
+    import proactive
     now = food._now()
-    if now.weekday() != 6 or not 10 <= now.hour < 20:
+    key = f"nutrition:{now.strftime('%G-W%V')}"
+    if now.weekday() != 6 or not 10 <= now.hour < 20 or seen(key):
         return
     c = await asyncio.to_thread(food.coach)
-    if not c.get("suggested_kcal"):
-        return
-    why = next((a for a in c["advice"] if str(c["suggested_kcal"]) in a), c["advice"][-1])
-    await ask("nutrition", f"Weekly check-in: {why} Change your daily target to {c['suggested_kcal']:,} kcal?",
-              [{"key": "set", "label": f"Make it {c['suggested_kcal']:,}"}, {"key": "no", "label": "Keep it"}],
-              {"kcal": c["suggested_kcal"]}, key=f"nutrition:{now.strftime('%G-W%V')}", expires_h=48)
+    mark_seen(key)
+    parts = [f"Today's target is {c['today_kcal']:,} kcal and {c['today_protein_g']} g protein"]
+    if c.get("maintenance"):
+        parts[0] += f", from a maintenance of about {c['maintenance']:,}"
+    if c.get("lb_per_week") is not None:
+        parts.append(f"you're moving {c['lb_per_week']:+} lb a week")
+    if c.get("avg_kcal"):
+        parts.append(f"averaging {c['avg_kcal']:,} kcal and {c['avg_protein_g']} g protein over {c['days_logged']} logged days")
+    text = "; ".join(parts) + ". " + " ".join(c["advice"])
+    await proactive.deliver("Nutrition this week", text.strip(), tag="green_salad")
 
 
-def _nutrition_handler(choice: str, data: dict) -> str:
-    import food
-    if choice != "set":
-        return "kept your target"
-    return f"daily target now {food.set_target(int(data['kcal']))['kcal']:,} kcal"
-
-
-HANDLERS.update(nutrition=_nutrition_handler, email=_email_handler, promise=_promise_handler, lifts=_lifts_handler, alarm_check=_alarm_check_handler)
+HANDLERS.update(email=_email_handler, promise=_promise_handler, lifts=_lifts_handler, alarm_check=_alarm_check_handler)
 
 
 async def run() -> None:

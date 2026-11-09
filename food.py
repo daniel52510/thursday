@@ -18,13 +18,18 @@ import re
 import sqlite3
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict
 
 DB = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "food.db")
 PREFS = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "food.json")
-CUT_KCAL = 600            # under maintenance: the middle of the trainer's 500-750
-FAT_SHARE = 0.28
+# The daily calculation (targets): see plan_today.
+PACE = ((30, 1.5), (15, 1.0), (3, 0.5))   # lb from goal → lb a week to lose; closer than 3 lb: maintain
+MAX_DEFICIT = 0.25        # of maintenance, at most
+MIN_KCAL = 2000           # never below, whatever the math says (6'5", lifting)
+WATCH_DISCOUNT = 0.75     # watches overstate active calories by ~25-30 %
+DAY_SHIFT = {"lift": 150, "cardio": 0, "rest": -150}   # carbs follow the training: a week nets about zero
+FAT_MIN_SHARE, FAT_MIN_G_PER_LB = 0.25, 0.3
 MEALS = ("breakfast", "lunch", "dinner", "snack")
 
 
@@ -36,6 +41,7 @@ def _connect() -> sqlite3.Connection:
         meal TEXT, name TEXT NOT NULL, qty TEXT, kcal REAL NOT NULL, protein REAL NOT NULL, carbs REAL NOT NULL,
         fat REAL NOT NULL, source TEXT)""")
     conn.execute("CREATE INDEX IF NOT EXISTS entries_day ON entries (day)")
+    conn.execute("CREATE TABLE IF NOT EXISTS weights (day TEXT PRIMARY KEY, lb REAL NOT NULL, at REAL NOT NULL)")
     return conn
 
 
@@ -48,24 +54,157 @@ def _meal(now: datetime) -> str:
     return "breakfast" if now.hour < 11 else "lunch" if now.hour < 16 else "dinner" if now.hour < 21 else "snack"
 
 
-def targets() -> dict:
-    """{kcal, protein, carbs, fat, why}: his own calories if he set them, else the trainer's cut."""
-    import trainer
-    me = trainer.profile()
-    t = trainer.targets(me)
+def _own_kcal() -> int:
     try:
         with open(PREFS) as f:
-            own = int(json.load(f).get("kcal") or 0)
+            return int(json.load(f).get("kcal") or 0)
     except (OSError, ValueError):
-        own = 0
-    kcal = own or (round((t["maintenance_kcal"] - CUT_KCAL) / 50) * 50 if t.get("maintenance_kcal") else 2500)
-    protein = int(t.get("protein_g_per_day") or round(kcal * 0.3 / 4))
-    fat = round(kcal * FAT_SHARE / 9)
-    carbs = max(0, round((kcal - protein * 4 - fat * 9) / 4))
-    why = ("your own target" if own else
-           f"maintenance about {t['maintenance_kcal']:.0f} minus {CUT_KCAL} for the cut" if t.get("maintenance_kcal")
-           else "a default: add your weight, height and age in Settings → Memory for a real number")
-    return {"kcal": kcal, "protein": protein, "carbs": carbs, "fat": fat, "why": why}
+        return 0
+
+
+def log_weight(lb: float, day: str | None = None) -> dict:
+    """A weigh-in he tells THURSDAY or types (the Watch/scale ones come from Apple Health)."""
+    day = day or _now().date().isoformat()
+    with _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO weights VALUES (?, ?, ?)", (day, round(float(lb), 1), time.time()))
+    return {"day": day, "lb": round(float(lb), 1), "now": current_weight()}
+
+
+def weigh_ins(days: int = 42) -> list[tuple[str, float]]:
+    """Every weigh-in, his and Apple Health's, one per day (his wins), in pounds, oldest first."""
+    since = (_now().date() - timedelta(days=days)).isoformat()
+    out: dict[str, float] = {}
+    try:
+        import health
+        import trainer
+        profile_lb = trainer.profile().get("weight_lb") or 0
+        for r in health.daily(days):
+            if r.get("weight"):
+                w = float(r["weight"])  # Health exports kilograms on some setups: under 60 % of him is kg
+                out[r["date"]] = w * 2.20462 if profile_lb and w < profile_lb * 0.6 else w
+    except Exception:
+        pass
+    with _connect() as conn:
+        for r in conn.execute("SELECT day, lb FROM weights WHERE day >= ?", (since,)):
+            out[r["day"]] = r["lb"]
+    return sorted(out.items())
+
+
+def current_weight() -> float | None:
+    """The average of his last week of weigh-ins (one reading swings 2-4 lb with water); else his profile weight."""
+    import trainer
+    w = weigh_ins(14)
+    if w:
+        last = datetime.fromisoformat(w[-1][0])
+        recent = [lb for d, lb in w if (last - datetime.fromisoformat(d)).days < 7]
+        return round(sum(recent) / len(recent), 1)
+    return trainer.profile().get("weight_lb")
+
+
+def _day_kind(day: datetime) -> str:
+    try:
+        import lifts
+        if lifts.plan(day)["lifts"]:
+            return "lift"
+    except Exception:
+        pass
+    import trainer
+    title = trainer.WEEK[day.weekday()][0].lower()
+    return "rest" if "rest" in title else "cardio"
+
+
+def _active_kcal() -> float | None:
+    """His Watch's active calories, the average of the last 7 full days, discounted."""
+    try:
+        import health
+        days = [r["active_energy"] for r in health.daily(8)[:-1] if r.get("active_energy")]
+    except Exception:
+        return None
+    return round(sum(days) / len(days) * WATCH_DISCOUNT) if len(days) >= 3 else None
+
+
+def _adaptive_tdee() -> tuple[float | None, int]:
+    """What he actually burns, from his own numbers: average intake minus the energy of his weight change, over
+    the last 3 weeks of fully logged days and weigh-ins. (estimate, days of data)."""
+    since = (_now().date() - timedelta(days=21)).isoformat()
+    full = [h for h in history(21) if h["kcal"] >= FULL_DAY_KCAL and h["day"] >= since]
+    w = [x for x in weigh_ins(21)]
+    if len(full) < 10 or len(w) < 4:
+        return None, len(full)
+    span = (datetime.fromisoformat(w[-1][0]) - datetime.fromisoformat(w[0][0])).days
+    if span < 10:
+        return None, len(full)
+    k = max(1, len(w) // 3)  # thirds of the readings, averaged, so one salty day doesn't swing it
+    start, end = sum(lb for _, lb in w[:k]) / k, sum(lb for _, lb in w[-k:]) / k
+    when = lambda part: sum(datetime.fromisoformat(d).toordinal() for d, _ in part) / len(part)
+    per_day = (end - start) / max(1.0, when(w[-k:]) - when(w[:k]))  # between the two groups' middles, not the ends
+    intake = sum(h["kcal"] for h in full) / len(full)
+    return round(intake - per_day * 3500), len(full)
+
+
+def plan_today(day: datetime | None = None) -> dict:
+    """Today's calories and macros, worked out fresh each day:
+    maintenance = BMR (Mifflin-St Jeor, at his current weight) x 1.2 + his Watch's active calories (discounted),
+    blended toward what his own intake and weigh-ins show he burns as that data builds up; minus a deficit set by
+    how far he is from his goal (1.5 / 1 / 0.5 lb a week, never over 25 % of maintenance, never under 2,000);
+    plus or minus for the day's training. Protein holds at his goal weight in grams; fat at least 25 % of calories;
+    carbs take the rest and move with training."""
+    import re
+    import trainer
+    day = day or _now()
+    me = trainer.profile()
+    t = trainer.targets(me)
+    weight = current_weight() or 0
+    goal = float(t.get("goal_weight_lb") or weight or 0)
+    try:
+        ft, inch = (int(x) for x in re.findall(r"\d+", str(me["height"]))[:2])
+        age = int(str(me["age"]).split()[0])
+        bmr = 10 * weight * 0.4536 + 6.25 * (ft * 12 + inch) * 2.54 - 5 * age + 5
+    except (KeyError, TypeError, ValueError):
+        bmr = None
+    why: list[str] = []
+    if not bmr or not weight:
+        kcal, tdee = 2500, None
+        why.append("A default: add your weight, height and age in Settings → Memory for real numbers.")
+    else:
+        active = _active_kcal()
+        formula = bmr * 1.2 + active if active is not None else bmr * 1.55
+        why.append(f"BMR {bmr:,.0f} at {weight:g} lb" + (f", plus {active:,.0f} active from your Watch" if active is not None
+                                                          else ", times 1.55 for training (no Watch activity yet)"))
+        adaptive, n = _adaptive_tdee()
+        if adaptive:
+            trust = min(1.0, n / 28)
+            tdee = formula * (1 - trust) + adaptive * trust
+            why.append(f"your logs and weigh-ins say you burn about {adaptive:,.0f}; weighted {trust:.0%} after {n} days")
+        else:
+            tdee = formula
+        to_go = weight - goal
+        pace = next((p for gap, p in PACE if to_go > gap), 0.0)
+        deficit = min(pace * 500, tdee * MAX_DEFICIT)
+        kcal = max(MIN_KCAL, tdee - deficit)
+        why.append(f"maintenance {tdee:,.0f}; {to_go:.0f} lb from {goal:.0f}, so losing {deficit / 500:.1f} lb a week "
+                   f"(−{deficit:,.0f})" if pace else f"maintenance {tdee:,.0f}; at your goal, so no deficit")
+    kind = _day_kind(day)
+    kcal += DAY_SHIFT[kind]
+    if DAY_SHIFT[kind]:
+        why.append(f"{'+' if DAY_SHIFT[kind] > 0 else '−'}{abs(DAY_SHIFT[kind])} for a {kind} day")
+    own = _own_kcal()
+    if own:
+        kcal = own + DAY_SHIFT[kind]
+        why = [f"your own target {own:,}" + (f", {'+' if DAY_SHIFT[kind] > 0 else '−'}{abs(DAY_SHIFT[kind])} for a "
+                                              f"{kind} day" if DAY_SHIFT[kind] else "")]
+    kcal = int(round(kcal / 25) * 25)
+    protein = int(round(goal or kcal * 0.3 / 4))
+    fat = int(round(max(kcal * FAT_MIN_SHARE / 9, FAT_MIN_G_PER_LB * (goal or 0))))
+    carbs = max(0, int(round((kcal - protein * 4 - fat * 9) / 4)))
+    return {"kcal": kcal, "protein": protein, "carbs": carbs, "fat": fat, "day_kind": kind,
+            "maintenance": round(tdee) if tdee else None, "weight_lb": weight or None, "goal_lb": goal or None,
+            "why": "; ".join(why) + "."}
+
+
+def targets() -> dict:
+    """Today's numbers (plan_today): what the Food tab, his voice and the trainer all use."""
+    return plan_today()
 
 
 def set_target(kcal: int | None) -> dict:
@@ -222,7 +361,26 @@ def food_undo(args: Dict[str, Any]):
     return ToolResult(ok=True, tool_name="food_undo", data={"removed": rows[0]["name"], **_left_line(day())})
 
 
+def weight_log(args: Dict[str, Any]):
+    from tools import ToolResult
+    if err := _owner_check("weight_log"):
+        return err
+    try:
+        lb = float(args.get("pounds"))
+        assert 80 <= lb <= 700
+    except (TypeError, ValueError, AssertionError):
+        return ToolResult(ok=False, tool_name="weight_log", error="say the weight in pounds")
+    out = log_weight(lb)
+    t = targets()
+    return ToolResult(ok=True, tool_name="weight_log", data={
+        "logged_lb": out["lb"], "seven_day_average_lb": out["now"], "today_kcal": t["kcal"], "protein_g": t["protein"],
+        "note": "Confirm in a few words; mention the 7-day average if it's moving, not the single reading."})
+
+
 TOOL_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "weight_log", "description": "Log his weigh-in ('I weigh 296', 'scale says 294.5 this morning').",
+        "parameters": {"type": "object", "properties": {"pounds": {"type": "number"}}, "required": ["pounds"]}}},
     {"type": "function", "function": {
         "name": "food_log",
         "description": "Log what he ate or drank into his food journal ('I had two eggs and toast', 'a chicken "
@@ -245,53 +403,33 @@ TOOL_SCHEMAS = [
 FULL_DAY_KCAL = 1000      # a day with less logged is a day he didn't log everything: left out of averages
 
 
-def _weights(days: int = 28) -> list[tuple[str, float]]:
-    """His weigh-ins (Apple Health via health.py), in pounds, oldest first."""
-    try:
-        import health
-        rows = [(r["date"], float(r["weight"])) for r in health.daily(days) if r.get("weight")]
-    except Exception:
-        return []
-    import trainer
-    profile_lb = trainer.profile().get("weight_lb") or 0
-    # Health exports kilograms on some setups: a reading under half his profile weight is kg.
-    return [(d, w * 2.20462 if profile_lb and w < profile_lb * 0.6 else w) for d, w in rows]
-
-
 def coach(days: int = 14) -> dict:
-    """His last two weeks of eating against the plan, his weight trend, and the trainer's call."""
+    """His last two weeks against the plan: averages, weight trend, and what to work on."""
     t = targets()
     full = [h for h in history(days) if h["kcal"] >= FULL_DAY_KCAL]
-    out: dict[str, Any] = {"target_kcal": t["kcal"], "target_protein_g": t["protein"], "days_logged": len(full)}
+    out: dict[str, Any] = {"today_kcal": t["kcal"], "today_protein_g": t["protein"], "days_logged": len(full),
+                           "maintenance": t["maintenance"], "how_today_is_worked_out": t["why"]}
     if full:
         out["avg_kcal"] = round(sum(h["kcal"] for h in full) / len(full))
         out["avg_protein_g"] = round(sum(h["protein"] for h in full) / len(full))
-    w = _weights(28)
+    w = weigh_ins(28)
     if len(w) >= 2:
         span = (datetime.fromisoformat(w[-1][0]) - datetime.fromisoformat(w[0][0])).days
-        if span >= 10:
+        if span >= 7:
             out["lb_per_week"] = round((w[-1][1] - w[0][1]) / span * 7, 1)
-            out["weight_lb"] = round(w[-1][1], 1)
-    advice, change = [], None
+    out["weight_lb"] = current_weight()
+    advice = []
+    if not w:
+        advice.append("No weigh-ins yet: weigh in a few mornings a week so the numbers can follow you.")
     if len(full) < 5:
-        advice.append("Not enough logged days yet to judge the plan: log most meals for a week.")
-    else:
-        over = out["avg_kcal"] - t["kcal"]
-        if over > 250:
-            advice.append(f"Eating about {over} kcal over the target on average: the plan is fine, the gap is intake.")
-        if out["avg_protein_g"] < t["protein"] * 0.85:
-            advice.append(f"Protein averages {out['avg_protein_g']} g against {t['protein']} g: that's the lever "
-                          "that keeps the muscle on a cut.")
-        rate = out.get("lb_per_week")
-        if rate is not None and len(full) >= 10 and abs(over) <= 150:
-            if rate > -0.5:
-                change = t["kcal"] - 200
-                advice.append(f"On target for two weeks and the scale is flat ({rate:+} lb a week): time to drop to "
-                              f"{change} kcal.")
-            elif rate < -2.0:
-                change = t["kcal"] + 200
-                advice.append(f"Losing {abs(rate)} lb a week is faster than muscle likes: up to {change} kcal.")
-    out["advice"], out["suggested_kcal"] = advice, change
+        advice.append("Log most meals for a week so the plan can learn what you really burn.")
+    elif out["avg_protein_g"] < t["protein"] * 0.85:
+        advice.append(f"Protein averages {out['avg_protein_g']} g against {t['protein']} g: that's what keeps the "
+                      "muscle on a cut.")
+    rate = out.get("lb_per_week")
+    if rate is not None and rate < -2.5:
+        advice.append(f"Losing {abs(rate)} lb a week: faster than the plan; eat to the target, not under it.")
+    out["advice"] = advice
     return out
 
 

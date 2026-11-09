@@ -14,14 +14,46 @@ def journal(monkeypatch, tmp_path):
     monkeypatch.setattr(food, "DB", str(tmp_path / "food.db"))
     monkeypatch.setattr(food, "PREFS", str(tmp_path / "food.json"))
     monkeypatch.setattr(trainer, "profile", lambda: {"weight_lb": 300.0, "height": "6 ft 5 in", "age": "27"})
+    monkeypatch.setattr(food, "_day_kind", lambda day: "cardio")
+    monkeypatch.setattr(food, "_active_kcal", lambda: None)
     TURN.set({"user": "owner", "conversation": "c", "turn": 1, "user_said": "x"})
 
 
-def test_targets_are_the_trainers_cut():
+def test_targets_are_worked_out_from_his_body_and_distance_to_goal(monkeypatch):
+    t = food.targets()                     # BMR 2,453 x 1.55 = 3,803; 55 lb to go: -750 → 3,050
+    assert (t["kcal"], t["protein"], t["maintenance"]) == (3050, 245, 3802)
+    assert t["fat"] == round(max(3050 * 0.25 / 9, 0.3 * 245)) and t["carbs"] == round((3050 - 245 * 4 - t["fat"] * 9) / 4)
+    monkeypatch.setattr(food, "_day_kind", lambda day: "lift")
+    lift = food.targets()
+    assert lift["kcal"] == 3200 and lift["carbs"] > t["carbs"] and lift["protein"] == 245    # lifting day: +150 carbs
+    monkeypatch.setattr(food, "_day_kind", lambda day: "cardio")
+    food.log_weight(262)                   # 17 lb to go: ~1 lb a week; and a lighter body burns less
+    t2 = food.targets()
+    assert t2["weight_lb"] == 262 and t2["maintenance"] < 3802 and t2["kcal"] == round((t2["maintenance"] - 500) / 25) * 25
+    food.log_weight(246)                   # at goal: maintenance, no deficit
+    assert food.targets()["kcal"] == round(food.targets()["maintenance"] / 25) * 25
+    assert food.set_target(2800)["kcal"] == 2800 and food.set_target(None)["kcal"] != 2800
+
+
+def test_watch_activity_and_floors(monkeypatch):
+    monkeypatch.setattr(food, "_active_kcal", lambda: 900)            # discounted active calories from the Watch
     t = food.targets()
-    assert t["kcal"] == 3200 and t["protein"] == 245 and t["fat"] == round(3200 * 0.28 / 9)
-    assert t["carbs"] == round((3200 - 245 * 4 - t["fat"] * 9) / 4)
-    assert food.set_target(2800)["kcal"] == 2800 and food.set_target(None)["kcal"] == 3200
+    assert t["maintenance"] == round(2453.2 * 1.2 + 900) and "Watch" in t["why"]
+    monkeypatch.setattr(trainer, "profile", lambda: {"weight_lb": 150.0, "height": "5 ft 2 in", "age": "60"})
+    monkeypatch.setattr(trainer, "targets", lambda p: {"goal_weight_lb": 120})
+    assert food.targets()["kcal"] >= food.MIN_KCAL                   # never under the floor
+
+
+def test_adaptive_maintenance_learns_from_his_logs(monkeypatch):
+    from datetime import date, timedelta
+    today = food._now().date()
+    for i in range(20):                    # 20 logged days at 3,000 while losing 0.2 lb a day (700 kcal/day)
+        d = (today - timedelta(days=20 - i)).isoformat()
+        food.add([{"name": "Day", "qty": "", "kcal": 3000, "protein": 240, "carbs": 300, "fat": 100}], "lunch", day=d)
+        food.log_weight(300 - 0.2 * i, d)
+    burn, n = food._adaptive_tdee()
+    assert n == 20 and 3600 <= burn <= 3800                         # 3,000 eaten + ~700 a day from the scale
+    assert "your logs and weigh-ins say" in food.targets()["why"]
 
 
 def test_estimate_is_parsed_and_bounded(monkeypatch):
@@ -38,7 +70,7 @@ def test_totals_left_recent_and_again():
     food.add([{"name": "Eggs", "qty": "2", "kcal": 180, "protein": 12, "carbs": 2, "fat": 14}], "breakfast")
     food.add([{"name": "Protein shake", "qty": "1 scoop", "kcal": 120, "protein": 25, "carbs": 3, "fat": 1}], "snack")
     d = food.day()
-    assert d["totals"] == {"kcal": 300, "protein": 37, "carbs": 5, "fat": 15} and d["left"]["kcal"] == 2900
+    assert d["totals"] == {"kcal": 300, "protein": 37, "carbs": 5, "fat": 15} and d["left"]["kcal"] == 2750
     shake = next(e for e in food.recent() if e["name"] == "Protein shake")
     food.readd(shake["id"])
     assert food.day()["totals"]["protein"] == 62 and len(food.recent()) == 2   # same food once in recents
@@ -48,7 +80,7 @@ def test_totals_left_recent_and_again():
 def test_voice_tools(monkeypatch):
     monkeypatch.setattr(food, "estimate", lambda text: [{"name": "Chicken burrito", "qty": "1", "kcal": 1000, "protein": 50, "carbs": 110, "fat": 35}])
     r = food.food_log({"description": "a chicken burrito", "meal": "lunch"})
-    assert r.ok and r.data["calories_left"] == 2200 and r.data["protein_left_g"] == 195
+    assert r.ok and r.data["calories_left"] == 2050 and r.data["protein_left_g"] == 195
     assert food.food_today({}).data["eaten_kcal"] == 1000
     assert food.food_undo({"name": "burrito"}).data["removed"] == "Chicken burrito"
     assert not food.food_undo({}).ok
@@ -56,38 +88,22 @@ def test_voice_tools(monkeypatch):
     assert food.food_log({"description": "x"}).error == "food_journal_is_daniels_only"
 
 
-def test_the_trainer_reads_the_journal_and_weight(monkeypatch):
-    from datetime import date, timedelta
-    t = food.targets()["kcal"]
-    start = date(2026, 10, 26)
-    for i in range(12):                                   # 12 full days, on target, good protein
-        food.add([{"name": "Day", "qty": "", "kcal": t, "protein": 240, "carbs": 300, "fat": 100}], "lunch",
-                 day=(start + timedelta(days=i)).isoformat())
-    monkeypatch.setattr(food, "history", lambda days=14: [{"day": "x", "kcal": t, "protein": 240}] * 12)
-    monkeypatch.setattr(food, "_weights", lambda days=28: [("2026-10-26", 300.0), ("2026-11-07", 299.8)])
-    c = food.coach()
-    assert c["lb_per_week"] == -0.1 and c["suggested_kcal"] == t - 200 and "flat" in c["advice"][-1]
-    monkeypatch.setattr(food, "_weights", lambda days=28: [("2026-10-26", 300.0), ("2026-11-07", 295.0)])
-    assert food.coach()["suggested_kcal"] == t + 200                        # 2.9 lb a week: too fast
-    monkeypatch.setattr(food, "_weights", lambda days=28: [("2026-10-26", 300.0), ("2026-11-07", 298.0)])
-    assert food.coach()["suggested_kcal"] is None                           # ~1.2 lb a week: right on plan
-    monkeypatch.setattr(food, "history", lambda days=14: [{"day": "x", "kcal": t, "protein": 150}] * 12)
-    assert any("Protein averages 150" in a for a in food.coach()["advice"])
-
-
-def test_weekly_check_in_asks_and_a_yes_sets_the_target(monkeypatch):
+def test_weight_by_voice_and_the_weekly_summary(monkeypatch):
     import asyncio
     import asks
+    import proactive
     from datetime import datetime
+    r = food.weight_log({"pounds": 296.4})
+    assert r.ok and r.data["logged_lb"] == 296.4 and r.data["seven_day_average_lb"] == 296.4
+    assert not food.weight_log({"pounds": 5}).ok
     sunday = datetime(2026, 11, 8, 11, 0, tzinfo=food._now().tzinfo)
     monkeypatch.setattr(food, "_now", lambda: sunday)
-    monkeypatch.setattr(food, "coach", lambda days=14: {"suggested_kcal": 3000, "advice": ["Flat for two weeks: time to drop to 3000 kcal."]})
-    asked = []
+    monkeypatch.setattr(asks, "DB", str(__import__("pathlib").Path(food.DB).with_name("asks.db")))
+    told = []
 
-    async def fake_ask(kind, q, options, data, **kw):
-        asked.append((kind, q, data))
-    monkeypatch.setattr(asks, "ask", fake_ask)
+    async def deliver(title, text, **kw):
+        told.append(text)
+    monkeypatch.setattr(proactive, "deliver", deliver)
     asyncio.run(asks.nutrition_source())
-    assert asked and asked[0][0] == "nutrition" and "3,000" in asked[0][1]
-    assert asks.HANDLERS["nutrition"]("set", {"kcal": 3000}) == "daily target now 3,000 kcal"
-    assert food.targets()["kcal"] == 3000
+    asyncio.run(asks.nutrition_source())                              # once a week
+    assert len(told) == 1 and "Today's target is" in told[0] and "maintenance" in told[0]
