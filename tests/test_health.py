@@ -113,3 +113,18 @@ def test_health_check_is_his_only(monkeypatch):
                                                                 _day("2026-11-06", hrv=48.2, sleep_minutes=396, sleep_deep=66)])
     r = health.health_check({"topic": "sleep", "days": 1})
     assert r.ok and r.data["averages_vs_previous_weeks"]["sleep_minutes"]["avg"] == 396
+
+
+def test_a_night_sent_twice_as_summaries_counts_once(monkeypatch, tmp_path):
+    """Health Auto Export sent last night's stage summaries twice, 30 min apart: 7 h read as 13 h 39 m (2026-11-09)."""
+    import health
+    monkeypatch.setattr(health, "DB", str(tmp_path / "h.db"))
+    with health._connect() as conn:
+        for start, core, deep, rem in (("2026-11-09T03:49:51+00:00", 266.4, 35.0, 121.9), ("2026-11-09T04:21:20+00:00", 252.9, 33.0, 118.0)):
+            for metric, v in (("sleep_core", core), ("sleep_deep", deep), ("sleep_rem", rem), ("sleep_awake", 7.0)):
+                conn.execute("INSERT INTO samples VALUES (?,?,?,?,?,?,?)", (metric, start, "2026-11-09T11:00:07+00:00", v, "min", "auto-export", None))
+        for i in range(6):  # stage segments from another night still add up
+            conn.execute("INSERT INTO samples VALUES (?,?,?,?,?,?,?)", ("sleep_core", f"2026-11-08T{10 + i}:00:00+00:00", f"2026-11-08T{10 + i}:50:00+00:00", 50, "min", "watch", None))
+    rows = {r["date"]: r for r in health.daily(5, tz="America/New_York")}
+    assert rows["2026-11-09"]["sleep_minutes"] == round(266.4 + 35.0 + 121.9)
+    assert rows["2026-11-08"]["sleep_minutes"] == 300

@@ -193,6 +193,10 @@ def daily(days: int = 30, tz: str | None = None) -> list[dict]:
                             (since,)).fetchall()
     out: dict[str, dict] = defaultdict(lambda: {"workouts": []})
     avg: dict[tuple, list] = defaultdict(list)
+    # Health Auto Export can send a night as one summary per stage (minutes of core/deep/REM over the whole night)
+    # and sent the same night twice with different start times: summed, 7 h read as 13 h 39 m (2026-11-09). Summaries
+    # are kept per start time and only the fullest one counts; short stage segments are added up as before.
+    summaries: dict[str, dict[str, dict]] = defaultdict(lambda: defaultdict(dict))
     for metric, start, end, value, note in rows:
         when = end if metric.startswith("sleep") else start  # a night belongs to the morning he woke up
         day = datetime.fromisoformat(when).astimezone(zone).date().isoformat()
@@ -204,12 +208,19 @@ def daily(days: int = 30, tz: str | None = None) -> list[dict]:
         elif metric in LAST:
             d[metric] = value
         elif metric in STAGES:
-            d[metric] = d.get(metric, 0) + value
+            span = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() / 60
+            if span > 120 and value < span * 0.9:  # a whole-night summary, not a segment
+                summaries[day][start][metric] = value
+            else:
+                d[metric] = d.get(metric, 0) + value
         elif metric == "workout":
             d["workouts"].append({"type": note or "Workout", "minutes": value,
                                   "start": datetime.fromisoformat(start).astimezone(zone).strftime("%H:%M")})
     for (day, metric), vals in avg.items():
         out[day][metric] = sum(vals) / len(vals)
+    for day, by_start in summaries.items():
+        best = max(by_start.values(), key=lambda g: sum(v for k, v in g.items() if k != "sleep_awake"))
+        out[day].update(best)
     today = datetime.now(zone).date()
     result = []
     for i in range(days - 1, -1, -1):
