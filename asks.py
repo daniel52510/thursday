@@ -25,7 +25,7 @@ import re
 import sqlite3
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict
 
 import httpx
@@ -310,13 +310,55 @@ def _promise_handler(choice: str, data: dict) -> str:
     return "dropped it"
 
 
-HANDLERS.update(email=_email_handler, promise=_promise_handler)
+async def lift_source() -> None:
+    """A lifting day with nothing in his journal yet: after a strength workout on his Watch, or at 8 pm."""
+    import health
+    import lifts
+    now = lifts._today()
+    if await asyncio.to_thread(lifts.logged_today):
+        return
+    p = await asyncio.to_thread(lifts.plan, now)
+    if not p["lifts"]:
+        return  # a cardio or rest day
+    since = (now - timedelta(hours=3)).astimezone(timezone.utc).isoformat()  # samples are stored in UTC
+    with health._connect() as conn:
+        lifted = conn.execute("SELECT 1 FROM samples WHERE metric = 'workout' AND end >= ? AND end <= ? AND value >= 15 "
+                              "AND (note LIKE '%trength%' OR note LIKE '%eight%' OR note LIKE '%unctional%')",
+                              (since, (now - timedelta(minutes=10)).astimezone(timezone.utc).isoformat())).fetchone()
+    if not lifted and not 20 <= now.hour < 22:
+        return
+    weighted = [x for x in p["lifts"] if x["weight_lb"] is not None]
+    short = lambda name: re.sub(r"\s*\(.*?\)", "", name)  # "Goblet squat (3 s down)" -> "Goblet squat"
+    if weighted:
+        plan = "; ".join(f"{short(x['exercise'])} {x['sets']}x{str(x['reps']).split('-')[-1]}"
+                         + (f" at {x['weight_lb']:g}" if x["weight_lb"] else "") for x in weighted[:4])
+        q = (f"{'Nice session. ' if lifted else ''}Log today's {p['session'].split(':')[0].lower()} as planned: {plan}? "
+             "Tell me any set that was different.")
+        options = [{"key": "log", "label": "Log as planned"}, {"key": "no", "label": "Didn't train"}]
+    else:
+        q = (f"{'Nice session. ' if lifted else ''}What did you lift today? Tell me the exercises, sets, reps and "
+             "weights and I'll start your journal.")
+        options = [{"key": "tell", "label": "I'll tell you"}, {"key": "no", "label": "Didn't train"}]
+    await ask("lifts", q, options, {"day": p["day"]}, key=f"lifts:{p['day']}", expires_h=14)
+
+
+def _lifts_handler(choice: str, data: dict) -> str:
+    import lifts
+    if choice == "log":
+        saved = lifts.log_plan(data["day"])
+        return f"logged {len(saved)} lifts" if saved else "nothing to log"
+    if choice == "tell":
+        return "tell me what you did and I'll log it"
+    return "okay, nothing logged"
+
+
+HANDLERS.update(email=_email_handler, promise=_promise_handler, lifts=_lifts_handler)
 
 
 async def run() -> None:
     await asyncio.sleep(90)
     while True:
-        for source in (email_source, promise_source):
+        for source in (email_source, promise_source, lift_source):
             try:
                 await source()
             except asyncio.CancelledError:

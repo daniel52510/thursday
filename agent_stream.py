@@ -52,6 +52,7 @@ import music
 import health
 import lights
 import asks
+import lifts
 import night
 import email_threads
 import gmail_tool
@@ -618,7 +619,7 @@ TOOLS = [
     },
 ]
 TOOLS += (missions.VOICE_TOOL_SCHEMAS + notes.TOOL_SCHEMAS + approvals.TOOL_SCHEMAS + lights.TOOL_SCHEMAS
-          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + gmail_tool.TOOL_SCHEMAS + email_threads.TOOL_SCHEMAS + asks.TOOL_SCHEMAS + night.TOOL_SCHEMAS + trainer.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
+          + improvements.TOOL_SCHEMAS + music.TOOL_SCHEMAS + telephony.TOOL_SCHEMAS + health.TOOL_SCHEMAS + reminders.TOOL_SCHEMAS + gmail_tool.TOOL_SCHEMAS + email_threads.TOOL_SCHEMAS + asks.TOOL_SCHEMAS + night.TOOL_SCHEMAS + lifts.TOOL_SCHEMAS + trainer.TOOL_SCHEMAS + [mind.VOICE_SCHEMA, DIAGNOSTICS_SCHEMA])
 
 _NEARBY = re.compile(r"\b(here|near\s+me|nearby|around\s+me|local(ly)?|in\s+my\s+(area|city|town))\b", re.I)
 # A question or an ask, after any "Hey Thursday," up front. Speech transcripts often
@@ -883,7 +884,7 @@ _ASKED_MISSION_GOAL = re.compile(
 )
 _CANCEL_PENDING = re.compile(r"^\W*(?:no|nah|nope|never\s*mind|cancel|stop|abort|forget\s+it|don'?t|not\s+now)\b", re.I)
 # Tools that only read: a reply after them can still claim something no tool did (the claim guard keeps checking).
-_LOOKUP_TOOLS = {"reminder_list", "email_threads", "email_inbox", "email_search", "email_read", "training_today", "training_plan",
+_LOOKUP_TOOLS = {"reminder_list", "lift_history", "email_threads", "email_inbox", "email_search", "email_read", "training_today", "training_plan",
                  "mission_status", "get_time", "get_weather", "web_search", "calendar_events", "health_check",
                  "list_show", "note_find", "system_status", "music_now", "light_status", "alarm_list", "watch_list",
                  "routine_list", "approval_list", "improve_status", "project_list", "sports_scores", "launch_schedule",
@@ -1131,7 +1132,7 @@ _REMEMBERED_TOOLS = {"list_add", "list_show", "list_remove", "note_save", "note_
                      "alarm_cancel", "alarm_snooze", "calendar_create", "calendar_delete", "calendar_confirm",
                      "mission_start", "mission_abort", "watch_start", "watch_stop", "approval_list", "approval_decide",
                      "routine_start", "routine_stop", "send_to_phone", "improve_start", "call_place", "call_confirm",
-                     "light_set", "email_send", "email_confirm", "email_thread_stop", "email_thread_steer", "ask_answer", "night_mode"}
+                     "light_set", "email_send", "email_confirm", "email_thread_stop", "email_thread_steer", "ask_answer", "night_mode", "lift_log", "lift_undo"}
 
 
 def _with_tool_calls(turns: list[dict]) -> list[dict]:

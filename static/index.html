@@ -655,6 +655,29 @@
   .em-sent b { font-weight: 500; flex: none; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .em-sent time { flex: none; color: var(--text-faint); font-size: 12px; }
 
+  /* Lifting journal (lifts.py), the Lifts view of the Health page. */
+  .body-tabs { margin: 12px 0 4px; --mv-soft: var(--soft); --mv-on: var(--soft-2); }
+  .lf-card { padding: 16px; border-radius: 18px; background: var(--soft); margin-top: 14px; }
+  .lf-card h3, .lf-add h3, .lf-day h3 { margin: 0 0 10px; font: 600 14px var(--sans); }
+  .lf-card h3 small { font-weight: 400; color: var(--text-faint); margin-left: 6px; }
+  .lf-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .lf-row:first-of-type { border-top: 0; }
+  .lf-row b { font-weight: 500; font-size: 14px; }
+  .lf-row .do { font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
+  .lf-row small { grid-column: 1 / -1; font-size: 12px; color: var(--text-muted); }
+  .lf-card .em-btns { margin-top: 12px; }
+  .lf-add { margin-top: 14px; padding: 16px; border-radius: 18px; background: var(--soft); }
+  .lf-add input { width: 100%; height: 40px; padding: 0 14px; border-radius: 12px; border: 0; background: var(--surface); color: var(--text); font: 15px var(--sans); }
+  .lf-nums { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; margin-top: 8px; align-items: end; }
+  .lf-nums label { font-size: 12px; color: var(--text-muted); display: grid; gap: 4px; }
+  .lf-nums button { height: 40px; padding: 0 18px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-size: 14px; }
+  .lf-day { margin-top: 18px; }
+  .lf-day h3 { color: var(--text-muted); font-weight: 500; font-size: 13px; }
+  .lf-ex { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .lf-ex b { font-weight: 500; font-size: 14px; flex: 1 1 100%; }
+  .lf-set { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--soft-2); font-variant-numeric: tabular-nums; }
+  .lf-set:hover { text-decoration: line-through; }
+
   /* ---------- phone ---------- */
   @media (max-width: 800px) {
     aside {
@@ -1148,10 +1171,26 @@
 
 <dialog id="bodyDialog" class="alarms body">
   <div class="alarms-head"><h2>Health</h2><button class="icon-btn" id="bodyClose" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
-  <div class="lat-head"><p class="body-sub" id="bodySub">From your Apple Watch, synced by Health Auto Export.</p>
+  <div class="mv-seg body-tabs" role="tablist" aria-label="Health views"><button type="button" data-view="body" aria-pressed="true">Body</button><button type="button" data-view="lifts" aria-pressed="false">Lifts</button></div>
+  <div id="liftsView" hidden>
+    <div class="lf-card" id="lfPlan"></div>
+    <form class="lf-add" id="lfAdd">
+      <h3>Add a lift</h3>
+      <input id="lfEx" list="lfExList" maxlength="60" required placeholder="Exercise" aria-label="Exercise" autocomplete="off"><datalist id="lfExList"></datalist>
+      <div class="lf-nums">
+        <label>Weight<input id="lfW" type="number" inputmode="decimal" min="0" max="1500" step="2.5" placeholder="lb"></label>
+        <label>Sets<input id="lfS" type="number" inputmode="numeric" min="1" max="20" value="3" required></label>
+        <label>Reps<input id="lfR" type="number" inputmode="numeric" min="1" max="100" value="8" required></label>
+        <button type="submit">Add</button>
+      </div>
+      <p class="em-meta" id="lfNote" aria-live="polite">Dumbbells per hand; leave weight empty for bodyweight. Or just tell THURSDAY: "bench, 3 sets of 8 at 50".</p>
+    </form>
+    <div id="lfJournal"></div>
+  </div>
+  <div class="lat-head" id="bodyHead"><p class="body-sub" id="bodySub">From your Apple Watch, synced by Health Auto Export.</p>
     <div class="lat-range body-range" role="group" aria-label="Range"><button type="button" data-d="7" aria-pressed="false">7 d</button><button type="button" data-d="30" aria-pressed="true">30 d</button></div></div>
-  <div class="tiles" id="bodyTiles"></div>
-  <div id="bodyCharts"></div>
+  <div id="bodyView"><div class="tiles" id="bodyTiles"></div>
+  <div id="bodyCharts"></div></div>
 </dialog>
 
 <dialog id="healthDialog" class="alarms">
@@ -1559,6 +1598,64 @@ for (const b of document.querySelectorAll(".body-range button")) b.onclick = () 
   for (const o of document.querySelectorAll(".body-range button")) o.setAttribute("aria-pressed", String(o === b));
   loadBody();
 };
+// ---------- lifting journal (lifts.py) ----------
+const fmtSet = (s) => s.weight_lb ? `${+s.weight_lb} × ${s.reps}` : `BW × ${s.reps}`;
+const dayName = (d) => new Date(d + "T12:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+async function loadLifts() {
+  let data = null;
+  try { const r = await api("/api/lifts?days=42"); if (r.ok) data = await r.json(); } catch {}
+  if (!data) return;
+  $("lfExList").innerHTML = ""; for (const n of data.exercises) $("lfExList").append(Object.assign(document.createElement("option"), { value: n }));
+  const plan = $("lfPlan"); plan.innerHTML = "";
+  const h = document.createElement("h3"); h.textContent = "Today"; const sm = document.createElement("small"); sm.textContent = data.plan.session; h.append(sm); plan.append(h);
+  if (!data.plan.lifts.length) plan.append(Object.assign(document.createElement("p"), { className: "em-meta", textContent: "No lifting today: it's a cardio or rest day." }));
+  for (const x of data.plan.lifts) {
+    const row = document.createElement("div"); row.className = "lf-row";
+    row.innerHTML = "<b></b><span class='do'></span><small></small>";
+    row.querySelector("b").textContent = x.exercise;
+    row.querySelector(".do").textContent = `${x.sets} × ${x.reps}` + (x.weight_lb ? ` @ ${+x.weight_lb}` : x.weight_lb === 0 ? " BW" : "");
+    row.querySelector("small").textContent = x.why + (x.last ? ` Last: ${x.last}.` : "");
+    plan.append(row);
+  }
+  const loggedToday = data.journal.some((d) => d.day === data.plan.day);
+  if (data.plan.lifts.some((x) => x.weight_lb != null) && !loggedToday) {
+    const btns = document.createElement("div"); btns.className = "em-btns";
+    const b = document.createElement("button"); b.className = "yes"; b.textContent = "Log as planned";
+    b.onclick = async () => { b.disabled = true; await api("/api/lifts/log-plan", { method: "POST" }); loadLifts(); };
+    btns.append(b); plan.append(btns);
+  }
+  const box = $("lfJournal"); box.innerHTML = "";
+  if (!data.journal.length) box.innerHTML = `<div class="em-empty" style="margin-top:14px">Your journal starts with the first lift you log.</div>`;
+  for (const d of data.journal) {
+    const day = document.createElement("div"); day.className = "lf-day";
+    day.append(Object.assign(document.createElement("h3"), { textContent: dayName(d.day) }));
+    for (const e of d.exercises) {
+      const ex = document.createElement("div"); ex.className = "lf-ex";
+      ex.append(Object.assign(document.createElement("b"), { textContent: e.exercise }));
+      for (const st of e.sets) {
+        const chip = document.createElement("button"); chip.className = "lf-set"; chip.textContent = fmtSet(st); chip.title = "Remove this set";
+        chip.onclick = async () => { if (!confirm(`Remove ${e.exercise} ${fmtSet(st)}?`)) return; await api(`/api/lifts/${st.id}`, { method: "DELETE" }); loadLifts(); };
+        ex.append(chip);
+      }
+      day.append(ex);
+    }
+    box.append(day);
+  }
+}
+$("lfAdd").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = { exercise: $("lfEx").value, weight_lb: +$("lfW").value || 0, sets: +$("lfS").value, reps: +$("lfR").value };
+  const r = await api("/api/lifts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const out = await r.json().catch(() => ({}));
+  $("lfNote").textContent = r.ok ? `Logged ${out.exercise}: ${out.sets.length} × ${out.sets[0].reps}${out.sets[0].weight_lb ? ` @ ${out.sets[0].weight_lb}` : ""}${out.personal_best ? ". New best!" : "."}` : `Couldn't: ${out.detail || r.status}`;
+  if (r.ok) { $("lfEx").value = ""; loadLifts(); }
+};
+function showBodyView(v) {
+  for (const b of document.querySelectorAll(".body-tabs button")) b.setAttribute("aria-pressed", String(b.dataset.view === v));
+  $("liftsView").hidden = v !== "lifts"; $("bodyView").hidden = v === "lifts"; $("bodyHead").hidden = v === "lifts";
+  if (v === "lifts") loadLifts();
+}
+for (const b of document.querySelectorAll(".body-tabs button")) b.onclick = () => showBodyView(b.dataset.view);
 $("bodyClose").onclick = () => $("bodyDialog").close();
 $("bodyNav").onclick = () => { closeNav(); $("bodyDialog").showModal(); loadBody(); };
 

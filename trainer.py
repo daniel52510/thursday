@@ -176,12 +176,21 @@ def training_today(args: Dict[str, Any]):
     # This week so far, from his synced Watch workouts.
     rows = health.daily(7)
     done = [w for d in rows for w in d.get("workouts", []) if w.get("minutes", 0) >= 8]
+    import lifts  # his journal sets the weights: what he lifted last time, and whether it's time to go up
+    loads = {} if mode == "recover" else {x["exercise"]: x for x in lifts.plan(day)["lifts"]}
+    if mode == "lighter":
+        for x in loads.values():
+            x["sets"] = max(2, round(x["sets"] * 2 / 3))
     return ToolResult(ok=True, tool_name="training_today", data={
         "program": PROGRAM, "day": day.strftime("%A"), "session": title, "intensity": mode, "why": why,
         "exercises": [f"{n}: {r}" if r else n for n, r in exercises], "readiness": ready,
+        "loads": [{"exercise": x["exercise"], "do": f"{x['sets']} x {x['reps']}" + (
+            f" at {x['weight_lb']:g} lb" if x["weight_lb"] else " bodyweight" if x["weight_lb"] == 0 else ""),
+            "last_time": x["last"], "why": x["why"]} for x in loads.values()],
         "workouts_last_7_days": len(done), "him": me, "targets": targets(me),
         "note": "You're his personal trainer. Say the session in a sentence or two (the focus and the first couple "
-                "of moves), the intensity and why, and offer the full list. Encouraging, specific, no lecture. "
+                "of moves with their weights from loads), the intensity and why, and offer the full list. Encouraging, "
+                "specific, no lecture. If a lift went up since last time, say so. "
                 "General fitness coaching, not medical advice: stop on sharp pain."})
 
 

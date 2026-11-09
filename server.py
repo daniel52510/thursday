@@ -23,6 +23,7 @@ import calendar_tool
 import missions
 import diagnostics  # noqa: F401  (starts remembering warnings for the health page)
 import asks
+import lifts
 import night
 import email_threads
 import gmail_tool
@@ -1044,6 +1045,41 @@ def list_sent_email(user: dict = Depends(owner_only)):
 class NightIn(BaseModel):
     mode: str = Field(pattern="^(night|day|auto)$")
     by: str = Field(default="web", max_length=40)
+
+
+# His lifting journal (lifts.py), on the Health page: today's plan with the trainer's weights, the last weeks,
+# and adding, confirming or removing sets.
+class LiftIn(BaseModel):
+    exercise: str = Field(min_length=1, max_length=60)
+    sets: int = Field(default=1, ge=1, le=20)
+    reps: int = Field(ge=1, le=100)
+    weight_lb: float = Field(default=0, ge=0, le=1500)
+    day: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.get("/api/lifts")
+def get_lifts(days: int = 30, user: dict = Depends(owner_only)):
+    return {"plan": lifts.plan(), "journal": lifts.journal(max(1, min(days, 365))),
+            "exercises": lifts.known_exercises()}
+
+
+@app.post("/api/lifts", status_code=201)
+def add_lift(body: LiftIn, user: dict = Depends(owner_only)):
+    out = lifts.add(body.exercise, [{"reps": body.reps, "weight_lb": body.weight_lb}] * body.sets, body.day, "web")
+    if "error" in out:
+        raise HTTPException(status_code=400, detail=out["error"])
+    return out
+
+
+@app.post("/api/lifts/log-plan")
+def log_lift_plan(user: dict = Depends(owner_only)):
+    return {"saved": lifts.log_plan()}
+
+
+@app.delete("/api/lifts/{set_id}", status_code=204)
+def delete_lift(set_id: str, user: dict = Depends(owner_only)):
+    if not lifts.remove(set_id):
+        raise HTTPException(status_code=404)
 
 
 @app.get("/api/night")
