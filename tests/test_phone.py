@@ -32,13 +32,13 @@ def test_a_text_sends_only_after_his_spoken_yes():
         r = phone.phone_message({"contact": "Sam", "text": "Running   10 late"})
         assert r.ok and "NOT SENT" in r.data["status"] and box == {}       # nothing for the phone yet
         out = phone.respond("Text Sam: 'Running 10 late.' Send it?")
-        assert out["do"] == "" and out["listen"] == "yes"                    # it listens for his answer
+        assert "do" not in out and "url" not in out and out["listen"] == "yes"                    # it listens for his answer
     finally:
         phone.ACTION.reset(t)
     assert phone.confirm_message("owner", "what's the weather") is None     # not an answer: the model takes over
     assert phone.confirm_message("owner", "yes") is None                    # and the pending text was dropped
     phone._pending["owner"] = {"contact": "Sam", "body": "Running 10 late", "at": __import__("time").monotonic()}
-    assert phone.confirm_message("owner", "nope")["do"] == ""
+    assert phone.confirm_message("owner", "nope") == {"speak": "Okay, not sending it."}
     phone._pending["owner"] = {"contact": "Sam", "body": "Running 10 late", "at": __import__("time").monotonic()}
     sent = phone.confirm_message("owner", "yes, send it")
     assert (sent["do"], sent["contact"], sent["body"]) == ("message", "Sam", "Running 10 late")
@@ -71,7 +71,7 @@ def test_listen_again_when_he_was_asked_something():
     box, t = _turn()
     try:
         assert phone.respond("Which Sam, question?")["listen"] == "yes"
-        assert phone.respond("Done.")["listen"] == ""
+        assert phone.respond("Done.") == {"speak": "Done."}            # nothing empty for the Shortcut to trip on
     finally:
         phone.ACTION.reset(t)
 

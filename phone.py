@@ -108,12 +108,10 @@ def confirm_message(user_id: str, said: str) -> dict | None:
         return None
     if plain_yes(said):
         del _pending[user_id]
-        return {"speak": "Sent.", "do": "message", "contact": p["contact"], "body": p["body"], "url": "",
-                "minutes": 0, "listen": ""}
+        return {"speak": "Sent.", "do": "message", "contact": p["contact"], "body": p["body"]}
     if re.match(r"^\W*(?:no|nope|nah|don't|do not|cancel|never ?mind|stop)\b", said or "", re.I):
         del _pending[user_id]
-        return {"speak": "Okay, not sending it.", "do": "", "contact": "", "body": "", "url": "", "minutes": 0,
-                "listen": ""}
+        return {"speak": "Okay, not sending it."}
     _pending.pop(user_id, None)  # something else (a change, a new request): the model takes it from here
     return None
 
@@ -156,15 +154,21 @@ def phone_timer(args: Dict[str, Any]):
         "minutes": minutes, "note": "Confirm the timer in a few words."})
 
 
+def _present(out: dict) -> dict:
+    """Only the fields with something in them: a Shortcut's "has any value" is true for an empty string, so a blank
+    url made Open URLs fail on every plain question (2026-11-09). speak is always there."""
+    return {k: v for k, v in out.items() if k == "speak" or v not in ("", 0, None, False)}
+
+
 def respond(reply: str) -> dict:
     """What the Shortcut gets: what to say, the phone action (flat keys, simple for Shortcuts), and whether to listen
     again (he was asked something)."""
     action = ACTION.get() or {}
     speak = reply.strip() or "Sorry, I didn't get anything back."
-    return {"speak": speak, "do": action.get("do", ""), "contact": action.get("contact", ""),
+    return _present({"speak": speak, "do": action.get("do", ""), "contact": action.get("contact", ""),
             "body": action.get("body", ""), "url": action.get("url", ""), "minutes": action.get("minutes", 0),
             # "yes" or empty, not true/false: a Shortcut's If can test it with "has any value", no typing.
-            "listen": "yes" if speak.rstrip().endswith("?") and not action else ""}
+            "listen": "yes" if speak.rstrip().endswith("?") and not action else ""})
 
 
 PHONE_SCHEMAS = [
