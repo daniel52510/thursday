@@ -169,3 +169,17 @@ def test_kind_and_artist_are_read_from_his_words(monkeypatch):
         phone.ACTION.reset(t)
     assert seen == [("The Less I Know The Better", "song", "Tame Impala", False),
                     ("Currents", "album", "Tame Impala", False), ("Tame Impala", "artist", "", True)]
+
+
+def test_the_artist_comes_from_his_words_when_the_model_drops_it(monkeypatch):
+    from calendar_tool import TURN
+    seen = []
+    monkeypatch.setattr(phone, "_apple_page", lambda q, kind, artist="", exact=False: seen.append((q, kind, artist)) or None)
+    phone.set_prefs("apple")
+    TURN.set({"user": "owner", "conversation": "c", "turn": 1, "user_said": "Play The Less I Know the Better by Tame Impala."})
+    box, t = _turn()
+    try:
+        phone.phone_music({"query": "The Less I Know The Better"})
+    finally:
+        phone.ACTION.reset(t)
+    assert seen == [("The Less I Know The Better", "song", "Tame Impala")]

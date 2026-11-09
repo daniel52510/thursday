@@ -194,6 +194,12 @@ def phone_music(args: Dict[str, Any]):
         if not artist and (m := re.match(r"^(.+?)\s+by\s+(.+)$", query, re.I)):
             query, artist = m[1], m[2]
             kind = kind if kind in ("song", "album") else "song"
+        if not artist:  # the model dropped "by Tame Impala" (2026-11-09): take it from his own sentence
+            from calendar_tool import TURN
+            said = (TURN.get() or {}).get("user_said") or ""
+            if (m := re.search(rf"{re.escape(query)}\s+by\s+(.+?)[.!?]*$", said, re.I)):
+                artist = m[1].strip()
+                kind = kind if kind in ("song", "album") else "song"
         if kind in _ENTITY:
             page = _apple_page(query, kind, artist)
         elif not artist and _sounds_like_artist(query):  # "play some Tame Impala", "music by Drake"
