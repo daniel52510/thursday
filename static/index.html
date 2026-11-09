@@ -1630,6 +1630,15 @@ async function loadBody() {
   }
   tile("Last night", fmtMin(lastSleep?.sleep_minutes), lastSleep
     ? `deep ${Math.round(lastSleep.sleep_deep || 0)} · REM ${Math.round(lastSleep.sleep_rem || 0)} · core ${Math.round(lastSleep.sleep_core || 0)} min` : "no sleep recorded");
+  // Weight: the latest weigh-in (Apple Health or typed), and the change since a week before it.
+  const weighed = rows.filter((r) => r.weight != null);
+  if (weighed.length) {
+    const last = weighed[weighed.length - 1], lastDay = new Date(`${last.date}T12:00`);
+    const before = [...weighed].reverse().find((r) => (lastDay - new Date(`${r.date}T12:00`)) / 864e5 >= 6);
+    const ago = Math.round((Date.now() - lastDay) / 864e5);
+    tile("Weight", `${(+last.weight).toFixed(1)} lb`, before ? `${(last.weight - before.weight >= 0 ? "+" : "")}${(last.weight - before.weight).toFixed(1)} lb in a week`
+      : ago === 0 ? "weighed today" : `weighed ${ago} day${ago > 1 ? "s" : ""} ago`);
+  } else tile("Weight", "–", "no weigh-ins yet");
   tile("Resting HR", ...vs("resting_heart_rate", "bpm"));
   tile("HRV", ...vs("hrv", "ms"));
   // Today until it has synced, else the latest day that has (and say which).
@@ -1642,6 +1651,8 @@ async function loadBody() {
   const label = (d) => new Date(`${d}T12:00`).toLocaleDateString([], { month: "short", day: "numeric" });
   miniChart(charts, rows, { key: "sleep_minutes", title: "Sleep", kind: "bar", axis: (v) => `${Math.round(v / 60)} h`, fmt: fmtMin,
     tip: (r) => [label(r.date), fmtMin(r.sleep_minutes), `deep ${Math.round(r.sleep_deep || 0)} · REM ${Math.round(r.sleep_rem || 0)} · core ${Math.round(r.sleep_core || 0)} · awake ${Math.round(r.sleep_awake || 0)} min`], label });
+  miniChart(charts, rows, { key: "weight", title: "Weight", kind: "line", axis: (v) => `${Math.round(v)}`, fmt: (v) => `${v.toFixed(1)} lb`,
+    tip: (r) => [label(r.date), `${(+r.weight).toFixed(1)} lb`], label });
   miniChart(charts, rows, { key: "hrv", title: "Heart rate variability (HRV)", kind: "line", axis: (v) => `${Math.round(v)}`, fmt: (v) => `${Math.round(v)} ms`,
     tip: (r) => [label(r.date), `${Math.round(r.hrv)} ms average`], label });
   miniChart(charts, rows, { key: "resting_heart_rate", title: "Resting heart rate", kind: "line", axis: (v) => `${Math.round(v)}`, fmt: (v) => `${Math.round(v)} bpm`,

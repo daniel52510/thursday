@@ -964,7 +964,13 @@ def health_data(user: dict = Depends(owner_only)):
 
 @app.get("/api/health/daily")
 def health_daily(days: int = 30, user: dict = Depends(owner_only)):
-    return health.daily(max(1, min(days, 365)))
+    rows = health.daily(max(1, min(days, 365)))
+    # Weigh-ins he typed or said (food.py) join the Watch's, in pounds, on the Body tab's weight tile and chart.
+    by_day = {r["date"]: r for r in rows}
+    for day, lb in food.weigh_ins(max(1, min(days, 365))):
+        if day in by_day:
+            by_day[day]["weight"] = round(lb, 1)
+    return rows
 
 
 @app.get("/api/health/readiness")
