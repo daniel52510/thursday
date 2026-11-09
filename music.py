@@ -114,9 +114,17 @@ _watch = {"last": 0.0, "thread": None}
 
 
 def _refresher() -> None:
+    # It sleeps until the next read the app allows. It used to call state(fresh=True) back to back, trusting it to
+    # wait; but state() hands back the cache while it's under STATE_EVERY_S old, so this spun flat out about 5 s of
+    # every 5.2 and held the GIL: the whole server crawled (the Health page took 20 s to load, 2026-11-08).
     while time.monotonic() - _watch["last"] < WATCH_S:
+        wait = STATE_EVERY_S - (time.monotonic() - _state["at"])
+        if wait > 0:
+            time.sleep(wait)
+            continue
         try:
-            state(fresh=True)  # sleeps out the rate limit itself
+            if state(fresh=True) is None:  # not paired: nothing to read, so don't ask again right away
+                time.sleep(STATE_EVERY_S)
         except Exception:
             time.sleep(STATE_EVERY_S)
     _watch["thread"] = None

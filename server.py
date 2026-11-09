@@ -69,6 +69,7 @@ async def lifespan(app: FastAPI):
     on_proactive = asyncio.create_task(proactive.run())  # he speaks first: calendar, workouts, health, evening
     on_email = asyncio.create_task(email_threads.run())  # email conversations: replies toward his goal
     on_asks = asyncio.create_task(asks.run())  # he asks first: emails that want an answer, promises not kept
+    diagnostics.start_watchdog()  # logs any stall of the event loop, with what was running
     yield
     on_greetings.cancel()
     on_reminders.cancel()

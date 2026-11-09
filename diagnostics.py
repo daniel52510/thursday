@@ -168,3 +168,53 @@ def snapshot() -> dict:
         "recent_turns": turns,
     }
 
+
+
+# ---------- event-loop watchdog ----------
+# Every request, the satellite's audio and the music relay share one asyncio loop. Something blocking it (a sync
+# call in an async function) stalls them all at once: the Health page sat blank for 20 s while the same query took
+# 0.04 s on its own (2026-11-08). The loop ticks a heartbeat; a thread watches it and, on a stall, logs how long and
+# what the loop was running, once per stall.
+STALL_S = 1.0
+_beat = {"at": 0.0}
+
+
+async def _heartbeat() -> None:
+    import asyncio
+    while True:
+        _beat["at"] = time.monotonic()
+        await asyncio.sleep(0.25)
+
+
+def start_watchdog() -> None:
+    """Call from inside the running loop (server startup)."""
+    import asyncio
+    import sys
+    import threading
+    import traceback
+    loop_thread = threading.get_ident()
+    asyncio.get_running_loop().create_task(_heartbeat())
+    stalls = logging.getLogger("thursday.voice.stall")  # under voice_ws's logger: its handler reaches docker logs
+
+    def watch() -> None:
+        while True:
+            time.sleep(0.25)
+            began = _beat["at"]
+            if not began or time.monotonic() - began <= STALL_S:
+                continue
+            # The loop itself, then every other thread busy in Python (a thread holding the GIL starves the loop
+            # just the same): the innermost frames of each.
+            names = {t.ident: t.name for t in threading.enumerate()}
+            parts = []
+            for ident, frame in sys._current_frames().items():
+                inner = traceback.extract_stack(frame)[-4:]
+                if ident != loop_thread and any(x.name in ("wait", "sleep", "select", "_worker", "get", "accept")
+                                                for x in inner[-1:]):
+                    continue  # parked
+                label = "LOOP" if ident == loop_thread else names.get(ident, str(ident))
+                parts.append(f"[{label}]\n" + "".join(traceback.format_list(inner)))
+            where = "".join(parts)
+            while _beat["at"] == began:  # still blocked: wait it out, then say how long
+                time.sleep(0.1)
+            stalls.warning("event loop blocked %.1f s; it was running:\n%s", _beat["at"] - began, where)
+    threading.Thread(target=watch, daemon=True, name="loop-watchdog").start()

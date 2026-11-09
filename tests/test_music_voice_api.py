@@ -70,3 +70,20 @@ def test_now_playing_is_his_volume_and_patched_at_once(monkeypatch):
     monkeypatch.setattr(music, "_duck", {"restore": None})
     n = music.now_playing()
     assert n["playing"] and n["volume"] == 55 and n["progress"] == 120 and n["repeat"] == 1
+
+
+def test_refresher_sleeps_between_reads_instead_of_spinning(monkeypatch):
+    """It held the GIL in a busy loop for ~5 s of every 5.2 (2026-11-08): count how often it checks the player."""
+    import threading
+    import time
+    import music
+    calls = []
+    monkeypatch.setattr(music, "STATE_EVERY_S", 0.2)
+    monkeypatch.setattr(music, "WATCH_S", 0.7)
+    monkeypatch.setattr(music, "state", lambda fresh=False: calls.append(1) or music._state.update(at=time.monotonic()) or {})
+    music._state["at"] = time.monotonic()
+    music._watch["last"] = time.monotonic()
+    t = threading.Thread(target=music._refresher)
+    t.start()
+    t.join(2)
+    assert 1 <= len(calls) <= 5
