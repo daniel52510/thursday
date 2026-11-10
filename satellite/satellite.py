@@ -1129,6 +1129,7 @@ class Satellite:
             kind = ev.get("type")
             if kind == "state":
                 self.player.duck_to = 1.0  # a new state: whatever comes next plays at full voice
+                self._again = bool(ev.get("again"))  # a laugh, no words: the conversation stays open
                 await self._on_state(ev["state"])
             elif kind == "duck":  # he's talking over the reply (voice_ws SOFT_BARGE): murmur, or back up
                 self.player.duck_to = max(0.0, min(1.0, float(ev.get("gain", 1.0))))
@@ -1201,6 +1202,9 @@ class Satellite:
             # speech, they're mid-sentence: no ping, and what they've said so far goes first.
             speech, self._barge_speech = self._barge_speech, False
             await self._start_listening(follow_up=speech, preroll=list(self._preroll) if speech else None)
+        elif state == "idle" and getattr(self, "_again", False) and FOLLOW_UP and not self.muted:
+            log.info("a sound but no words (a laugh?): still listening")
+            await self._start_listening(follow_up=True)
         elif state == "idle" and self.state == "speaking" and FOLLOW_UP and not self.muted:
             # The server's answer to our playback_ended: keep the conversation going.
             log.info("reply done; listening for a follow-up")

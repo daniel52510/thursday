@@ -126,3 +126,50 @@ from voice_ws import HOLD_END_FRAMES, QUICK_END_FRAMES, _end_frames_for
 ])
 def test_end_of_turn_waits(said, want):
     assert _end_frames_for(said) == want
+
+
+def test_voiced_ms():
+    from voice_ws import _voiced_ms
+    assert _voiced_ms(_speech(1.0, -25)) >= 900
+    assert _voiced_ms(b"\x00\x00" * 16000) == 0
+
+
+def test_question_gate_sees_whole_sentences():
+    from voice_ws import _QuestionGate
+    g = _QuestionGate()
+    out = "".join(g.feed(t) for t in ("It was a wild time. Does that make sense, ", "or did you want to dive into ",
+                                       "the actual mechanics of how they worked?")) + g.flush()
+    assert out == "It was a wild time. Does that make sense?" and g.changed
+
+
+@pytest.mark.parametrize("said,want", [
+    ("It was a wild time. Does that make sense?", "It was a wild time."),
+    ("Whittle patented it in 1930. Hope that helps!", "Whittle patented it in 1930."),
+    ("Done. Let me know if you need anything else.", "Done."),
+    ("Anything else?", "Anything else?"),
+    ("That's a great question. Short answer: 1939.", "Short answer: 1939."),
+    ("You want jacket, question? Does that make sense, question?", "You want jacket, question?"),
+])
+def test_no_help_desk_sign_offs(said, want):
+    from voice_ws import humanize
+    assert humanize(said) == want
+
+
+def test_opener_dropped_while_streaming():
+    from voice_ws import _QuestionGate
+    g = _QuestionGate()
+    out = "".join(g.feed(t) for t in ("That's a great ", "question. Short ", "answer: 1939. ", "Whittle first.")) + g.flush()
+    assert out == "Short answer: 1939. Whittle first."
+    g = _QuestionGate()
+    assert g.feed("That's a great question.") + g.flush() == "That's a great question." and not g.changed
+
+
+@pytest.mark.parametrize("said,want", [
+    ("That sounds ambitious. Are you thinking of a hobbyist build?", "Are you thinking of a hobbyist build?"),
+    ("That sounds like a massive engineering challenge. Where would you start?", "Where would you start?"),
+    ("That sounds rough. Want to talk about it?", "That sounds rough. Want to talk about it?"),
+    ("That sounds amazing!", "That sounds amazing!"),
+])
+def test_stock_praise_opener(said, want):
+    from voice_ws import humanize
+    assert humanize(said) == want

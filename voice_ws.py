@@ -172,6 +172,72 @@ def _unmenu(piece: str) -> str:
     return (m["head"] or "") + q["ask"].rstrip(" ,") + (", question" if tag else "") + "?"
 
 
+# Help-desk sign-offs no one says across a table (2026-11-10: "Does that make sense, or did you want to...?").
+# Dropped when there's something before them; a reply that is only "Anything else?" stays.
+_HELPDESK = re.compile(r"(?:does (?:that|this|it) (?:make sense|help|answer your question)|(?:i )?hope (?:that|this) helps|"
+                       r"let me know if [^.!?]*|feel free to [^.!?]*|is there anything else[^.!?]*|anything else i can [^.!?]*)"
+                       r"(?:, question)?[.!?]*", re.I)
+# ...and the help-desk opener, dropped when the reply goes on past it.
+# Also stock praise ("That sounds ambitious.", "That sounds like a massive engineering challenge.": every test
+# reply opened so, 2026-11-10), but never empathy ("That sounds rough." stays).
+_OPENER = re.compile(r"(?:(?:that's|that is|what) a (?:great|good|fantastic|excellent|interesting) question|"
+                     r"(?:that|this|it) sounds (?:so |really |super |incredibly )?(?:ambitious|massive|incredible|amazing|"
+                     r"huge|awesome|exciting|epic|fascinating|like (?:a|an) (?:\w+ ){0,2}(?:project|challenge|undertaking|"
+                     r"idea|plan|goal|build|endeavor)))[.!]*", re.I)
+
+
+def humanize(text: str) -> str:
+    """The same cleanup the voice applies sentence by sentence (_QuestionGate), for the saved reply."""
+    g = _QuestionGate()
+    return (g.feed(text) + g.flush()).strip()
+
+
+class _QuestionGate:
+    """Passes the reply on a sentence at a time, so a question reaches _unmenu whole: the speaker splits a long
+    sentence at its commas, and "Does that make sense, / or did you want to dive into...?" slipped through in two
+    pieces. A sentence is held only until its end arrives, which the first audio piece waits for anyway."""
+
+    def __init__(self) -> None:
+        self.held, self.changed, self.said, self.opener = "", False, False, ""
+
+    def feed(self, text: str) -> str:
+        self.held += text
+        ends = [m.end() for m in _BUDGET_END.finditer(self.held) if m.end() < len(self.held)]
+        if not ends:
+            return ""
+        out, self.held = self.held[:ends[-1]], self.held[ends[-1]:]
+        return self._pass(out)
+
+    def flush(self) -> str:
+        out, self.held = self.held, ""
+        out = self._pass(out)
+        if self.opener and not self.said:  # the opener was the whole reply: say it after all
+            out, self.changed = self.opener + out, False  # nothing else was said, so nothing else changed
+        return out
+
+    def _pass(self, text: str) -> str:
+        parts = re.split(r"(?<=[.!?…])(\s+)", text)
+        out = []
+        for p in parts:
+            if not self.said and not self.opener and _OPENER.fullmatch(p.strip()):
+                self.opener, self.changed = p, True  # held: dropped once something follows
+                continue
+            if self.opener and not self.said:
+                p = p.lstrip()  # the space after the held opener
+                if not p:
+                    continue
+            if _HELPDESK.fullmatch(p.strip()) and self.said:
+                if out and not out[-1].strip():
+                    out.pop()  # the space before it goes too
+                continue
+            p = _unmenu(p) if p.rstrip().endswith("?") else p
+            self.said = self.said or bool(p.strip())
+            out.append(p)
+        fixed = "".join(out)
+        self.changed = self.changed or fixed != text
+        return fixed
+
+
 def _drop_invented(piece: str) -> str:
     kept = [s for s in re.split(r"(?<=[.!?])\s+", piece) if not _INVENTED.search(s)]
     if len(kept) != len(re.split(r"(?<=[.!?])\s+", piece)):
@@ -299,6 +365,16 @@ def delivery(pcm: bytes, text: str, baseline_db: float | None) -> tuple[str | No
         elif d >= 5 and wps >= 2.8:
             notes.append("He said it fast and loud; he sounds fired up. Match his energy.")
     return (" ".join(notes) or None), level
+
+
+def _voiced_ms(pcm: bytes) -> int:
+    """How much of a clip is clearly sound (32 ms frames above -45 dBFS)."""
+    x = np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype=np.int16).astype(np.float32) / 32768
+    n = len(x) // (SAMPLE_RATE * FRAME_MS // 1000)
+    if n == 0:
+        return 0
+    frames = x[: n * (len(x) // n)].reshape(n, -1)
+    return int(np.sum(10 * np.log10(np.mean(frames * frames, axis=1) + 1e-12) > -45)) * FRAME_MS
 
 
 def _is_closer(text: str) -> bool:
@@ -899,8 +975,8 @@ class Session:
         self._bc_sent = False  # a backchannel this utterance (BACKCHANNEL)
         self._bc_window: tuple[int, str] | None = None  # a mid-thought pause the smart endpoint is holding open
         self._soft: dict | None = None  # talking over a reply, not yet judged (SOFT_BARGE)
-        self._unmenued = False  # this turn's question lost its "or ..." menu (_unmenu)
         self._premade: str | None = None  # a conversation made ahead for a warm first turn (_warm)
+        self._nonverbal = False  # the last turn was a sound with no words (a laugh): the next one closes it
         self._level_base: float | None = None  # his speaking level this session (delivery), dBFS
         self._level_turns = 0
         self._bc_at = 0.0
@@ -961,7 +1037,7 @@ class Session:
             except Exception:  # the satellite left: its session goes, and this task with it
                 return
 
-    async def set_state(self, state: str) -> None:
+    async def set_state(self, state: str, again: bool = False) -> None:
         was, self.state = self.state, state
         if self._soft is not None and state != "speaking":
             self._soft = None  # the reply ended (or was cut) while he talked over it: full volume for what's next
@@ -981,7 +1057,7 @@ class Session:
             self._music_task = asyncio.create_task(asyncio.to_thread(music.unduck))
         if state == "idle":
             self.idle_since = time.monotonic()
-        await self.ws.send_json({"type": "state", "state": state})
+        await self.ws.send_json({"type": "state", "state": state, **({"again": True} if again else {})})
 
     async def on_control(self, msg: dict) -> None:
         kind = msg.get("type")
@@ -1332,9 +1408,17 @@ class Session:
                     return
                 # A mumble or a false wake isn't a failure: end the turn quietly (the satellite's close
                 # sound), not "something breaks on my side" (it did, until 2026-11-06).
+                # Clear sound but no words is usually him laughing at what THURSDAY said (Parakeet writes nothing
+                # for a laugh): a person keeps the conversation open. Once in a row, so a TV can't hold it open.
+                if _voiced_ms(pcm) >= 400 and not self._nonverbal:
+                    self._nonverbal = True
+                    logger.info("a sound but no words (a laugh?): still listening")
+                    await self.set_state("idle", again=True)
+                    return
                 logger.info("no speech recognized; back to idle")
                 await self.set_state("idle")
                 return
+            self._nonverbal = False
             self.heard_at = time.monotonic()
             self._log_partials_vs(text)
             self._log_evals(text, len(pcm) // 32)
@@ -1415,7 +1499,7 @@ class Session:
             self._turn_tools = False
             telephony.FROM_SATELLITE.set(self.role == "satellite")  # where a call's report gets spoken
             budget = reply_budget(text, mode) if chunker else None
-            self._unmenued = False
+            gate = _QuestionGate()
             spoken, cut = "", False
             replies = stream_prompt(text, mode=mode, conversation_id=self._conversation_id,
                                     context=self._context if context is None else context, user=self.user,
@@ -1445,7 +1529,7 @@ class Session:
                             before, spoken = len(spoken), spoken + piece
                             if (end := budget_end(spoken, budget)) is not None:
                                 piece, spoken, cut = spoken[before:end], spoken[:end], True
-                        if chunker and piece:
+                        if chunker and piece and (piece := gate.feed(piece)):
                             chunker.feed(piece)
                         if cut:
                             break  # said enough: hand the turn back (the LLM stops below)
@@ -1474,10 +1558,12 @@ class Session:
                 timing["llm_ms"] = _ms(started)
                 await self.ws.send_json({"type": "reply", "text": speak_text})
                 if speaker:
+                    if rest := gate.flush():
+                        chunker.feed(rest)
                     chunker.close()
                     sent = await speaker
-                    if self._unmenued and speak_text and not cut:  # history holds the question as it was asked
-                        record_spoken(self._conversation_id, _unmenu(speak_text.strip()), self.user["id"])
+                    if gate.changed and speak_text and not cut:  # history holds what was said
+                        record_spoken(self._conversation_id, humanize(speak_text), self.user["id"])
                     if sent == 0:
                         await self.set_state("idle")
                         self._timing = timing
@@ -1619,8 +1705,6 @@ class Session:
                 max_chars = STREAM_PIECE_CHARS
             while (piece := await chunker.next_piece(max_chars)) is not None:
                 started = time.monotonic()
-                if piece != (one := _unmenu(piece)):
-                    self._unmenued, piece = True, one
                 if not self._turn_tools and not (piece := _drop_invented(piece)):
                     continue
                 if await _tts_streams(self.http):
