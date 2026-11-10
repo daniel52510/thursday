@@ -1863,6 +1863,7 @@ class Session:
             # ~2k tokens (2.2-2.6 s to his voice instead of ~1 s, 2026-11-10). Make the conversation now, so the
             # warm-up caches exactly the prompt his first words will extend.
             db = initalize_db()
+            db.purge_premades(self.user["id"])
             self._conversation_id = self._premade = db.create_conversation(db.PREMADE_TITLE, self.user["id"])["id"]
         self._warming = asyncio.create_task(warm_cache(self.user, self._context, self._conversation_id))
 

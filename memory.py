@@ -1,7 +1,7 @@
 import sqlite3
 import uuid
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from typing import Any, Optional, Dict, List, Tuple
 
@@ -326,6 +326,15 @@ class MemoryDB:
             cur = conn.execute("UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?",
                                (title, conversation_id, user_id))
         return cur.rowcount > 0
+
+    def purge_premades(self, user_id: str, older_than_h: float = 6) -> int:
+        """Pre-made voice conversations nobody spoke in, left by sessions that ended without closing (a restart)."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=older_than_h)).isoformat()
+        with self._connect() as conn:
+            return conn.execute(
+                "DELETE FROM conversations WHERE user_id = ? AND title = ? AND created_at < ? AND NOT EXISTS "
+                "(SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id)",
+                (user_id, self.PREMADE_TITLE, cutoff)).rowcount
 
     def drop_premade(self, conversation_id: str, user_id: str) -> bool:
         """A pre-made voice conversation nobody spoke in: gone."""
