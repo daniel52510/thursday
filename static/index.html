@@ -3359,7 +3359,17 @@ function onVoiceEvent(ev) {
     if (ev.state === "idle" && V.replyText && !Cap.segs.length) resetCaption(V.replyText);
     setVoiceState(ev.state);
   }
-  else if (ev.type === "audio_end") { V.audioEnd = true; V.chain = V.chain.then(() => V.outNode?.port.postMessage({ cmd: "end" })); }
+  else if (ev.type === "audio_end") {
+    V.audioEnd = true;
+    V.chain = V.chain.then(() => {
+      if (Rs.buf && V.state === "speaking" && !V.interrupting) {  // the resampler's last 0.7 ms
+        const tail = resample(new Float32Array(0), Rs.rate, true);
+        if (tail.length) { V.nextAt += tail.length / V.ctx.sampleRate; V.outNode?.port.postMessage({ pcm: tail }, [tail.buffer]); }
+      }
+      rsReset();
+      V.outNode?.port.postMessage({ cmd: "end" });
+    });
+  }
   else if (ev.type === "barge_in") {
     // The user talked over her: silence her on this tick and show that we're listening.
     stopReplyAudio(); stopThinking(); freezeCaption(false);
@@ -3371,7 +3381,7 @@ function onVoiceEvent(ev) {
     resetCaption(); V.replyText = "";
     vHeard.innerHTML = "<span>You said</span> ";
     vHeard.append(ev.text);
-    V.turns++; showTurn();
+    V.turns++; showTurn(); voiceCrumb();
     addUser(ev.text, true); voiceView = addAssistant();
   }
   else if (ev.type === "tool") {
@@ -3456,21 +3466,81 @@ function freezeCaption(all) {
   if (all) vCaption.querySelectorAll(".w").forEach((w) => w.classList.add("on"));
 }
 
-// decodeAudioData is async and can finish out of order, so chunks go through
-// one promise chain: each is scheduled only after the previous one.
+// Chunks go through one promise chain: each is scheduled only after the previous one.
 function playReply(data) {
   V.chain = V.chain.then(() => scheduleChunk(data)).catch(() => {});
 }
 
+// The server's audio is plain 16-bit mono WAV, so the page reads the samples itself and resamples them to the
+// device rate (24 kHz → 48 kHz) here, instead of Safari's decodeAudioData: ~140 decodes a reply was the heaviest
+// native work in voice mode, and Safari kept killing and reloading the page mid-reply (2026-11-10). The resampler
+// carries its edge from piece to piece, so the pieces join seamlessly; it holds back 16 samples (0.7 ms).
+function wavSamples(ab) {
+  const dv = new DataView(ab);
+  if (dv.byteLength < 44 || dv.getUint32(0) !== 0x52494646) return null;  // "RIFF"
+  let off = 12, rate = 0, bits = 0, ch = 0;
+  while (off + 8 <= dv.byteLength) {
+    const id = dv.getUint32(off), len = dv.getUint32(off + 4, true);
+    if (id === 0x666d7420) { ch = dv.getUint16(off + 10, true); rate = dv.getUint32(off + 12, true); bits = dv.getUint16(off + 22, true); }  // "fmt "
+    else if (id === 0x64617461) {  // "data"
+      if (bits !== 16 || ch !== 1 || !rate) return null;
+      const n = Math.min(len, dv.byteLength - off - 8) >> 1, out = new Float32Array(n);
+      for (let i = 0; i < n; i++) out[i] = dv.getInt16(off + 8 + 2 * i, true) / 32768;
+      return { rate, samples: out };
+    }
+    off += 8 + len + (len & 1);
+  }
+  return null;
+}
+
+const RS_HALF = 16, RS_PHASES = 256;  // a 32-tap Blackman-windowed sinc, its fractional offsets tabled
+const Rs = { rate: 0, step: 1, buf: null, pos: 0, table: null };
+function rsReset() { Rs.rate = 0; Rs.buf = null; }
+function rsTable(fc) {
+  const t = new Float32Array((RS_PHASES + 1) * 2 * RS_HALF);
+  for (let p = 0; p <= RS_PHASES; p++) for (let k = 0; k < 2 * RS_HALF; k++) {
+    const x = k - RS_HALF + 1 - p / RS_PHASES, w = 0.42 + 0.5 * Math.cos(Math.PI * x / RS_HALF) + 0.08 * Math.cos(2 * Math.PI * x / RS_HALF);
+    t[p * 2 * RS_HALF + k] = (x === 0 ? fc : Math.sin(Math.PI * fc * x) / (Math.PI * x)) * (Math.abs(x) < RS_HALF ? w : 0);
+  }
+  return t;
+}
+function resample(samples, rate, final) {
+  const outRate = V.ctx.sampleRate;
+  if (rate === outRate && !Rs.buf) return samples;
+  if (Rs.rate !== rate) {
+    Rs.rate = rate; Rs.step = rate / outRate; Rs.pos = RS_HALF - 1; Rs.buf = new Float32Array(RS_HALF - 1);  // silence before
+    Rs.table = rsTable(Math.min(1, 1 / Rs.step));
+  }
+  let buf = new Float32Array(Rs.buf.length + samples.length + (final ? RS_HALF : 0));
+  buf.set(Rs.buf); buf.set(samples, Rs.buf.length);
+  const limit = buf.length - RS_HALF, out = new Float32Array(Math.max(0, Math.ceil((limit - Rs.pos) / Rs.step)));
+  let n = 0, pos = Rs.pos;
+  const T = Rs.table, W = 2 * RS_HALF;
+  while (pos < limit) {
+    const i = Math.floor(pos), row = Math.round((pos - i) * RS_PHASES) * W, base = i - RS_HALF + 1;
+    let y = 0;
+    for (let k = 0; k < W; k++) y += buf[base + k] * T[row + k];
+    out[n++] = y; pos += Rs.step;
+  }
+  const drop = Math.floor(pos) - RS_HALF + 1;
+  Rs.buf = buf.slice(drop); Rs.pos = pos - drop;
+  if (final) rsReset();
+  return n === out.length ? out : out.subarray(0, n);
+}
+
 async function scheduleChunk(data) {
   if (V.interrupting || V.state !== "speaking") return;  // audio from a cancelled turn
-  const buffer = await V.ctx.decodeAudioData(data);
-  if (V.interrupting || !V.open || V.state !== "speaking") return;  // cut off while decoding
-  const pcm = new Float32Array(buffer.getChannelData(0));
+  const wav = wavSamples(data);
+  let pcm;
+  if (wav) pcm = resample(wav.samples, wav.rate, false);
+  else pcm = new Float32Array((await V.ctx.decodeAudioData(data)).getChannelData(0));  // not plain PCM: the browser decodes
+  if (V.interrupting || !V.open || V.state !== "speaking") return;  // cut off meanwhile
+  if (!pcm.length) return;
+  const duration = pcm.length / V.ctx.sampleRate;
   const at = Math.max(V.ctx.currentTime, V.nextAt);
-  V.nextAt = at + buffer.duration;
+  V.nextAt = at + duration;
   V.outNode.port.postMessage({ pcm }, [pcm.buffer]);
-  captionAudio(at, buffer.duration);
+  captionAudio(at, duration);
   if (!V.started) {
     V.started = true;
     stopThinking();  // stop the cue on the same tick the reply starts: no overlap
@@ -3489,6 +3559,7 @@ function maybePlaybackEnded(stats) {
 }
 
 function stopReplyAudio() {
+  rsReset();
   V.outNode?.port.postMessage({ cmd: "stop" });
   V.srcs = []; V.nextAt = 0; V.started = false; V.audioEnd = false;
 }
@@ -3682,8 +3753,36 @@ async function keepAwake() {
 }
 document.addEventListener("visibilitychange", () => { if (V.open && document.visibilityState === "visible") keepAwake(); });
 
+// If the browser kills the page during voice mode (it reloads by itself), the next load finds this breadcrumb
+// and logs "voice client step: step=page-restarted ..." with how long voice mode had run, the turn and state.
+const VOICE_CRUMB = "thursday-voice-crumb";
+function voiceCrumb() {
+  try {
+    if (!V.open) return localStorage.removeItem(VOICE_CRUMB);
+    const c = JSON.parse(localStorage.getItem(VOICE_CRUMB) || "null");
+    localStorage.setItem(VOICE_CRUMB, JSON.stringify({ since: c?.since || Date.now(), at: Date.now(), turns: V.turns, state: V.state,
+      heard_s: V.ctx ? Math.round(V.ctx.currentTime) : 0 }));
+  } catch {}
+}
+setInterval(() => V.open && voiceCrumb(), 3000);
+try {
+  const c = JSON.parse(localStorage.getItem(VOICE_CRUMB) || "null");
+  localStorage.removeItem(VOICE_CRUMB);
+  if (c && Date.now() - c.at < 10 * 60e3)
+    setTimeout(() => vdiag("page-restarted", { open_s: Math.round((c.at - c.since) / 1000), gone_s: Math.round((Date.now() - c.at) / 1000),
+      turns: c.turns, state: c.state, audio_s: c.heard_s, browser: browserLabel() }), 3000);
+} catch {}
+function browserLabel() {
+  const u = navigator.userAgent, dev = /iPhone/.test(u) ? "iPhone" : /iPad/.test(u) ? "iPad" : /Macintosh/.test(u) ? "Mac" : /Android/.test(u) ? "Android" : "other";
+  const app = /CriOS|Chrome\//.test(u) ? "Chrome" : /FxiOS|Firefox/.test(u) ? "Firefox" : /EdgiOS|Edg\//.test(u) ? "Edge" : /Safari/.test(u) ? "Safari" : "webview";
+  return `${dev}-${app}-${(u.match(/(?:OS |Version\/)([\d_.]+)/) || [, "?"])[1].replace(/_/g, ".")}`;
+}
+// A reload or close he does himself fires pagehide; a page the browser kills doesn't. Only the second is reported.
+addEventListener("pagehide", () => { try { localStorage.removeItem(VOICE_CRUMB); } catch {} });
+
 function closeVoice() {
   V.open = false;
+  voiceCrumb();
   $("voice").classList.remove("open"); $("voice").setAttribute("aria-hidden", "true");
   stopThinking();
   stopReplyAudio();
