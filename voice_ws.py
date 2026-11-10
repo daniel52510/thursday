@@ -53,6 +53,7 @@ import mind
 import missions
 import music
 import rocky_voice
+import speech_text
 import speaker
 import telephony
 from agent_stream import VOICE_TAG, initalize_db, record_cut_off, record_spoken, strip_voice_tags, stream_prompt, warm_cache
@@ -796,7 +797,7 @@ def _speakable(text: str) -> str:
     # <laugh>/<sigh> tags are for Orpheus; any other voice would read the word out.
     if _tts_caps["engine"] != "orpheus" and VOICE_TAG.search(text):
         text = strip_voice_tags(text)
-    return _TIME.sub(_say_time, text)
+    return speech_text.say(_TIME.sub(_say_time, text))  # units, money, dates said the way a person would
 
 
 def _tts_body(text: str, style: dict | None) -> dict:
