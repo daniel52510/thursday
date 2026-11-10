@@ -33,3 +33,24 @@ def test_streamed_token_by_token(text, statements, want):
 def test_code_blocks_untouched():
     text = "Here.\n```\nx = 1  # is it?\n```\nDone!"
     assert "x = 1  # is it?" in eridian.translate(text)
+
+
+@pytest.mark.parametrize("mode,want", [("chat", "Do you want a jacket? It's cold."),
+                                       ("voice", "You want jacket, question? It is cold.")])
+def test_typed_chat_is_plain_english_spoken_is_rocky(monkeypatch, mode, want):
+    """2026-11-10: Rocky's grammar is for what's spoken; typed chat reads as normal English."""
+    import asyncio
+    import agent_stream
+
+    async def fake(*args, **kwargs):
+        for piece in ("Do you want a jacket? ", "It's cold."):
+            yield {"type": "delta", "text": piece}
+        yield {"type": "done", "reply": "Do you want a jacket? It's cold."}
+
+    monkeypatch.setattr(agent_stream, "_stream_prompt", fake)
+    monkeypatch.setattr(agent_stream, "_is_tara", lambda user: False)
+
+    async def run():
+        return "".join([ev["text"] async for ev in agent_stream._stream_with_grammar(
+            "hi", mode=mode, user={"id": "owner"}) if ev["type"] == "delta"])
+    assert asyncio.run(run()).strip() == want

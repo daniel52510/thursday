@@ -346,7 +346,10 @@ def _system_prompt(user: dict) -> str:
     return system
 
 STYLE = {
-    "chat": "This reply is shown in a chat window. Use Markdown (lists, tables, code blocks) when it helps readability.",
+    "chat": "This reply is shown in a chat window. Use Markdown (lists, tables, code blocks) when it helps readability. "
+    "Here you write in normal, fluent English: full grammar, contractions and articles, plain question marks. The "
+    "Eridian speech rules (\", question?\", \", exclamation!\", dropped articles, present tense) are for your spoken "
+    "voice only, not for text. You're still you: same personality, warmth and directness.",
     "voice": "Body language: you have a head that moves. Where it would happen naturally you may add one tag: <nod> "
     "(agreeing), <shake> (no), <shrug> (unsure), <celebrate> (good news), <think> (pondering), <look> (attention to "
     "him). At most one per reply, most replies none, never mention it. "
@@ -882,7 +885,7 @@ _MISSION_START = re.compile(
 _MISSION_GOAL_TRIM = re.compile(r"^(?:(?:uh+|um+|er+|like|well|so|on|to|for|about|into|that|how)\W+)+", re.I)
 _MISSION_META = re.compile(r"^\W*(?:question|please|now|right\s+now|for\s+me|today|tonight)?\W*$", re.I)
 _ASKED_MISSION_GOAL = re.compile(
-    r"\bmission\b.*\b(?:tell\s+me\s+(?:the\s+)?goal|what\s+is\s+(?:the\s+)?goal|i\s+am\s+ready|"
+    r"\bmission\b.*\b(?:tell\s+me\s+(?:the\s+)?goal|what(?:\s+is|'s)\s+(?:the\s+)?goal|i\s+am\s+ready|i'm\s+ready|"
     r"what\s+you\s+want\s+me\s+to\s+(?:research|find|look\s+into)|give\s+me\s+(?:the\s+)?goal)",
     re.I | re.S,
 )
@@ -941,7 +944,8 @@ def _mission_intent(text: str, history: list[dict] = ()) -> tuple[str, dict] | N
 # silence. Such a reply is held; if it claims an action with no tool, it's retried once with the offer named.
 _OFFER = re.compile(r"\b(?:I\s+(?:play|put|add|set|start|turn|keep|check|remind|send|book|make|find|search|look|open|save|"
                     r"research|compare|review|fix|improve)|"
-                    r"(?:you\s+)?want\s+(?:me\s+to|music|it|that)|shall\s+I|should\s+I|i\s+can\s+(?:start|use|look|check))\b", re.I)
+                    r"(?:you\s+)?want\s+(?:me\s+to|music|it|that)|would\s+you\s+like\s+(?:me\s+to|it|that)|shall\s+I|should\s+I|"
+                    r"i\s+(?:can|could)\s+(?:start|use|look|check|add|set|send|find|search|play|pull|dig|put|draft|make))\b", re.I)
 _CLAIMED = re.compile(r",\s*(?:playing|added|saved|set|done|booked|off|on|paused|stopped|started|sent)\s*[.!]|"
                       r"\b(?:i\s+(?:added|set|saved|booked|started|played|paused|sent|turned)|now\s+playing|playing\s+now|"
                       r"is\s+playing|"
@@ -1307,6 +1311,9 @@ async def _stream_with_grammar(*args, **kwargs) -> AsyncIterator[dict]:
     """_stream_prompt in Rocky's grammar (eridian.py): what's spoken, shown and saved all match."""
     rocky = eridian.Stream()
     tara: bool | None = None  # decided at the first words: a "switch to Tara" this turn already counts
+    # Typed chat reads as plain English (2026-11-10, his call): Rocky's grammar is for what's spoken (voice, phone,
+    # alarms, briefings); his personality stays in both.
+    written = kwargs.get("mode", args[1] if len(args) > 1 else "chat") == "chat"
     if kwargs.get("no_wake"):  # hold the start of the reply: "<skip>" is never spoken or shown
         held, skipping = "", False
         inner = _stream_prompt(*args, **kwargs)
@@ -1342,7 +1349,7 @@ async def _stream_with_grammar(*args, **kwargs) -> AsyncIterator[dict]:
             rocky.statements = True  # a confirmation now, not a question: see eridian.questions
         if ev["type"] == "delta" and tara is None:
             tara = _is_tara(kwargs["user"])
-        if tara:  # Tara speaks plain English: no translator
+        if tara or written:  # Tara speaks plain English, and typed chat is plain English: no translator
             yield ev
             continue
         if ev["type"] == "delta":

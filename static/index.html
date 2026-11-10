@@ -344,7 +344,8 @@
   .msg:hover .actions, .actions:focus-within { opacity: 1; }
   .actions .icon-btn { width: 30px; height: 30px; }
   .actions .icon-btn svg { width: 16px; height: 16px; }
-  .actions .meta { margin-left: 6px; }
+  .actions .meta { margin-left: 8px; font: 400 12px/1 var(--sans); letter-spacing: 0; text-transform: none; color: var(--text-faint);
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
   .msg.user .actions { justify-content: flex-end; }
   .actions .icon-btn.on { color: var(--text); background: var(--deep); }
   .msg.assistant:not(:last-child) .regen { display: none; }  /* regenerate: the latest reply only */
@@ -2855,7 +2856,7 @@ async function send(text, atts) {
         else if (ev.type === "error") { view.finish(); view.error(ev.message); done = true; }
         else if (ev.type === "done") {
           const t = ev.timing || {};
-          const meta = t.ttft_ms != null ? `first token ${fmtMs(t.ttft_ms)} · ${fmtMs(t.total_ms)}` : "";
+          const meta = t.ttft_ms != null ? `First word ${fmtMs(t.ttft_ms)} · done in ${fmtMs(t.total_ms)}` : "";
           view.finish(meta);
           showLatency(meta && `Last reply: ${meta}`);
           done = true;
