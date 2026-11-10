@@ -1443,14 +1443,21 @@ async def warm_cache(user: dict, context: dict | None = None, conversation_id: s
     started = time.monotonic()
     db = initalize_db()
     conv = db.get_conversation(conversation_id, user["id"]) if conversation_id else None
-    messages, _ = _build_messages(db, user, "", "voice", conv["id"] if conv else None, client_context(context))
-    payload = {"model": MODEL, "messages": messages[:-1], "tools": TOOLS, "stream": False, "think": False,
-               "options": {**OLLAMA_OPTIONS, "num_predict": 1}, "keep_alive": OLLAMA_KEEP_ALIVE}
+    messages, history = _build_messages(db, user, "", "voice", conv["id"] if conv else None, client_context(context))
+    # Ollama's MLX cache can resume a prompt only where two earlier prompts branched (measured 2026-11-10): a new
+    # conversation's first turn re-read its whole memory note (~1.2 s) after a single warm-up. Two warm-ups that
+    # branch right after the note ("." and "..") leave a resume point there: the first turn then took 60 ms.
+    # Later warm-ups end on the last reply, as always; the real turns already left their resume points.
+    rounds = ([messages[:-1] + [{"role": "user", "content": "."}], messages[:-1] + [{"role": "user", "content": ".."}]]
+              if conv and not history else [messages[:-1]])
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(OLLAMA_TIMEOUT, connect=5)) as client:
-            resp = await client.post(CHAT_URL, json=payload)
-            resp.raise_for_status()
-            body = resp.json()
+            for msgs in rounds:
+                resp = await client.post(CHAT_URL, json={
+                    "model": MODEL, "messages": msgs, "tools": TOOLS, "stream": False, "think": False,
+                    "options": {**OLLAMA_OPTIONS, "num_predict": 1}, "keep_alive": OLLAMA_KEEP_ALIVE})
+                resp.raise_for_status()
+                body = resp.json()
     except (httpx.HTTPError, ValueError) as exc:
         print(f"[agent] cache warm-up failed: {type(exc).__name__}")
         return
@@ -1485,6 +1492,9 @@ async def _stream_prompt(
     new = conv is None
     if new:
         conv = db.create_conversation(_title_for(user_prompt), user["id"])
+    elif conv["title"] == db.PREMADE_TITLE:  # made when voice mode opened (its prompt is warm): this is its start
+        new, conv = True, {**conv, "title": _title_for(user_prompt)}
+        db.rename_conversation(conv["id"], conv["title"], user["id"])
     cid = conv["id"]
     yield {"type": "conversation", "id": cid, "title": conv["title"], **({"new": True} if new else {})}
     if accounts.shared().over_limit(user):

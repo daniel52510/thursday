@@ -380,6 +380,10 @@ class Player:
         self.ducking = lambda: False  # set by the satellite: is anyone talking to him?
         self.voice_gain = 1.0         # his voice volume for the cues and clips (server "voice"); replies have it already
         self.alarm_until = 0.0        # an alarm is speaking: its speech already has the alarm level, no night gain
+        # He's talking over the reply: down to a murmur while the server decides if it's "mm-hm" or a real
+        # interruption (voice_ws SOFT_BARGE), ramped per sample so there's no click.
+        self.duck_to = 1.0
+        self._dgain = 1.0
         self._ref_base: int | None = None  # mic sample index where this aplay's sample 0 plays
         self.gain = 1.0  # for the current reply stream
         self.rate = self.RATE  # of the current reply stream
@@ -435,6 +439,8 @@ class Player:
                 self._count_underrun(real)
             if real:
                 block = self._soften(block, runs_dry)
+                if self._dgain != 1.0 or self.duck_to != 1.0:
+                    block = self._duck(block)
             else:
                 self._dry = True
             block = block.ljust(self.BLOCK * 2, b"\0")
@@ -460,6 +466,13 @@ class Player:
                 self._audible_until = at + self.BLOCK / self.RATE + 0.04
             if heard and self.ref and self._ref_base is not None:
                 self.ref.add_at(block, self.RATE, self._ref_base + first * SAMPLE_RATE // self.RATE)
+
+    def _duck(self, block: bytes) -> bytes:
+        x = np.frombuffer(block, dtype=np.int16).astype(np.float32)
+        end = self._dgain + max(-0.35, min(0.35, self.duck_to - self._dgain))  # ~60 ms from full to a murmur
+        x *= np.linspace(self._dgain, end, len(x), dtype=np.float32)
+        self._dgain = end
+        return x.clip(-32768, 32767).astype(np.int16).tobytes()
 
     def music(self, pcm: bytes) -> None:
         """A frame of music (24 kHz mono int16) from the server."""
@@ -592,6 +605,7 @@ class Player:
             self._pending.clear()
             self._loop = None
         self.streaming = False
+        self.duck_to = self._dgain = 1.0
         if time.monotonic() < self._audible_until and self._proc and self._proc.poll() is None:
             if self.ref:
                 self.ref.cut(time.monotonic())
@@ -1114,7 +1128,10 @@ class Satellite:
             ev = json.loads(msg)
             kind = ev.get("type")
             if kind == "state":
+                self.player.duck_to = 1.0  # a new state: whatever comes next plays at full voice
                 await self._on_state(ev["state"])
+            elif kind == "duck":  # he's talking over the reply (voice_ws SOFT_BARGE): murmur, or back up
+                self.player.duck_to = max(0.0, min(1.0, float(ev.get("gain", 1.0))))
             elif kind == "night":  # night mode on or off (night.py)
                 SERVER_NIGHT["on"] = bool(ev.get("on"))
                 log.info("night mode %s", "on" if SERVER_NIGHT["on"] else "off")

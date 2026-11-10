@@ -212,6 +212,9 @@ class MemoryDB:
                 conn.execute("ALTER TABLE missions ADD COLUMN parent_id TEXT")
 
     LEGACY_CONVERSATION = "legacy"
+    # Made when voice mode opens, before he says anything (voice_ws._warm), so the first turn's prompt is already in
+    # Ollama's cache; it takes its real title from his first words. Hidden while empty.
+    PREMADE_TITLE = "\u2063voice"
 
     def _migrate_users(self, conn: sqlite3.Connection) -> None:
         # Accounts: everything from before them belongs to the admin ("owner"). Facts get
@@ -291,8 +294,9 @@ class MemoryDB:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, title, created_at, updated_at, pinned FROM conversations WHERE user_id = ? "
+                "AND NOT (title = ? AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id)) "
                 "ORDER BY pinned DESC, updated_at DESC LIMIT ?",
-                (user_id, limit),
+                (user_id, self.PREMADE_TITLE, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -322,6 +326,16 @@ class MemoryDB:
             cur = conn.execute("UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?",
                                (title, conversation_id, user_id))
         return cur.rowcount > 0
+
+    def drop_premade(self, conversation_id: str, user_id: str) -> bool:
+        """A pre-made voice conversation nobody spoke in: gone."""
+        conv = self.get_conversation(conversation_id, user_id)
+        if not conv or conv["title"] != self.PREMADE_TITLE:
+            return False
+        with self._connect() as conn:
+            if conn.execute("SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1", (conversation_id,)).fetchone():
+                return False
+        return self.delete_conversation(conversation_id, user_id)
 
     def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
         # Facts stay; this conversation's messages and her memory of it go.

@@ -55,7 +55,7 @@ import music
 import rocky_voice
 import speaker
 import telephony
-from agent_stream import VOICE_TAG, record_cut_off, record_spoken, strip_voice_tags, stream_prompt, warm_cache
+from agent_stream import VOICE_TAG, initalize_db, record_cut_off, record_spoken, strip_voice_tags, stream_prompt, warm_cache
 from vad import FRAME_BYTES, FRAME_MS, SAMPLE_RATE, BargeIn, Endpointer, VADConfig
 
 STT_BASE_URL = os.getenv("STT_BASE_URL", "http://thursday-stt:9200").rstrip("/")
@@ -90,7 +90,7 @@ BC_GAP_S = float(os.getenv("BACKCHANNEL_GAP_S", "6"))
 BC_CLIPS = ("mm", "right", "go-on", "copy")
 # Talking over him, the way people do (2026-11-10): his voice drops at once, like someone trailing off; a real
 # interruption (still talking after SOFT_MAX_MS, or words that aren't a listener's noise) stops him; "yeah",
-# "mm-hm", a laugh or a cough brings him back up and he carries on.
+# "mm-hm", a laugh or a cough brings him back up and he carries on. The web page and the Pi both duck.
 SOFT_BARGE = os.getenv("VOICE_SOFT_BARGE", "1") != "0"
 SOFT_MAX_FRAMES = round(float(os.getenv("VOICE_SOFT_BARGE_MAX_MS", "1000")) / FRAME_MS)
 SOFT_PAUSE_FRAMES = round(float(os.getenv("VOICE_SOFT_BARGE_PAUSE_MS", "320")) / FRAME_MS)
@@ -900,6 +900,7 @@ class Session:
         self._bc_window: tuple[int, str] | None = None  # a mid-thought pause the smart endpoint is holding open
         self._soft: dict | None = None  # talking over a reply, not yet judged (SOFT_BARGE)
         self._unmenued = False  # this turn's question lost its "or ..." menu (_unmenu)
+        self._premade: str | None = None  # a conversation made ahead for a warm first turn (_warm)
         self._level_base: float | None = None  # his speaking level this session (delivery), dBFS
         self._level_turns = 0
         self._bc_at = 0.0
@@ -1091,7 +1092,7 @@ class Session:
                         soft["task"] = asyncio.create_task(self._judge_soft(soft))
                     continue
                 if (speech := self.barge.feed(frame)) is not None:
-                    if SOFT_BARGE and self.state == "speaking" and self.role != "satellite":  # the Pi can't duck yet
+                    if SOFT_BARGE and self.state == "speaking":
                         self._soft = {"frames": list(speech), "voiced": 0, "silent": 0, "judging": False}
                         await self.ws.send_json({"type": "duck", "gain": DUCK_GAIN})
                         continue
@@ -1773,6 +1774,12 @@ class Session:
         if not force and time.monotonic() - self._warmed_at < WARM_EVERY_S:
             return
         self._warmed_at = time.monotonic()
+        if self._conversation_id is None:
+            # The first turn of a new conversation brings its own memory note: warmed without it, that turn re-read
+            # ~2k tokens (2.2-2.6 s to his voice instead of ~1 s, 2026-11-10). Make the conversation now, so the
+            # warm-up caches exactly the prompt his first words will extend.
+            db = initalize_db()
+            self._conversation_id = self._premade = db.create_conversation(db.PREMADE_TITLE, self.user["id"])["id"]
         self._warming = asyncio.create_task(warm_cache(self.user, self._context, self._conversation_id))
 
     async def _send_prepared(self, audio: list[bytes]) -> None:
@@ -1784,6 +1791,8 @@ class Session:
 
     async def close(self) -> None:
         SATELLITES.discard(self)
+        if self._premade:
+            initalize_db().drop_premade(self._premade, self.user["id"])  # nobody spoke in it
         if self._turn and not self._turn.done():
             self._turn.cancel()
         await self.http.aclose()
