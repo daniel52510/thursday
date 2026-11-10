@@ -147,7 +147,29 @@ def _end_frames_for(text: str) -> int | None:
         return QUICK_END_FRAMES
     if _TRAILING.search(text.rstrip(".…")) or text.endswith("..."):
         return HOLD_END_FRAMES
+    # Not shorter for a finished statement: 450 ms (2026-11-10) answered between two sentences of his and lost the
+    # second ("...wiped out today. [pause] Work was a lot."). The default 600 ms stays.
     return None
+
+
+# "You thinking about the hardware side first, or more the software for the brain part?" ended every reply in
+# the first live test (2026-11-10), against the prompt. People ask one thing; the long second option goes. A real
+# short choice ("now or later?", "tea or coffee?") and "would you rather / either / whether" stay.
+_MENU = re.compile(r"^(?P<ask>.*?\S)\s*,?\s+or\s+(?P<alt>(?:\S+\s+){2,}\S+?)\?\s*$", re.S | re.I)
+_QUESTION_TAG = re.compile(r",\s*question\?\s*$", re.I)  # Rocky's ending (eridian.py)
+_LAST_SENTENCE = re.compile(r"^(?P<head>.*[.!…]\s+)?(?P<last>[^.!…]+\?\s*)$", re.S)
+
+
+def _unmenu(piece: str) -> str:
+    m = _LAST_SENTENCE.match(piece)
+    if not m:
+        return piece
+    tag = bool(_QUESTION_TAG.search(m["last"]))
+    if not (q := _MENU.match(_QUESTION_TAG.sub("?", m["last"]))):
+        return piece
+    if len(q["ask"].split()) < 4 or re.search(r"\b(?:rather|either|whether|prefer)\b", q["ask"], re.I):
+        return piece
+    return (m["head"] or "") + q["ask"].rstrip(" ,") + (", question" if tag else "") + "?"
 
 
 def _drop_invented(piece: str) -> str:
@@ -877,6 +899,7 @@ class Session:
         self._bc_sent = False  # a backchannel this utterance (BACKCHANNEL)
         self._bc_window: tuple[int, str] | None = None  # a mid-thought pause the smart endpoint is holding open
         self._soft: dict | None = None  # talking over a reply, not yet judged (SOFT_BARGE)
+        self._unmenued = False  # this turn's question lost its "or ..." menu (_unmenu)
         self._level_base: float | None = None  # his speaking level this session (delivery), dBFS
         self._level_turns = 0
         self._bc_at = 0.0
@@ -1391,6 +1414,7 @@ class Session:
             self._turn_tools = False
             telephony.FROM_SATELLITE.set(self.role == "satellite")  # where a call's report gets spoken
             budget = reply_budget(text, mode) if chunker else None
+            self._unmenued = False
             spoken, cut = "", False
             replies = stream_prompt(text, mode=mode, conversation_id=self._conversation_id,
                                     context=self._context if context is None else context, user=self.user,
@@ -1451,6 +1475,8 @@ class Session:
                 if speaker:
                     chunker.close()
                     sent = await speaker
+                    if self._unmenued and speak_text and not cut:  # history holds the question as it was asked
+                        record_spoken(self._conversation_id, _unmenu(speak_text.strip()), self.user["id"])
                     if sent == 0:
                         await self.set_state("idle")
                         self._timing = timing
@@ -1592,6 +1618,8 @@ class Session:
                 max_chars = STREAM_PIECE_CHARS
             while (piece := await chunker.next_piece(max_chars)) is not None:
                 started = time.monotonic()
+                if piece != (one := _unmenu(piece)):
+                    self._unmenued, piece = True, one
                 if not self._turn_tools and not (piece := _drop_invented(piece)):
                     continue
                 if await _tts_streams(self.http):

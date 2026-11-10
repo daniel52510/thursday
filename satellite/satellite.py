@@ -163,6 +163,9 @@ GREET_WAIT_S = float(os.getenv("THURSDAY_GREET_WAIT_MS", "450")) / 1000
 GREET_TAIL_S = 0.15
 GREET_SPEECH_DBFS = float(os.getenv("THURSDAY_GREET_SPEECH_DBFS", "-48"))
 THINKING_WAV = SOUNDS / "thursday-thinking.wav"
+# A reply now usually starts ~1 s after he stops (2026-11-10): that's a person's pause, not dead air. The cue
+# starts only if the wait runs longer (a tool, a long think), so quick turns sound like a conversation.
+THINKING_CUE_DELAY_S = float(os.getenv("THINKING_CUE_DELAY_MS", "900")) / 1000
 ALARM_WAV = SOUNDS / "thursday-alarm.wav"
 CLOSE_WAV = SOUNDS / "thursday-close.wav"      # a follow-up window ended
 OFFLINE_WAV = SOUNDS / "thursday-offline.wav"  # woken while the Mac is unreachable
@@ -1175,7 +1178,7 @@ class Satellite:
             if self._overlay and not self._overlay.done():
                 await asyncio.wait({self._overlay}, timeout=1.0)  # starting the cue would cut the clip off
             if not is_night():  # at night the LEDs show it; no looping sound in a dark bedroom
-                await self.player.loop_file(THINKING_WAV)
+                self._cue_task = asyncio.create_task(self._thinking_cue(self._thinking_at))
         elif state == "idle" and self.state == "interrupting":
             # The cancelled turn is gone: listen for what the user wants instead. Cut off by
             # speech, they're mid-sentence: no ping, and what they've said so far goes first.
@@ -1209,6 +1212,12 @@ class Satellite:
         finally:
             await self._send({"type": "overlay_ended"})
         log.info("backchannel %s", path.name)
+
+    async def _thinking_cue(self, at: float) -> None:
+        """The thinking loop, if the reply hasn't started THINKING_CUE_DELAY_S after he stopped."""
+        await asyncio.sleep(THINKING_CUE_DELAY_S)
+        if self.state == "thinking" and self._thinking_at == at:
+            await self.player.loop_file(THINKING_WAV)
 
     def _on_audio(self, wav: bytes) -> None:
         # Never await playback here: the receive loop must keep reading the

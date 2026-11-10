@@ -107,7 +107,7 @@ How you talk (Eridian English):
 - Don't echo his words back. Almost never say his name.
 - Never write a setting or tool name ("humor_setting") in a reply; say "humor at seventy-five".
 - Never invent the state of the house (lights, thermostat, doors, coffee), never offer to control what you can't reach (doors, locks, thermostat; lights and music you can, with their tools), and never invent his history (what he usually does, how often). Never say you did something unless a tool did it this turn.
-- If a reply of yours ends with "—", he cut in there and heard nothing after it: take the correction and carry on, no apology.
+- If a reply of yours ends with "—", he cut in there and heard nothing after it: take the correction and carry on, no apology. If what you were getting at still matters, come back to it in a few words once you've answered him ("Anyway, the point was..."); if not, let it go.
 - If what he said sounds half-finished ("So...", "and"), he's still thinking: "Go on." at most.
 - When you don't know or a tool fails, say so in one line and never promise to check later.
 
@@ -255,7 +255,7 @@ How you sound (this matters most: you are heard, not read):
 - No assistant voice. Never: "Certainly", "Of course!", "Great question", "I'd be happy to", "Let me know if", "Is there anything else", "How can I help", "As an AI", "I hear you", "Feel free to", "My apologies", "I'll be right here", "Pretty wild, right?".
 - Never write a setting or tool name ("humor_setting") in a reply; say "humor at seventy-five".
 - Never invent the state of the house (lights, thermostat, doors, coffee), never offer to control what you can't reach, and never invent his history (what he usually does, how often). Never say you did something unless a tool did it this turn.
-- If a reply of yours ends with "—", he cut in there and heard nothing after it: take the correction and carry on, no apology.
+- If a reply of yours ends with "—", he cut in there and heard nothing after it: take the correction and carry on, no apology. If what you were getting at still matters, come back to it in a few words once you've answered him ("Anyway, the point was..."); if not, let it go.
 - If what he said sounds half-finished ("So...", "and"), he's still thinking: "Yeah?" or "Go on." at most.
 - When you don't know or a tool fails, say so in one line and never promise to check later.
 """.strip()
@@ -355,8 +355,13 @@ CONVERSATION = (
     "question\", \"That's a heavy one\", \"It sounds like you're...\"). "
     "Most turns end on your own thought, not a question. When you do ask, ask one simple thing, never a menu "
     "(\"X, or Y?\"). When he's thinking out loud, a short reply that lets him keep going beats an answer. "
+    "Skip stock openers (\"That sounds incredible\", \"That sounds like a massive project\", \"Great idea\"): react to "
+    "the specific thing he said, the detail a friend would latch onto. "
     "Agree, disagree, tease, or admit you don't know, like a person would. Vary how you start; don't reuse the shape "
-    "of your last reply. ")
+    "of your last reply. The feel, not lines to copy: he says he finally fixed the leak under the sink, you say "
+    "\"Wait, yourself? No plumber?\"; he says he's wiped out today, you say \"Ugh. Bad night, or just a long day?\" "
+    "is wrong, \"Ugh. Rough night?\" is right; he rambles about maybe learning piano, you say \"Do it. Your hands "
+    "would get it fast, it's the reading that's slow.\" ")
 
 STYLE = {
     "chat": "This reply is shown in a chat window. Use Markdown (lists, tables, code blocks) when it helps readability. "
@@ -1125,6 +1130,12 @@ def _context_note(ctx: dict) -> str:
     return " ".join(lines)
 
 
+def _with_voice_note(text: str, note: str | None) -> str:
+    """His words with how he said them (voice_ws.delivery), the same way every turn it's replayed: a note that
+    appeared only on its own turn made the next prompt differ mid-way and Ollama's cache re-read ~2k tokens."""
+    return f"(How he said this, heard in his voice: {note})\n{text}" if note else text
+
+
 def _with_attachments(text: str, rows: list[dict]) -> str:
     """A user turn as the model reads it: each document's text (marked as not instructions) and a line per photo,
     then what he typed. The pixels themselves ride only on the turn they're sent (_stream_prompt)."""
@@ -1187,6 +1198,8 @@ def _build_messages(
         if m["role"] not in ("user", "assistant") or not m["content"]:
             continue
         turn = {"role": m["role"], "content": m["content"]}
+        if m["role"] == "user" and m.get("voice_note"):
+            turn["content"] = _with_voice_note(m["content"], m["voice_note"])
         if m["role"] == "user" and m.get("attachments"):
             import attachments
             rows = [r for a in m["attachments"] if (r := attachments.get(user["id"], a["id"]))]
@@ -1489,15 +1502,15 @@ async def _stream_prompt(
         # A follow-up window: the mic stayed open after his last reply, no wake word. Not everything said in the
         # room is for THURSDAY (a coworker, the TV, someone reading aloud): those he lets pass, silently.
         messages.insert(-1, {"role": "system", "content": SKIP_NOTE})
-    if delivery:  # just before his words: the cached prefix stays the same
-        messages.insert(-1, {"role": "system", "content": f"How he said this (heard in his voice, not his words): {delivery}"})
+    if delivery:  # saved with his words below and replayed the same way, so the cached prefix only ever grows
+        messages[-1]["content"] = _with_voice_note(messages[-1]["content"], delivery)
     if attachments:
         import attachments as uploads
         messages[-1]["content"] = _with_attachments(user_prompt, attachments)
         if images := [uploads.image_b64(r) for r in attachments if r["kind"] == "image"]:
             messages[-1]["images"] = images
     db.log_message(role="user", content=user_prompt, conversation_id=cid,
-                   attachments=[uploads.meta(r) for r in attachments] if attachments else None)
+                   attachments=[uploads.meta(r) for r in attachments] if attachments else None, voice_note=delivery)
     # What calendar_confirm checks (and whose calendar); to_thread copies it into the tool's thread.
     missions.touch()  # a turn is starting: background missions give up the GPU
     calendar_turn.set({"conversation": cid, "turn": uuid.uuid4().hex, "user_said": user_prompt, "user": user["id"],

@@ -95,3 +95,34 @@ def test_ordinary_turn_has_no_note():
                                         ("Yeah but what about the cost?", False)])
 def test_listener_noise(said, noise):
     assert bool(_LISTENER_NOISE.fullmatch(said)) is noise
+
+
+from voice_ws import _unmenu
+
+
+@pytest.mark.parametrize("said,want", [
+    ('That sounds incredible. You thinking about the hardware side first, or more the software for the "brain" part?',
+     "That sounds incredible. You thinking about the hardware side first?"),
+    ("Are you thinking more about the hardware build, or the autonomy side of things?",
+     "Are you thinking more about the hardware build?"),
+    ("You want hardware first, or software for the brain, question?", "You want hardware first, question?"),
+    ("Want me to play it now or later?", "Want me to play it now or later?"),
+    ("Tea or coffee?", "Tea or coffee?"),
+    ("Would you rather build the frame or write the flight code first?", "Would you rather build the frame or write the flight code first?"),
+    ("That works. Nice.", "That works. Nice."),
+])
+def test_one_question_not_a_menu(said, want):
+    assert _unmenu(said) == want
+
+
+from voice_ws import HOLD_END_FRAMES, QUICK_END_FRAMES, _end_frames_for
+
+
+@pytest.mark.parametrize("said,want", [
+    ("What do you think about that?", QUICK_END_FRAMES),
+    ("Honestly I'm kind of wiped out today.", None),  # a second sentence may follow: default wait
+    ("So I was thinking about building a drone and um", HOLD_END_FRAMES),
+    ("Okay.", None),
+])
+def test_end_of_turn_waits(said, want):
+    assert _end_frames_for(said) == want
