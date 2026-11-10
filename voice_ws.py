@@ -55,7 +55,7 @@ import music
 import rocky_voice
 import speaker
 import telephony
-from agent_stream import VOICE_TAG, record_cut_off, strip_voice_tags, stream_prompt, warm_cache
+from agent_stream import VOICE_TAG, record_cut_off, record_spoken, strip_voice_tags, stream_prompt, warm_cache
 from vad import FRAME_BYTES, FRAME_MS, SAMPLE_RATE, BargeIn, Endpointer, VADConfig
 
 STT_BASE_URL = os.getenv("STT_BASE_URL", "http://thursday-stt:9200").rstrip("/")
@@ -86,8 +86,18 @@ PARTIAL_FRAMES = round(float(os.getenv("VOICE_PARTIAL_MS", "0")) / FRAME_MS)
 BACKCHANNEL = os.getenv("VOICE_BACKCHANNEL", "0") != "0"
 BC_PAUSE_FRAMES = max(SPECULATE_FRAMES + 2, round(float(os.getenv("BACKCHANNEL_PAUSE_MS", "400")) / FRAME_MS))
 BC_MIN_FRAMES = round(float(os.getenv("BACKCHANNEL_MIN_MS", "3000")) / FRAME_MS)
-BC_GAP_S = float(os.getenv("BACKCHANNEL_GAP_S", "8"))
+BC_GAP_S = float(os.getenv("BACKCHANNEL_GAP_S", "6"))
 BC_CLIPS = ("mm", "right", "go-on", "copy")
+# Talking over him, the way people do (2026-11-10): his voice drops at once, like someone trailing off; a real
+# interruption (still talking after SOFT_MAX_MS, or words that aren't a listener's noise) stops him; "yeah",
+# "mm-hm", a laugh or a cough brings him back up and he carries on.
+SOFT_BARGE = os.getenv("VOICE_SOFT_BARGE", "1") != "0"
+SOFT_MAX_FRAMES = round(float(os.getenv("VOICE_SOFT_BARGE_MAX_MS", "1000")) / FRAME_MS)
+SOFT_PAUSE_FRAMES = round(float(os.getenv("VOICE_SOFT_BARGE_PAUSE_MS", "320")) / FRAME_MS)
+DUCK_GAIN = 0.25
+_LISTENER_NOISE = re.compile(
+    r"(?:(?:mm+|m-?hm+|mhm+|hmm+|uh[- ]?huh|yeah+|yep|yup|yes|right|okay|ok|sure|totally|exactly|true|nice|wow|oh|ah|"
+    r"ha(?:ha)*|cool|got it|i see|for sure|of course|no way|interesting|damn|huh|word|facts|bet|same)[\s,.!-]*)+", re.I)
 BC_GAIN = 0.7
 BC_DEAF_MAX_S = 1.5  # stop ignoring the mic even if the satellite never says the clip ended
 BC_TAIL_S = 0.1      # room echo after the clip
@@ -191,6 +201,82 @@ _CLOSER_PIVOT = re.compile(
     r"what|who|where|when|why|how|tell\s+me|search|look\s+up|find|check|set|play)\b|\?",
     re.I,
 )
+
+
+# A spoken turn's length, backed up in code (agent_stream.CONVERSATION asks for it in words): a person says a
+# thing or two and hands the turn back. Characters of reply text; ~16 characters a second when spoken.
+REPLY_BUDGET = int(os.getenv("VOICE_REPLY_BUDGET", "300"))         # ~15-20 s: most turns
+REPLY_BUDGET_DETAIL = int(os.getenv("VOICE_REPLY_BUDGET_DETAIL", "700"))  # "explain", "how does", "why"
+REPLY_BUDGET_LONG = int(os.getenv("VOICE_REPLY_BUDGET_LONG", "1600"))     # "tell me the story", "read it", "keep going"
+_ASKS_LONG = re.compile(r"\b(?:story|read (?:me|it|that|this|out)|recipe|step[- ]by[- ]step|all the steps|"
+                        r"everything (?:about|you know)|in (?:full|detail)|long version|go on|keep going|continue|"
+                        r"elaborate|the whole thing|full (?:list|rundown|briefing))\b", re.I)
+_ASKS_DETAIL = re.compile(r"\b(?:explain|walk me through|how (?:do|does|did|can|could|would|should|is|are) |"
+                          r"why (?:do|does|did|is|are|would|should|was|were) |what(?:'s| is) the difference|"
+                          r"tell me (?:more|about)|more about|break (?:it|that|this) down|details?|summari[sz]e|"
+                          r"what (?:happened|did .{1,30} say))\b", re.I)
+_BUDGET_END = re.compile(r"[.!?…][\"')\]]*(?=\s|$)")
+
+
+def reply_budget(asked: str, mode: str) -> int | None:
+    """How much of a spoken reply to say before handing the turn back (None: no budget)."""
+    if mode != "voice":
+        return None  # alarms, briefings and announcements have their own shapes
+    if _ASKS_LONG.search(asked):
+        return REPLY_BUDGET_LONG
+    return REPLY_BUDGET_DETAIL if _ASKS_DETAIL.search(asked) else REPLY_BUDGET
+
+
+def budget_end(text: str, budget: int) -> int | None:
+    """Where to stop: the first sentence end past 60 % of the budget, once the reply is near it; a reply that runs
+    long with no sentence end stops at its last comma. None: keep going."""
+    if len(text) < budget * 0.6:
+        return None
+    for m in _BUDGET_END.finditer(text):
+        if m.end() >= budget * 0.6:
+            return m.end()
+    if len(text) > budget * 1.6:
+        cut = max(text.rfind(", "), text.rfind("; "), text.rfind(" — "))
+        return cut + 1 if cut > budget * 0.6 else len(text)
+    return None
+
+
+# How he said it, read from the audio (2026-11-10): people answer the tone as much as the words. Loudness is
+# compared with his own level earlier in the session (each mic differs), pace is words per second, and a run of
+# "um / like / you know" over a long turn means he's thinking out loud. A note for the model, never said aloud.
+_FILLER_WORDS = re.compile(r"\b(?:um+|uh+|er+|erm|like|you know|i mean|kind of|kinda|sort of|i guess)\b", re.I)
+
+
+def delivery(pcm: bytes, text: str, baseline_db: float | None) -> tuple[str | None, float | None]:
+    """(a note on how he said it, or None; this turn's speaking level in dBFS, or None for too little speech)."""
+    import numpy as np
+    x = np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype=np.int16).astype(np.float32) / 32768
+    n = len(x) // (SAMPLE_RATE * FRAME_MS // 1000)
+    words = len(text.split())
+    if n < 10 or words < 3:
+        return None, None
+    frames = x[: n * (len(x) // n)].reshape(n, -1)
+    db = 10 * np.log10(np.mean(frames * frames, axis=1) + 1e-12)
+    voiced = db[db > -50]
+    if len(voiced) < 8:
+        return None, None
+    level = float(np.percentile(voiced, 70))
+    wps = words / max(len(voiced) * FRAME_MS / 1000, 0.5)  # per second of actual speech, not pauses
+    fillers = len(_FILLER_WORDS.findall(text))
+    notes = []
+    if words >= 25 and fillers / words >= 0.05:
+        notes.append("He's thinking out loud, working something out as he talks. Help him think: a short "
+                     "reaction and one thought or one question. Don't lecture or wrap it up for him.")
+    if baseline_db is not None:
+        d = level - baseline_db
+        if d <= -6 and wps < 2.4:
+            notes.append("He said it quietly and slowly, lower energy than usual; he may be tired or down. "
+                         "Be gentle and brief.")
+        elif d <= -6:
+            notes.append("He said it quietly, more softly than usual.")
+        elif d >= 5 and wps >= 2.8:
+            notes.append("He said it fast and loud; he sounds fired up. Match his energy.")
+    return (" ".join(notes) or None), level
 
 
 def _is_closer(text: str) -> bool:
@@ -789,6 +875,10 @@ class Session:
         self._since_partial = 0
         self._partials: list[tuple[int, str]] = []  # (ms of speech, text) for the current utterance
         self._bc_sent = False  # a backchannel this utterance (BACKCHANNEL)
+        self._bc_window: tuple[int, str] | None = None  # a mid-thought pause the smart endpoint is holding open
+        self._soft: dict | None = None  # talking over a reply, not yet judged (SOFT_BARGE)
+        self._level_base: float | None = None  # his speaking level this session (delivery), dBFS
+        self._level_turns = 0
         self._bc_at = 0.0
         self._bc_clip = ""
         self._deaf_until = 0.0  # mic frames before this are ignored: our own clip is playing
@@ -849,6 +939,9 @@ class Session:
 
     async def set_state(self, state: str) -> None:
         was, self.state = self.state, state
+        if self._soft is not None and state != "speaking":
+            self._soft = None  # the reply ended (or was cut) while he talked over it: full volume for what's next
+            await self.ws.send_json({"type": "duck", "gain": 1.0})
         if state == "speaking" and was != "speaking" and self.barge:
             self.barge.reset()  # her voice starts now: the settle window measures its echo before anything counts
         if state in ("thinking", "speaking") or (state == "listening" and self.role == "satellite"):
@@ -887,7 +980,7 @@ class Session:
             # Ignore the first 250 ms of mic audio right after a reply finishes so speaker reverb in the room
             # can't start a phantom turn.
             tail_until = self._play_ended_at + 0.25 if now - self._play_ended_at < 0.3 else 0.0
-            self._bc_sent, self._deaf_until = False, tail_until
+            self._bc_sent, self._bc_window, self._deaf_until = False, None, tail_until
             self._evals, self._eval_text = [], ""
             self._barge_pcm = bytearray() if msg.get("barge_speech") else None
             self._conversation_id = msg.get("conversation_id") or self._conversation_id
@@ -958,7 +1051,27 @@ class Session:
             while len(self._buf) >= FRAME_BYTES:
                 frame = bytes(self._buf[:FRAME_BYTES])
                 del self._buf[:FRAME_BYTES]
+                if (soft := self._soft) is not None:  # he's talking over him: interruption, or "mm-hm"?
+                    soft["frames"].append(frame)
+                    if self.barge.probe(frame):
+                        soft["voiced"], soft["silent"] = soft["voiced"] + 1, 0
+                    else:
+                        soft["silent"] += 1
+                    if soft["voiced"] >= SOFT_MAX_FRAMES:
+                        self._soft = None
+                        logger.info("soft barge-in: still talking after %d ms, a real interruption",
+                                    SOFT_MAX_FRAMES * FRAME_MS)
+                        await self._barge_in(soft["frames"])
+                        break
+                    if soft["silent"] >= SOFT_PAUSE_FRAMES and not soft["judging"]:
+                        soft["judging"] = True
+                        soft["task"] = asyncio.create_task(self._judge_soft(soft))
+                    continue
                 if (speech := self.barge.feed(frame)) is not None:
+                    if SOFT_BARGE and self.state == "speaking" and self.role != "satellite":  # the Pi can't duck yet
+                        self._soft = {"frames": list(speech), "voiced": 0, "silent": 0, "judging": False}
+                        await self.ws.send_json({"type": "duck", "gain": DUCK_GAIN})
+                        continue
                     await self._barge_in(speech)
                     break  # the rest of the buffer is listened to below
         if self.state != "listening":
@@ -1037,32 +1150,35 @@ class Session:
                 if (frames := _end_frames_for(text)) is not None:
                     ep.end_frames = frames
                     logger.info("smart endpoint: %d ms after %r", frames * FRAME_MS, text[-50:])
-            if ep.in_speech and ep.silence_frames == BC_PAUSE_FRAMES:
-                if EVALUATOR and self._spec and self._spec[0].done() and not self._spec[0].cancelled() \
-                        and self._spec[0].exception() is None:
-                    self._start_eval(self._spec[0].result(), ep.voiced * FRAME_MS)
-                if BACKCHANNEL:
-                    await self._maybe_backchannel()
+                    if frames == HOLD_END_FRAMES:
+                        self._bc_window = (ep.voiced, text)  # mid-thought: the moment a listener says "mm"
+            if ep.in_speech and ep.silence_frames == BC_PAUSE_FRAMES and EVALUATOR and self._spec \
+                    and self._spec[0].done() and not self._spec[0].cancelled() and self._spec[0].exception() is None:
+                self._start_eval(self._spec[0].result(), ep.voiced * FRAME_MS)
+            if (BACKCHANNEL and ep.in_speech and self._bc_window and self._bc_window[0] == ep.voiced
+                    and ep.silence_frames >= BC_PAUSE_FRAMES):
+                text, self._bc_window = self._bc_window[1], None
+                await self._maybe_backchannel(text)
         if not self.endpointer.in_speech and time.monotonic() - self._listen_started > NO_SPEECH_TIMEOUT_S:
             await self.set_state("idle")
 
-    async def _maybe_backchannel(self) -> None:
-        """At this pause, a backchannel clip if it's the right kind of pause (BACKCHANNEL).
-        Reads the speculative transcript the pause already started, so it costs no extra STT."""
+    async def _maybe_backchannel(self, text: str) -> None:
+        """A listener's "mm" / "right" in a mid-thought pause (BACKCHANNEL): the smart endpoint read the pause's
+        transcript as unfinished ("...and, um") and is holding the turn open, so the clip lands in a pause he means
+        to fill. (Until 2026-11-10 it waited for a fresh transcript within 150 ms of the pause, which a long
+        utterance never makes: 0 backchannels in 3 days.) At most one every BC_GAP_S."""
         now, ep = time.monotonic(), self.endpointer
-        if (self.role != "satellite" or self._bc_sent or now - self._bc_at < BC_GAP_S
-                or ep.voiced < BC_MIN_FRAMES or not self._spec or self._spec[1] != ep.voiced):
+        if now - self._bc_at < BC_GAP_S or ep.voiced < BC_MIN_FRAMES:
             return
-        spec = self._spec[0]
-        if not spec.done() or spec.cancelled() or spec.exception() is not None:
-            return  # STT is slower than the pause: skip rather than wait
-        text = spec.result().strip()
+        text = text.strip()
         if not text or text.endswith("?") or _is_closer(text):
             return  # a question wants an answer, not "Mm."
         clip = random.choice([c for c in BC_CLIPS if c != self._bc_clip])
         self._bc_sent, self._bc_at, self._bc_clip = True, now, clip
-        self._deaf_until = now + BC_DEAF_MAX_S
-        await self.ws.send_json({"type": "overlay", "clip": clip, "gain": BC_GAIN})
+        if self.role == "satellite":
+            self._deaf_until = now + BC_DEAF_MAX_S  # no echo cancellation on the Pi: don't hear our own "mm"
+        await self.ws.send_json({"type": "overlay", "clip": clip, "gain": BC_GAIN,
+                                 "voice": self._style().get("voice") or "leo"})
         # Logged only: a backchannel is never an assistant turn in the conversation.
         logger.info("backchannel %r at %d ms of speech, after ...%r", clip, ep.voiced * FRAME_MS, text[-60:])
 
@@ -1079,6 +1195,24 @@ class Session:
         if self._spec:
             self._spec[0].cancel()
             self._spec = None
+
+    async def _judge_soft(self, soft: dict) -> None:
+        """He talked over THURSDAY briefly and stopped: a listener's noise ("yeah", "mm-hm", a laugh: Parakeet
+        writes nothing for a cough) means carry on at full voice; anything else is an interruption."""
+        try:
+            text = await asyncio.wait_for(self._transcribe(b"".join(soft["frames"])), 1.2)
+        except Exception:
+            text = None  # unsure: treat it as an interruption, the safe side
+        if self._soft is not soft:
+            return  # decided meanwhile (he kept talking, or the turn ended)
+        self._soft = None
+        said = (text or "").strip()
+        if text is not None and (not said or _LISTENER_NOISE.fullmatch(said)):
+            await self.ws.send_json({"type": "duck", "gain": 1.0})
+            logger.info("soft barge-in: %r is a listener's noise, carrying on", said)
+            return
+        logger.info("soft barge-in: %r, an interruption", said[:60])
+        await self._barge_in(soft["frames"])
 
     async def _barge_in(self, speech: list[bytes]) -> None:
         """The user talked over her: stop, and listen from where they started."""
@@ -1209,7 +1343,13 @@ class Session:
                     self._log_timing()
                     await self.set_state("idle")
                     return
-        await self._respond(text, timing, no_wake=self._no_wake and self.role == "satellite")
+        note, level = delivery(pcm, text, self._level_base if self._level_turns >= 2 else None)
+        if level is not None:
+            self._level_base = level if self._level_base is None else 0.8 * self._level_base + 0.2 * level
+            self._level_turns += 1
+        if note:
+            logger.info("delivery: %s", note[:80])
+        await self._respond(text, timing, no_wake=self._no_wake and self.role == "satellite", delivery=note)
 
     async def _log_speaker(self, pcm: bytes, text: str) -> dict | None:
         """Who the voice sounds like, logged with the turn (no words: just the first few); the verdict is
@@ -1238,7 +1378,7 @@ class Session:
             return None
 
     async def _respond(self, text: str, timing: dict, mode: str = "voice", context: dict | None = None,
-                       no_wake: bool = False) -> None:
+                       no_wake: bool = False, delivery: str | None = None) -> None:
         """LLM + TTS for one user message, or for a prompt the server writes
         itself (the alarm briefing's live fallback)."""
         stage, input_desc, started = "LLM", f"{len(text)} chars", time.monotonic()
@@ -1250,11 +1390,14 @@ class Session:
             self._said = None
             self._turn_tools = False
             telephony.FROM_SATELLITE.set(self.role == "satellite")  # where a call's report gets spoken
+            budget = reply_budget(text, mode) if chunker else None
+            spoken, cut = "", False
+            replies = stream_prompt(text, mode=mode, conversation_id=self._conversation_id,
+                                    context=self._context if context is None else context, user=self.user,
+                                    no_wake=no_wake, **({"delivery": delivery} if delivery else {}))
             try:
                 speak_text = ""
-                async for ev in stream_prompt(text, mode=mode, conversation_id=self._conversation_id,
-                                             context=self._context if context is None else context, user=self.user,
-                                             no_wake=no_wake):
+                async for ev in replies:
                     if ev["type"] == "skip":  # said in the room, not to him: no reply, back to the wake word
                         logger.info("follow-up not for me: %r", " ".join(text.split()[:6]))
                         timing["skipped"] = "content"
@@ -1272,8 +1415,15 @@ class Session:
                         timing.setdefault("llm_ttft_ms", _ms(started))
                         if self._said is None:
                             self._said = []
-                        if chunker:
-                            chunker.feed(ev["text"])
+                        piece = ev["text"]
+                        if budget:
+                            before, spoken = len(spoken), spoken + piece
+                            if (end := budget_end(spoken, budget)) is not None:
+                                piece, spoken, cut = spoken[before:end], spoken[:end], True
+                        if chunker and piece:
+                            chunker.feed(piece)
+                        if cut:
+                            break  # said enough: hand the turn back (the LLM stops below)
                     elif ev["type"] == "gesture":  # body language: the device acts it out (voice orb now, Reachy later)
                         await self.ws.send_json({"type": "body", "gesture": ev["name"]})
                     elif ev["type"] == "deliberating":
@@ -1290,6 +1440,12 @@ class Session:
                         speak_text = ev["reply"]
                         if ev["timing"].get("prefill"):
                             timing["llm_prefill"] = "+".join(ev["timing"]["prefill"])
+                if cut:
+                    await replies.aclose()  # closes Ollama's stream: no tokens written past what's said
+                    speak_text = strip_voice_tags(spoken).strip()
+                    timing["budget_cut"] = f"{len(speak_text)}/{budget}"
+                    record_spoken(self._conversation_id, speak_text, self.user["id"])
+                    logger.info("reply budget: said %d chars of a %d budget, turn handed back", len(speak_text), budget)
                 timing["llm_ms"] = _ms(started)
                 await self.ws.send_json({"type": "reply", "text": speak_text})
                 if speaker:

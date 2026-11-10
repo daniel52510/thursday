@@ -73,7 +73,7 @@ class VADConfig:
     min_speech_ms: int = 160       # this much consecutive speech starts an utterance
     end_silence_ms: int = 600      # this much silence ends it; adds directly to latency
     preroll_ms: int = 300          # audio kept from before the start so the first word isn't clipped
-    max_utterance_ms: int = 30000
+    max_utterance_ms: int = 90000  # thinking out loud runs long; 30 s chopped him mid-thought (2026-11-10)
     min_dbfs: float = -48.0        # quiet bleed / room noise below this cannot start an utterance
 
     @classmethod
@@ -152,8 +152,16 @@ class BargeIn:
         if self._run >= self._need:
             frames = list(self._recent)
             self.reset()
+            self.trigger_bar = bar
             return frames
         return None
+
+    trigger_bar: float = -40.0
+
+    def probe(self, frame: bytes) -> bool:
+        """After a trigger: is he still talking in this frame? Judged against the echo bar at the trigger (a reset
+        would spend 600 ms relearning it), with the speech score a little lower, since he's mid-word now."""
+        return _frame_dbfs(frame) >= self.trigger_bar and self.vad(frame) >= self.prob * 0.8
 
 
 class Endpointer:

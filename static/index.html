@@ -3354,10 +3354,12 @@ async function startAudio() {
         this.playing = false; this.ended = false; this.stopping = false; this.heard = false; this.gain = 0;
         this.fade = Math.round(sampleRate * 0.005); this.rebuffer = Math.round(sampleRate * 0.1);
         this.underruns = 0; this.dry = 0;
+        this.duck = 1; this.duckTo = 1;  // talked over: down to a murmur while the server decides (voice_ws SOFT_BARGE)
         this.port.onmessage = (e) => {
           const m = e.data;
           if (m.pcm) { this.q.push(m.pcm); this.queued += m.pcm.length; this.ended = false; }
-          else if (m.cmd === "mark") { this.underruns = 0; this.dry = 0; this.heard = false; }
+          else if (m.cmd === "duck") this.duckTo = Math.max(0, Math.min(1, m.to));
+          else if (m.cmd === "mark") { this.underruns = 0; this.dry = 0; this.heard = false; this.duckTo = 1; }
           else if (m.cmd === "end") {
             if (!this.queued && !this.playing) {
               this.port.postMessage({ drained: true, underruns: this.underruns, dryMs: Math.round(this.dry / sampleRate * 1000) });
@@ -3376,6 +3378,7 @@ async function startAudio() {
         };
       }
       reset() { this.playing = false; this.ended = false; this.stopping = false; this.heard = false; this.gain = 0;
+                this.duck = 1; this.duckTo = 1;
                 this.underruns = 0; this.dry = 0; this.q = []; this.off = 0; this.queued = 0; }
       process(_, outputs) {
         const out = outputs[0][0];
@@ -3398,7 +3401,8 @@ async function startAudio() {
           const target = this.stopping || (!this.ended && this.queued <= this.fade) ? 0 : 1;
           this.gain += Math.max(-1 / this.fade, Math.min(1 / this.fade, target - this.gain));
           const c = this.q[0];
-          out[i] = c[this.off++] * this.gain; this.queued--;
+          this.duck += (this.duckTo - this.duck) * 0.0015;  // ~14 ms glide: no click
+          out[i] = c[this.off++] * this.gain * this.duck; this.queued--;
           if (this.off >= c.length) { this.q.shift(); this.off = 0; }
         }
         return true;
@@ -3471,6 +3475,8 @@ function onVoiceEvent(ev) {
     setVoiceState("listening");
   }
   else if (ev.type === "caption") queueCaption(ev.text, ev.cps);
+  else if (ev.type === "overlay") playBackchannel(ev);
+  else if (ev.type === "duck") V.outNode?.port.postMessage({ cmd: "duck", to: +ev.gain });
   else if (ev.type === "transcript") {
     resetCaption(); V.replyText = "";
     vHeard.innerHTML = "<span>You said</span> ";
@@ -3563,6 +3569,20 @@ function freezeCaption(all) {
 // Chunks go through one promise chain: each is scheduled only after the previous one.
 function playReply(data) {
   V.chain = V.chain.then(() => scheduleChunk(data)).catch(() => {});
+}
+
+// A listener's "mm" / "right" while he's mid-thought (voice_ws._maybe_backchannel). Quiet, over his pause; the
+// browser's echo cancellation keeps it out of the mic, so listening carries on underneath it.
+const bcClips = {};
+async function playBackchannel(ev) {
+  if (V.state !== "listening" || !V.ctx || !/^[a-z-]+$/.test(ev.clip || "")) return;
+  const name = `thursday-${ev.voice === "tara" ? "tara-" : ""}bc-${ev.clip}.wav`;
+  try {
+    bcClips[name] ||= await V.ctx.decodeAudioData(await (await fetch(`/assets/sounds/${name}`)).arrayBuffer());
+    const src = V.ctx.createBufferSource(), g = V.ctx.createGain();
+    src.buffer = bcClips[name]; g.gain.value = Math.min(1, +ev.gain || 0.7);
+    src.connect(g).connect(V.ctx.destination); src.start();
+  } catch {}
 }
 
 // The server's audio is plain 16-bit mono WAV, so the page reads the samples itself and resamples them to the

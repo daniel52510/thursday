@@ -345,6 +345,19 @@ def _system_prompt(user: dict) -> str:
                    f"rules and voice above):\n{instructions[:1500]}")
     return system
 
+# How a real conversation goes, for every spoken reply (2026-11-10: his voice turns ran 55 s each: a restatement of
+# what he said, an essay, then "X, or Y?" every time). voice_ws.reply_budget backs the length up in code.
+CONVERSATION = (
+    "This is a live conversation, not a presentation. Talk the way a person does across a table: "
+    "React first, in a few words, the way a friend would, then say one thing. One idea per turn: one to three short "
+    "sentences, under about 40 words. If the topic is big, give the heart of it and stop; he'll ask for more. "
+    "Never restate or summarize what he just said, and don't open with a verdict on his question (\"That's a great "
+    "question\", \"That's a heavy one\", \"It sounds like you're...\"). "
+    "Most turns end on your own thought, not a question. When you do ask, ask one simple thing, never a menu "
+    "(\"X, or Y?\"). When he's thinking out loud, a short reply that lets him keep going beats an answer. "
+    "Agree, disagree, tease, or admit you don't know, like a person would. Vary how you start; don't reuse the shape "
+    "of your last reply. ")
+
 STYLE = {
     "chat": "This reply is shown in a chat window. Use Markdown (lists, tables, code blocks) when it helps readability. "
     "Here you write in normal, fluent English: full grammar, contractions and articles, plain question marks. The "
@@ -353,6 +366,7 @@ STYLE = {
     "voice": "Body language: you have a head that moves. Where it would happen naturally you may add one tag: <nod> "
     "(agreeing), <shake> (no), <shrug> (unsure), <celebrate> (good news), <think> (pondering), <look> (attention to "
     "him). At most one per reply, most replies none, never mention it. "
+    + CONVERSATION +
     "This reply will be spoken aloud in your own voice, so write exactly what you'd say: short Eridian-English "
     "sentences, excited when it fits. Only a real question ends with \", question?\": you want an answer from him right now. Never tag the last line of a report, "
     "a status or an explanation (\"Last commit was three minutes ago.\" is a statement). An exclamation ends with \", exclamation!\"; a plain statement gets no tag. "
@@ -378,6 +392,7 @@ STYLE_TARA = STYLE | {
     "voice": "Body language: you have a head that moves. Where it would happen naturally you may add one tag: <nod> "
     "(agreeing), <shake> (no), <shrug> (unsure), <celebrate> (good news), <think> (pondering), <look> (attention to "
     "him). At most one per reply, most replies none, never mention it. "
+    + CONVERSATION +
     "This reply will be spoken aloud in your own voice, so write exactly what you'd say, the way people talk: "
     "contractions, short sentences and fragments, a genuine reaction first when there is one, a little thinking out loud. "
     "Usually one to three sentences; more only when he asked for a story or detail. No Markdown, lists, URLs or emoji, "
@@ -996,6 +1011,45 @@ _LEAD_SETTLED = re.compile(r"(?:[.!?,…—]|\n)\s+\S")  # past the first clause
 LEAD_BUFFER_CHARS = 60
 
 
+class _ThinkScrub:
+    """Gemma sometimes writes its reasoning into the reply and closes it with "</think>" (2026-11-10, spoken aloud:
+    "own thought </think>That's a heavy question"). The first THINK_HOLD characters of each round are held (the
+    voice's first piece waits for 60 anyway); a "</think>" among them drops everything before it."""
+    THINK_HOLD = 48
+
+    def __init__(self) -> None:
+        self.pre, self.open, self.dropped, self.after = "", True, "", False
+
+    def feed(self, text: str) -> str:
+        if not self.open:
+            out = text.replace("</think>", "")
+            self.after = self.after or bool(out.strip())
+            return out
+        self.pre += text
+        if "</think>" in self.pre:
+            self.dropped, out = self.pre.rsplit("</think>", 1)
+            out, self.pre, self.open = out.lstrip(), "", False
+            self.after = bool(out.strip())
+            return out
+        if len(self.pre) >= self.THINK_HOLD:
+            out, self.pre, self.open = self.pre, "", False
+            return out
+        return ""
+
+    def flush(self) -> str:
+        out, self.pre, self.open = self.pre.replace("</think>", ""), "", False
+        if self.dropped and not self.after and not out.strip():
+            out, self.dropped = self.dropped.rstrip(), ""  # nothing came after the tag: that was the reply
+        return out
+
+
+_THINK_LEAK = re.compile(r"^.{0,400}?</think>\s*(?=\S)", re.S)  # only when a reply follows the tag
+
+
+def strip_think(text: str) -> str:
+    return _THINK_LEAK.sub("", text, count=1).replace("</think>", "")
+
+
 def _strip_lead(text: str) -> str:
     m = _LEAD_IN.match(text)
     if not m or m.end() >= len(text.rstrip()):
@@ -1253,6 +1307,14 @@ def strip_voice_tags(text: str) -> str:
     return "```".join(parts).strip()
 
 
+def record_spoken(conversation_id: str | None, said: str, user_id: str) -> None:
+    """A spoken reply the voice ended at its length budget (voice_ws.reply_budget): history holds what was said,
+    as a finished reply (no cut mark: he wasn't interrupted, THURSDAY stopped)."""
+    db = initalize_db()
+    if conversation_id and said.strip() and db.get_conversation(conversation_id, user_id):
+        db.revise_last_reply(conversation_id, said.strip())
+
+
 def record_cut_off(conversation_id: str | None, heard: str, user_id: str) -> None:
     """A spoken reply was interrupted: keep only the part the user heard, so the
     next turn knows where it was cut (nothing heard: no reply at all)."""
@@ -1392,6 +1454,7 @@ async def _stream_prompt(
     user: dict,
     no_wake: bool = False,
     attachments: list[dict] | None = None,  # rows from attachments.get: photos and documents sent with this turn
+    delivery: str | None = None,  # how he said it, read from his voice (voice_ws.delivery)
 ) -> AsyncIterator[dict[str, Any]]:
     started = time.monotonic()
     timing: dict[str, int] = {}
@@ -1426,6 +1489,8 @@ async def _stream_prompt(
         # A follow-up window: the mic stayed open after his last reply, no wake word. Not everything said in the
         # room is for THURSDAY (a coworker, the TV, someone reading aloud): those he lets pass, silently.
         messages.insert(-1, {"role": "system", "content": SKIP_NOTE})
+    if delivery:  # just before his words: the cached prefix stays the same
+        messages.insert(-1, {"role": "system", "content": f"How he said this (heard in his voice, not his words): {delivery}"})
     if attachments:
         import attachments as uploads
         messages[-1]["content"] = _with_attachments(user_prompt, attachments)
@@ -1699,6 +1764,7 @@ async def _stream_prompt(
             claimed = False
             if guard is not None:
                 guard_used = True  # one check per turn: the retry's reply goes out whatever it says
+            scrub = _ThinkScrub()
             async with client.stream("POST", CHAT_URL, json=payload) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode(errors="replace")[:300]
@@ -1710,6 +1776,8 @@ async def _stream_prompt(
                     if chunk.get("error"):
                         raise RuntimeError(f"Ollama error: {chunk['error']}")
                     msg = chunk.get("message") or {}
+                    if msg.get("content") or chunk.get("done"):
+                        msg = {**msg, "content": scrub.feed(msg.get("content") or "") + (scrub.flush() if chunk.get("done") else "")}
                     if msg.get("content") and guard is not None:
                         guard += msg["content"]
                         if not (_GUARD_SETTLED.search(guard) or len(guard) >= GUARD_MAX_CHARS):
@@ -1804,11 +1872,12 @@ async def _stream_prompt(
             elif mode == "voice":
                 lead = ""  # the voice already spoke a filler for this tool
 
-    reply = strip_voice_tags(GESTURE_TAG.sub(" ", "".join(reply_parts)))
+    reply = strip_voice_tags(GESTURE_TAG.sub(" ", strip_think("".join(reply_parts))))
     if mode == "voice" and executed:
         reply = _strip_lead(reply)
     statements = any(_started(r["tool_name"], r) for r in tool_results)
-    reply = reply if _is_tara(user) else eridian.translate(reply, statements)  # saved the way it was said (stream_prompt applies the same)
+    # Saved the way it was said or shown (_stream_with_grammar applies the same): Rocky's grammar only when spoken.
+    reply = reply if _is_tara(user) or mode == "chat" else eridian.translate(reply, statements)
     if no_wake and reply.lstrip().lower().startswith(SKIP_TOKEN):  # not said to him: nothing to remember
         yield {"type": "done", "reply": "", "timing": timing | {"skipped": 1}}
         return

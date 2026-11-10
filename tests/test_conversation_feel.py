@@ -1,0 +1,97 @@
+"""Human-feeling voice turns (2026-11-10): a spoken reply's length budget and the reasoning-leak scrub."""
+import pytest
+
+from agent_stream import _ThinkScrub, strip_think
+from voice_ws import REPLY_BUDGET, REPLY_BUDGET_DETAIL, REPLY_BUDGET_LONG, budget_end, reply_budget
+
+
+@pytest.mark.parametrize("asked,want", [
+    ("I'm taking a lunch after work.", REPLY_BUDGET),
+    ("What do you think about drones?", REPLY_BUDGET),
+    ("Explain how a jet engine works", REPLY_BUDGET_DETAIL),
+    ("why does my squat feel off", REPLY_BUDGET_DETAIL),
+    ("tell me the whole story", REPLY_BUDGET_LONG),
+    ("keep going", REPLY_BUDGET_LONG),
+])
+def test_budget_by_what_he_asked(asked, want):
+    assert reply_budget(asked, "voice") == want
+
+
+def test_no_budget_for_alarms_and_briefings():
+    assert reply_budget("wake him up", "wake") is None and reply_budget("x", "briefing") is None
+
+
+def test_stops_at_a_sentence_end_past_the_budget():
+    a = "Oh, nice. " + "Drones are hard because the control loop has to run fast and never miss a beat. " * 4
+    end = budget_end(a, 300)
+    assert end is not None and a[:end].endswith(".") and 180 <= end <= 340
+
+
+def test_short_reply_runs_to_its_end():
+    assert budget_end("Yeah. Keep going, what else?", 300) is None
+
+
+def test_runaway_sentence_stops_at_a_comma():
+    a = ("word " * 30 + ", ") * 4
+    end = budget_end(a, 300)
+    assert end is not None and end <= len(a)
+
+
+def test_think_leak_dropped_from_stream():
+    s = _ThinkScrub()
+    out = "".join(s.feed(t) for t in ("own thought ", "</thi", "nk>That's a big ", "one. Here's my take on it.")) + s.flush()
+    assert out == "That's a big one. Here's my take on it."
+
+
+def test_clean_reply_passes_through():
+    s = _ThinkScrub()
+    out = "".join(s.feed(t) for t in ("Yeah.", " Go on.")) + s.flush()
+    assert out == "Yeah. Go on."
+
+
+def test_strip_think_on_saved_reply():
+    assert strip_think("own thought </think>That's heavy.") == "That's heavy."
+    assert strip_think("Fine. </think>") == "Fine. "  # nothing after the tag: keep the reply
+    s = _ThinkScrub()
+    assert (s.feed("Fine. </think>") + s.flush()) == "Fine."
+
+
+# ---------- how he said it (voice_ws.delivery) ----------
+import numpy as np
+
+from voice_ws import _LISTENER_NOISE, delivery
+
+
+def _speech(seconds: float, db: float) -> bytes:
+    t = np.arange(int(16000 * seconds)) / 16000
+    amp = 10 ** (db / 20) * np.sqrt(2)
+    return (np.sin(2 * np.pi * 180 * t) * amp * 32767).astype(np.int16).tobytes()
+
+
+def test_thinking_out_loud():
+    text = ("so um I was thinking like you know maybe I could build something uh that flies on its own "
+            "and like I don't know you know it just seems um kind of cool")
+    note, level = delivery(_speech(12, -25), text, None)
+    assert note and "thinking out loud" in note and level is not None
+
+
+def test_quiet_and_slow_against_his_own_level():
+    note, _ = delivery(_speech(4, -38), "I'm just tired today", baseline_db=-25)
+    assert note and "quietly and slowly" in note
+
+
+def test_fired_up():
+    note, _ = delivery(_speech(3, -18), "Dude we actually did it the whole thing works first try", baseline_db=-26)
+    assert note and "fired up" in note
+
+
+def test_ordinary_turn_has_no_note():
+    note, _ = delivery(_speech(3, -25), "What's the weather like tomorrow", baseline_db=-25)
+    assert note is None
+
+
+@pytest.mark.parametrize("said,noise", [("Yeah.", True), ("Mm-hmm.", True), ("Right, right.", True), ("Haha", True),
+                                        ("Oh, wow.", True), ("Wait, no.", False), ("Stop.", False),
+                                        ("Yeah but what about the cost?", False)])
+def test_listener_noise(said, noise):
+    assert bool(_LISTENER_NOISE.fullmatch(said)) is noise
