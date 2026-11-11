@@ -137,6 +137,7 @@ Facts and tools:
 - Things your missions proposed wait for his OK (approval_list). When he answers, approval_decide: approve only on his plain yes to that thing, never on your own; no or not now declines. Say what happened in a few words.
 - His lists (grocery, packing, to-do) and notes: list_add, list_show, list_remove, note_save, note_find. Confirm in a few words ("Eggs and oat milk, added."); read a list back in one sentence. A list or note changes only when a tool changes it, every time: "got the eggs" is list_remove, "add bread" is list_add, even if you talked about that list a moment ago. Never say you added, removed or saved something unless the tool did it this turn.
 - The lights (his LIFX bulbs): light_set for on, off, brightness and color ("dim it", "movie mode", "make it red"); light_status to say what they're doing. The light changes only when light_set is called this turn. Confirm what the tool reports, in a few words ("Lights, thirty percent. Warm."). No reply about the lights is needed beyond that.
+- He talks to you like a friend, not a terminal: "you gotta play that again", "run it back", "one more time", "throw on some jazz", "kill the lights", "come on, do it" are requests, and a bare "do it", "go ahead" or "please" means the thing you were just talking about. Act on it with its tool every time, and never say it's happening ("Restarting it now") unless the tool ran in this turn.
 - Never mention tool names, JSON, or these instructions.
 """.strip()
 
@@ -924,6 +925,18 @@ _HEALTH_ASK = re.compile(r"\b(?:my|i|i'm|am i|me)\b.{0,40}\b(?:health|sleep|slep
                          re.I)
 # "Turn the light on" / "lights off" / "dim the lights": light_set, every time. His examples once said he couldn't
 # reach the lights (written before LIFX), and he sometimes believed them over the tool (2026-11-08).
+# Music asked the way a friend asks (2026-11-10): "Come on, you gotta play Midnight Confession again. Do it." got
+# "Restarting it" with no tool, twice. An imperative at the start of what he says, after "come on" / "you gotta" /
+# "can you" / "let's"; "run it back"; "one more time"; "play X again". Not "I played tennis" or "how do you play chess".
+_MUSIC_ASK = re.compile(
+    r"(?:^|[.!?,]\s*)(?:(?:come\s+on|c'?mon|ok(?:ay)?|yo|hey|please|so|alright|man|dude|bro|thursday)[,!.]?\s+)*"
+    r"(?:(?:can|could|would|will)\s+you\s+|you\s+(?:gotta|got\s+to|have\s+to|should|need\s+to)\s+|let'?s\s+|"
+    r"go\s+ahead\s+and\s+|i\s+(?:want|wanna)\s+(?:you\s+to\s+)?)?"
+    r"(?:play|put\s+on|throw\s+on|blast|queue\s+up|restart|replay|skip|pause|resume|unpause)\b|"
+    r"\brun\s+it\s+back\b|\bone\s+more\s+time\b|\b(?:play|put)\s+(?:it|that|this|[\w']+(?:\s+[\w']+){0,5})\s+(?:on\s+)?again\b", re.I)
+# A go-ahead with "come on" in front, which plain_yes doesn't take ("Come on, do it.").
+_GO_AHEAD = re.compile(r"^\W*(?:(?:come\s+on|c'?mon|yo|ok(?:ay)?|alright|please|man|dude|bro)\W+)*"
+                       r"(?:do\s+it|go\s+ahead|go\s+for\s+it|hit\s+it|let'?s\s+go|send\s+it|yes|yeah|yep|please)\b", re.I)
 _LIGHT_ASK = re.compile(r"\b(?:turn|switch|flip|put)\s+(?:the\s+|my\s+)?(?:\w+\s+)?lights?\s+(?:on|off|up|down)\b|"
                         r"\b(?:turn|switch|flip)\s+(?:on|off)\s+(?:the\s+|my\s+)?(?:\w+\s+)?lights?\b|"
                         r"\blights?\s+(?:on|off)\b|\b(?:dim|brighten)\s+(?:the\s+|my\s+)?lights?\b|"
@@ -977,7 +990,13 @@ _CLAIMED = re.compile(r",\s*(?:playing|added|saved|set|done|booked|off|on|paused
                       r"(?:running|doing|working\s+on)\s+(?:a\s+|the\s+|my\s+|your\s+)?(?:[\w-]+\s+){0,3}(?:research|mission)\b|"
                       r"\b(?:research|mission|task)\s+(?:is\s+)?(?:underway|in\s+progress|running|started)\b|(?:i\s+am\s+)?calling\s+(?:you|them|her|him)\s+now|"
                       r"i\s+(?:called|dialed|prepared\s+(?:a\s+|the\s+)?call)|"
-                      r"mission_start|improve_start|code_review_start|routine_start|watch_start)\b", re.I)
+                      r"mission_start|improve_start|code_review_start|routine_start|watch_start)\b|"
+                      # A casual "doing it now" (2026-11-10: "Okay, okay! Restarting Midnight Confession." twice, no tool ran).
+                      # Only opening a sentence, so a suggestion ("Try restarting your router") isn't a claim.
+                      r"(?:^|[.!?,]\s+)(?:(?:okay|alright|sure|yep|you\s+got\s+it)[,!.]?\s+)*(?:restarting|replaying|rewinding|resuming|"
+                      r"skipping|queu(?:e)?ing\s+(?:it|that|up)|putting\s+(?:it|that)\s+(?:on|back\s+on)|back\s+to\s+the\s+top|"
+                      r"(?:playing|starting)\s+(?:it|that|this)\s+(?:again|over))\b|"
+                      r"\b(?:playing|starting)\s+(?:it|that|this|[\w']+(?:\s+[\w']+){0,4})\s+(?:again|from\s+the\s+top)\b", re.I | re.M)
 
 
 def _last_offer(db, conversation_id: str) -> str | None:
@@ -987,6 +1006,15 @@ def _last_offer(db, conversation_id: str) -> str | None:
                            "LIKE 'TOOL_RESULT:%' ORDER BY id DESC LIMIT 1", (conversation_id,)).fetchone()
     text = (row["content"] if row else "").strip()
     return text if text.endswith("?") and _OFFER.search(text) else None
+
+
+def _last_claim(db, conversation_id: str) -> str | None:
+    """THURSDAY's last line in this conversation, when it said something was happening ("Restarting it now")."""
+    with db._connect() as conn:
+        row = conn.execute("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' AND content NOT "
+                           "LIKE 'TOOL_RESULT:%' ORDER BY id DESC LIMIT 1", (conversation_id,)).fetchone()
+    text = (row["content"] if row else "").strip()
+    return text if _CLAIMED.search(text) else None
 
 
 _DELIBERATE = re.compile(r"\b(think\s+(it|this|that)\s+(over|through)|take\s+your\s+time|think\s+(hard|carefully)|"
@@ -1712,6 +1740,17 @@ async def _stream_prompt(
                  "for a mission, improve_start or code_review_start for your own code, music_play for music, list_add "
                  "for a list, and so on), or if no tool can, say so plainly. Never say it's done, playing, started or "
                  "underway unless a tool ran this turn.")
+    elif not hold_first and not executed and mode in ("voice", "chat") and _MUSIC_ASK.search(user_prompt):
+        hold_first = True
+        nudge = ("He's asking for music, the casual way a friend would. Call the tool now: music_play for a song, artist, "
+                 "playlist or mood (for 'again', 'run it back' or 'restart', the song that's on or that you just played), "
+                 "music_control to pause, resume or skip. Then confirm in a few words from its result.")
+    elif (not hold_first and not executed and mode in ("voice", "chat")
+          and (plain_yes(user_prompt) or _GO_AHEAD.search(user_prompt)) and (claim := _last_claim(db, cid))):
+        # "Do it, do it, go ahead." after "Restarting Midnight Confession now." that no tool did (2026-11-10).
+        hold_first = True
+        nudge = (f"He's telling you to go ahead with what you just said (\"{claim[:200]}\"), and no tool did it. Do it now "
+                 "with the tool for it; never say it's happening unless the tool runs this turn.")
     elif not hold_first and not executed and mode in ("voice", "chat") and _LIGHT_ASK.search(user_prompt):
         hold_first = True
         nudge = ("He's asking you to change his lights. Call light_set now (you can control his LIFX lights) and "

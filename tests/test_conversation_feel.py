@@ -173,3 +173,47 @@ def test_opener_dropped_while_streaming():
 def test_stock_praise_opener(said, want):
     from voice_ws import humanize
     assert humanize(said) == want
+
+
+# ---------- casual "doing it now" claims (agent_stream._CLAIMED) ----------
+from agent_stream import _CLAIMED
+
+
+@pytest.mark.parametrize("reply,claim", [
+    ("Okay, okay! Restarting Midnight Confession. It's worth the repeat.", True),   # 2026-11-10, no tool had run
+    ("Alright, alright! Restarting Midnight Confession now.", True),               # same, the next turn
+    ("Restarting it now.", True),
+    ("You got it, playing that again.", True),
+    ("Sure! Playing Midnight Confession again.", True),
+    ("Putting it back on.", True),
+    ("Try restarting your router first.", False),
+    ("The song keeps restarting for me too, honestly.", False),
+    ("It finally clicks into place, right?", False),
+])
+def test_casual_action_claims(reply, claim):
+    assert bool(_CLAIMED.search(reply)) is claim
+
+
+from agent_stream import _GO_AHEAD, _MUSIC_ASK
+
+
+@pytest.mark.parametrize("said,ask", [
+    ("Come on, you gotta play Midnight Confession again. Do it. Come on.", True),   # 2026-11-10
+    ("Run it back one more time.", True),
+    ("Restart that song. So good.", True),
+    ("Can you throw on some jazz?", True),
+    ("Yo, put on Tame Impala", True),
+    ("Play the new Kendrick album", True),
+    ("Skip this one", True),
+    ("I played tennis today.", False),
+    ("How do you play chess?", False),
+    ("This is that song for me.", False),
+])
+def test_casual_music_asks(said, ask):
+    assert bool(_MUSIC_ASK.search(said)) is ask
+
+
+@pytest.mark.parametrize("said,go", [("Come on, do it.", True), ("Do it, do it, go ahead.", True), ("go for it", True),
+                                     ("Do it later maybe", True), ("I don't know", False)])
+def test_go_ahead(said, go):
+    assert bool(_GO_AHEAD.search(said)) is go
