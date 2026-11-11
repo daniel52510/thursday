@@ -889,7 +889,6 @@
   .ag-running .open { min-height: 40px; padding: 0 20px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-weight: 500; }
   .ag-empty { align-self: stretch; text-align: left; margin: 0; color: var(--text-muted); font-size: 14.5px; }
   .ag-stop { min-height: 36px; padding: 6px 18px; border-radius: 999px; border: 1px solid var(--rule-strong); font-size: 13.5px; color: var(--text); transition: background .15s var(--ease); }
-  .ag-stop:hover:not(:disabled) { background: var(--surface); }
   .ag-stop:disabled { color: var(--text-faint); border-color: var(--rule); cursor: default; }
   .ag-stop:hover:not(:disabled) { border-color: var(--signal); color: var(--signal-text); }
   .orrery { width: 100%; max-width: 480px; height: auto; overflow: visible; }
@@ -933,6 +932,39 @@
   .ag-new button { min-height: 48px; padding: 0 22px; border-radius: 999px; background: var(--inverse-bg); color: var(--inverse-text); font-weight: 500; }
   .ag-new button:disabled { opacity: .5; cursor: default; }
   .ag-note { align-self: stretch; text-align: left; min-height: 1.4em; margin: -6px 0 0; font: 12.5px/1.5 var(--mono); color: var(--text-muted); }
+  /* Agentic, in voice mode's calm language (2026-11-10): sans, sentence case, soft borderless cards, pills. */
+  .ag-title { font: 600 26px/1.22 var(--sans); letter-spacing: -.02em; max-width: 26ch; text-wrap: balance;
+              display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .ag-status, .ag-running .sub, .ag-decision .lock, .ag-note, .ag-table td.mono { font: 400 14px/1.5 var(--sans); letter-spacing: 0; text-transform: none; }
+  .ag-status { color: var(--text-muted); }
+  .ag-running .eyebrow, .ag-decision .eyebrow, .ag-cap, .ag-h, .ag-table th { font: 600 13px/1.4 var(--sans); letter-spacing: 0; text-transform: none; }
+  .ag-h { color: var(--text); font-size: 15px; margin-top: 24px; }
+  .ag-decision .eyebrow { color: var(--signal-text); }
+  .ag-running, .ag-decision, .ag-report { border: 0; background: var(--soft); border-radius: 22px; }
+  .ag-running .g { font: 500 17px/1.4 var(--sans); }
+  .ag-summary { font: 500 17px/1.5 var(--sans); }
+  .ag-cap { color: var(--text-muted); }
+  .ag-table th { border-bottom-width: 1px; border-bottom-color: var(--rule-strong); color: var(--text-muted); }
+  .ag-new input { border: 0; background: var(--soft); }
+  .ag-new input:focus { outline: 2px solid var(--rule-strong); outline-offset: 0; }
+  .ag-say { width: 48px; min-height: 48px; padding: 0 !important; display: grid; place-items: center; flex: none;
+            background: var(--soft) !important; color: var(--text) !important; }
+  .ag-say svg { width: 20px; height: 20px; }
+  .ag-stop { border: 0; background: var(--soft); }
+  .ag-stop:hover:not(:disabled) { background: var(--soft-2); color: var(--signal-text); }
+  .ag-step { border: 0; background: var(--soft); }
+  .ag-step.failed { background: transparent; border: 1px dashed var(--rule-strong); }
+  .ag-next { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .ag-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 18px; border-radius: 999px;
+             background: var(--soft-2); color: var(--text); font: 500 14.5px var(--sans); }
+  .ag-pill.solid { background: var(--inverse-bg); color: var(--inverse-text); }
+  .ag-pill svg { width: 18px; height: 18px; }
+
+  /* voice mode: the running mission, tap to open it */
+  .v-mission { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 46vw; padding: 7px 14px 7px 12px; border-radius: 999px;
+               background: var(--soft); color: var(--text); font: 500 13px/1.2 var(--sans); }
+  .v-mission span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .v-mission[hidden] { display: none; }
   .ag-list { align-self: stretch; list-style: none; padding: 0; margin: 0; text-align: left; border-top: 1.5px solid var(--text); }
   .ag-list .row { width: 100%; display: flex; gap: 12px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--rule); text-align: left; min-height: 44px; }
   .ag-list .st { font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); width: 10ch; flex: none; }
@@ -947,6 +979,22 @@
   .ag-watch .found { display: block; margin-top: 4px; font-size: 13.5px; color: var(--text-muted); }
   .ag-watch .ag-stop { flex: none; }
   .ag-watch.off .g { color: var(--text-faint); }
+  /* the lists, in the calm style too: soft rows, sans meta, no heavy rule */
+  .ag-list { border-top: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }  /* a plain grid column grows to fit a goal on one line */
+  .ag-list .row, .ag-watch { border-bottom: 0; border-radius: 14px; padding: 12px 14px; box-sizing: border-box; }
+  .ag-list .row .g { flex: 1; min-width: 0; }  /* long goals end in "…" instead of pushing the date off the edge */
+  @media (max-width: 520px) {  /* phone: the goal gets its own line, status and date under it */
+    .ag-list .row { flex-wrap: wrap; row-gap: 2px; column-gap: 0; align-items: center; }
+    .ag-list .row .g { order: -1; flex-basis: 100%; }
+    .ag-list .st { width: auto; }
+    .ag-list .st::after { content: " ·"; }
+    .ag-list .when { margin-left: 0; padding-left: 4px; }
+  }
+  .ag-list .row:hover { background: var(--soft); }
+  .ag-watch { background: var(--soft); margin-bottom: 6px; }
+  .ag-list .st, .ag-list .when, .ag-watch small { font: 400 13px/1.45 var(--sans); letter-spacing: 0; text-transform: none; color: var(--text-muted); }
+  .ag-list .st { width: 9ch; }
+  .ag-watch .g { font-weight: 500; color: var(--text); }
   /* Changes to review (improvements.py): one card per self-improvement job, diff on demand. */
   .ag-changes { align-self: stretch; display: grid; gap: 12px; }
   .ag-changes .ag-decision { margin: 0; }
@@ -1118,9 +1166,10 @@
         <h2 class="ag-h">New mission</h2>
         <form class="ag-new" id="agForm">
           <input id="agGoal" maxlength="1000" placeholder="Find the best robot vacuum under $400 for a dog" aria-label="Mission goal" autocomplete="off">
+          <button type="button" class="ag-say" id="agSay" title="Say it in voice mode" aria-label="Say it in voice mode"><svg><use href="#i-wave"/></svg></button>
           <button type="submit" id="agLaunch">Launch</button>
         </form>
-        <p class="ag-note" id="agNote">He works on it in the background and pauses while you talk to him.</p>
+        <p class="ag-note" id="agNote">THURSDAY works on it in the background and pauses while you talk. Type it, or tap the voice button and say it.</p>
         <h2 class="ag-h" id="agChangeH" hidden>Changes to review</h2>
         <div class="ag-changes" id="agChanges"></div>
         <h2 class="ag-h" id="agWatchH" hidden>Watching</h2>
@@ -1129,16 +1178,19 @@
         <ul class="ag-list" id="agRoutines"></ul>
         <h2 class="ag-h" id="agListH" hidden>Missions</h2>
         <ul class="ag-list" id="agList"></ul>
-        <p class="ag-empty" id="agEmpty" hidden>No missions yet. Ask him to look into something, out loud or here, and it shows up below.</p>
+        <p class="ag-empty" id="agEmpty" hidden>No missions yet. Ask THURSDAY to look into something, out loud or here, and it shows up below.</p>
       </div>
 
       <div class="ag-view" id="agDetail" hidden>
         <ul class="ag-steps" id="agSteps" aria-label="Steps"></ul>
         <div class="ag-report" id="agReport" hidden>
-          <div class="ag-cap"><span>Fig. 1 · Mission report</span><span id="agCapRight"></span></div>
+          <div class="ag-cap"><span>Mission report</span><span id="agCapRight"></span></div>
           <p class="ag-summary" id="agSummary"></p>
           <div class="md" id="agResult"></div>
-          <button class="ag-linkbtn" id="agOpenChat" hidden>Continue in chat</button>
+          <div class="ag-next" id="agNext" hidden>
+            <button class="ag-pill solid" id="agTalk"><svg><use href="#i-wave"/></svg>Talk it through</button>
+            <button class="ag-pill" id="agOpenChat">Continue in chat</button>
+          </div>
         </div>
       <details class="ag-details" id="agDetails">
         <summary>Details and activity</summary>
@@ -1181,6 +1233,7 @@
   <div class="top">
     <div class="brand"><svg class="mark"><use href="#mark"/></svg><span class="wordmark">THURSDAY</span></div>
     <button class="np-mini" id="npMini" hidden aria-label="Play or pause the music"><img alt="" id="npMiniArt" referrerpolicy="no-referrer"><span id="npMiniTitle"></span><svg><use href="#i-pause" id="npMiniIcon"/></svg></button>
+    <button class="v-mission" id="voiceMission" hidden><span class="live-dot" aria-hidden="true"></span><span id="voiceMissionText"></span></button>
     <div class="readouts">
       <span id="voiceConn"></span><span id="voiceLoc" hidden></span><span id="voiceTurn" hidden></span>
       <button class="ghost" id="voiceKeys" title="Type instead" aria-label="Type instead"><svg><use href="#i-keyboard"/></svg></button>
@@ -3743,7 +3796,7 @@ async function openVoice() {
   V.open = true; V.cue = true; V.interrupting = false;
   $("voice").classList.add("open"); $("voice").setAttribute("aria-hidden", "false");
   vFig.dataset.state = "standby"; vState.textContent = "Connecting"; resetCaption(); vHeard.textContent = "";
-  V.turns = 0; showTurn(); syncTalk();
+  V.turns = 0; showTurn(); syncTalk(); voiceMissions();
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     // Phones only allow the microphone on https:// (or localhost).
     figError("Voice needs a secure connection", "Open THURSDAY over https:// to use the microphone on this device. Text chat works as is.");
@@ -3919,8 +3972,27 @@ function browserLabel() {
 // A reload or close he does himself fires pagehide; a page the browser kills doesn't. Only the second is reported.
 addEventListener("pagehide", () => { try { localStorage.removeItem(VOICE_CRUMB); } catch {} });
 
+// A running mission, as a chip in voice mode's top bar ("Mission · step 3 of 25"); tap it to open that mission.
+let voiceMissionTimer = 0;
+async function voiceMissions() {
+  clearTimeout(voiceMissionTimer);
+  if (!V.open || ME?.id !== "owner") { $("voiceMission").hidden = true; return; }
+  try {
+    const res = await api("/api/missions");
+    const live = res.ok ? (await res.json()).find((m) => m.status === "running") : null;
+    $("voiceMission").hidden = !live;
+    if (live) {
+      $("voiceMissionText").textContent = `Mission · step ${live.steps.length || 1} of ${AG_MAX_STEPS}`;
+      $("voiceMission").title = live.goal;
+      $("voiceMission").onclick = () => { closeVoice(); openAgentic(); openMission(live.id); };
+    }
+  } catch {}
+  voiceMissionTimer = setTimeout(voiceMissions, 6000);
+}
+
 function closeVoice() {
   V.open = false;
+  clearTimeout(voiceMissionTimer); $("voiceMission").hidden = true;
   voiceCrumb();
   $("voice").classList.remove("open"); $("voice").setAttribute("aria-hidden", "true");
   stopThinking();
@@ -4603,10 +4675,11 @@ function renderDetail(m) {
   const done = m.status === "done";
   $("agReport").hidden = !done;
   if (done) {
-    $("agSummary").textContent = m.summary || "";
+    // The summary is written to be spoken: Rocky's grammar reads as English here.
+    $("agSummary").textContent = (m.summary || "").replace(/,\s*question\?/gi, "?").replace(/,\s*exclamation!/gi, "!");
     renderMd($("agResult"), m.result || "");
     $("agCapRight").textContent = `${m.steps.length} steps · ${elapsed(m)}`;
-    $("agOpenChat").hidden = !m.conversation_id;
+    $("agNext").hidden = !m.conversation_id;
   }
   const body = $("agActivity").tBodies[0]; body.replaceChildren();
   for (const s of m.steps)
@@ -4665,7 +4738,7 @@ function renderWatches() {
   const when = (iso) => new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   for (const w of AG.watches) {
     const on = w.status === "active";
-    const meta = [`${on ? "Active" : w.status} · every ${w.every_hours} h`, `${w.runs} check${w.runs === 1 ? "" : "s"}`,
+    const meta = [`${on ? "Active" : w.status[0].toUpperCase() + w.status.slice(1)} · every ${w.every_hours} h`, `${w.runs} check${w.runs === 1 ? "" : "s"}`,
                   on ? `next ${when(w.next_run_at)}` : ""].filter(Boolean).join(" · ");
     const info = el("div", { className: "w" }, el("span", { className: "g", textContent: w.what }),
       el("small", { textContent: `Tell you when: ${w.notify_when}` }), el("small", { textContent: meta }));
@@ -4684,7 +4757,14 @@ function renderWatches() {
 // Going live and pushing stay his, by hand: the card says how.
 function renderChanges() {
   const box = $("agChanges"); box.replaceChildren();
-  const jobs = (AG.changes || []).filter((j) => j.status === "ready" || j.decision).slice(0, 6);
+  // Only what still needs him: waiting for a decision, or approved in the last 3 days (Deploy lives on the card).
+  // Declined and older ones stay in the runner's history, not here (they piled up as "Changes to review").
+  const ageDays = (job) => {
+    const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/.exec(job || "");
+    return m ? (Date.now() - new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5])) / 864e5 : 0;
+  };
+  const jobs = (AG.changes || []).filter((j) => (j.status === "ready" && !j.decision)
+    || (j.decision === "approved" && ageDays(j.job) < 3)).slice(0, 6);
   $("agChangeH").hidden = !jobs.length;
   for (const j of jobs) {
     const waiting = j.status === "ready" && !j.decision;
@@ -4809,6 +4889,22 @@ $("agOpenChat").onclick = () => {
   const m = AG.missions.find((x) => x.id === AG.sel);
   if (m?.conversation_id) { loadConversations(); openConversation(m.conversation_id); }
 };
+// Voice and missions, joined up: say a mission instead of typing it, or talk a finished report through in its own
+// conversation (voice mode picks up where the report left off). Voice mode shows a running mission as a chip.
+$("agSay").onclick = () => { newChat(); openVoice(); };
+$("agTalk").onclick = () => {
+  const m = AG.missions.find((x) => x.id === AG.sel);
+  if (!m?.conversation_id) return;
+  loadConversations(); openConversation(m.conversation_id);  // sets it at once; after voice mode you're in its chat
+  openVoice();
+};
+// Notes ("Stopped…", "Mission accepted…") fade back to the hint instead of staying forever.
+const AG_HINT = $("agNote").textContent;
+let agNoteTimer = 0;
+new MutationObserver(() => {
+  clearTimeout(agNoteTimer);
+  if ($("agNote").textContent !== AG_HINT) agNoteTimer = setTimeout(() => { $("agNote").textContent = AG_HINT; }, 9000);
+}).observe($("agNote"), { childList: true, characterData: true, subtree: true });
 </script>
 </body>
 </html>
