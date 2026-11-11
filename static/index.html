@@ -421,7 +421,7 @@
   #voice .ghost svg { width: 20px; height: 20px; }
   #voice .np-mini { min-width: 0; flex: 0 1 auto; }
   .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 0; gap: 0; }
-  .vfig { width: min(300px, 64vw, 38vh); aspect-ratio: 1; padding: 0; border: 0; background: none; border-radius: 50%; cursor: pointer;
+  .vfig { width: min(460px, 92vw, 62vh); aspect-ratio: 1.6; padding: 0; border: 0; background: none; border-radius: 40%; cursor: pointer;
           -webkit-tap-highlight-color: transparent; flex: none; }
   .vfig canvas { width: 100%; height: 100%; display: block; }
   #voiceState { margin-top: 22px; min-height: 1.5em; text-align: center; font: 500 15px/1.5 var(--sans); color: var(--text-muted);
@@ -3194,11 +3194,20 @@ function bandMeter(ctx, node) {
 
 
 const calm = matchMedia("(prefers-reduced-motion: reduce)");
-// The orb (ChatGPT / Sesame style): a sphere of THURSDAY's colours, drawn on a canvas each frame. Four soft blobs
-// drift inside it; their speed follows the state (a slow breath on standby, a swirl while thinking) and their size
-// follows the live sound by band (his voice while listening, THURSDAY's while speaking). Grey when muted or broken.
-// Plain 2D gradients: no CSS blur or filters, which cost Safari GPU memory.
-const orb = { cv: $("vorb"), ctx: null, px: 0, dpr: 1, phase: 0, lvl: 0, last: 0, colors: null, colorsAt: 0 };
+// The orb: THURSDAY's Jupiter, alive (ChatGPT / Sesame style), drawn on a canvas each frame in the logo's own
+// geometry: the cloud bands, the spot, the ring tilted -20 degrees and its moon. Soft clouds swirl under the bands;
+// the bands ripple (gently on standby, with his voice while listening, in waves with THURSDAY's while speaking); the
+// spot drifts as the planet turns; the moon orbits while thinking or speaking and rests where the logo has it
+// otherwise; a glow behind swells with the sound. Grey when muted or broken. Plain 2D canvas: no CSS blur or
+// filters, which cost Safari GPU memory.
+const orb = { cv: $("vorb"), ctx: null, w: 0, h: 0, phase: 0, swirl: 0, spin: 0, moon: 0, lvl: 0, last: 0,
+              colors: null, colorsAt: 0 };
+// The logo in planet radii (the mark's SVG: planet r 46; orbit 87.8 x 29.3 at -20 degrees; five bands, the spot, a moon).
+const MARK = {
+  bands: [[-0.652, 0.152, "deep"], [-0.348, 0.087, "coral"], [-0.043, 0.196, "deep"], [0.304, 0.087, "coral"], [0.543, 0.13, "deep"]],
+  spot: [0.435, 0.239, 0.217, 0.13], orbit: [1.909, 0.637], tilt: -20 * Math.PI / 180, moonR: 0.174, ring: 0.065, knock: 0.24,
+  moonRest: 0,  // the logo's moon (460.5, 80) is the orbit's right tip, angle 0 once the -20 degree tilt is undone
+};
 function orbHex(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return /^#[0-9a-f]{6}$/i.test(v) ? v : fallback;
@@ -3208,61 +3217,99 @@ function rgba(hex, a) {
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a.toFixed(3)})`;
 }
 function sizeOrb() {
-  const r = orb.cv.getBoundingClientRect();
-  orb.dpr = Math.min(2, window.devicePixelRatio || 1);
-  orb.px = Math.round(r.width * orb.dpr);
-  if (orb.px && (orb.cv.width !== orb.px || orb.cv.height !== orb.px)) { orb.cv.width = orb.cv.height = orb.px; }  // a canvas starts 300x150
-  orb.ctx = orb.cv.getContext("2d");
+  const r = orb.cv.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+  if (w && h && (orb.cv.width !== w || orb.cv.height !== h)) { orb.cv.width = w; orb.cv.height = h; }  // a canvas starts 300x150
+  orb.w = w; orb.h = h; orb.ctx = orb.cv.getContext("2d");
 }
 new ResizeObserver(sizeOrb).observe(orb.cv);
 function drawOrb(bands, t) {
-  if (!orb.ctx || !orb.px) sizeOrb();
-  const ctx = orb.ctx, S = orb.px, c = S / 2;
-  if (!ctx || !S) return;
+  if (!orb.ctx || !orb.w) sizeOrb();
+  const ctx = orb.ctx, W = orb.w, H = orb.h;
+  if (!ctx || !W || !H) return;
   if (!orb.colors || t - orb.colorsAt > 2) {  // theme or night mode may have changed
     orb.colorsAt = t;
     orb.colors = { red: orbHex("--signal", "#E03C31"), deep: orbHex("--band", "#B8301F"), coral: orbHex("--band-light", "#EE6A50"),
-                   amber: orbHex("--stripe-amber", "#E9A62A"), orange: orbHex("--stripe-orange", "#F07A2B"),
-                   blue: orbHex("--stripe-blue", "#2D6BD6") };
+                   spot: orbHex("--spot", "#8F2416"), amber: orbHex("--stripe-amber", "#E9A62A"),
+                   orange: orbHex("--stripe-orange", "#F07A2B"), ink: orbHex("--text", "#12110E"), bg: orbHex("--bg", "#F3F0E8") };
   }
-  const st = vFig.dataset.state, grey = V.muted || st === "error";
-  const C = grey ? { red: "#8C877C", deep: "#6F6A60", coral: "#A8A396", amber: "#BDB8AC", orange: "#9C978C", blue: "#77736A" } : orb.colors;
+  const st = vFig.dataset.state, grey = V.muted || st === "error", still = calm.matches;
+  const C = grey ? { ...orb.colors, red: "#8C877C", deep: "#6F6A60", coral: "#A8A396", spot: "#5E5A52", amber: "#BDB8AC", orange: "#9C978C" }
+                 : orb.colors;
   const dt = Math.min(0.05, t - (orb.last || t)); orb.last = t;
   const loud = (bands[0] + bands[1] + bands[2] + bands[3] + bands[4]) / 5;
   const target = Math.min(1, loud * (st === "speaking" ? 2.2 : st === "listening" ? 1.8 : 0));
   orb.lvl += (target - orb.lvl) * (target > orb.lvl ? 0.35 : 0.07);
   const L = orb.lvl;
-  const speed = calm.matches ? 0 : st === "thinking" ? 1.6 : st === "speaking" ? 0.45 + L * 1.6 : st === "listening" ? 0.3 + L * 0.8 : 0.16;
-  orb.phase += dt * speed;
-  const breath = calm.matches ? 0 : st === "standby" || st === "thinking" ? Math.sin(t * (st === "thinking" ? 2.6 : 1.1)) : 0;
-  const R = c * (0.74 + 0.03 * breath + (st === "speaking" ? 0.16 : 0.1) * L);
-  ctx.clearRect(0, 0, S, S);
-  // the glow around it, brighter with the sound
-  let g = ctx.createRadialGradient(c, c, R * 0.7, c, c, c);
-  g.addColorStop(0, rgba(C.red, grey ? 0.08 : 0.16 + 0.3 * L)); g.addColorStop(1, rgba(C.red, 0));
-  ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
+  if (!still) {
+    orb.phase += dt * (st === "thinking" ? 2.4 : st === "speaking" ? 1.2 + L * 3 : st === "listening" ? 0.8 + L * 2 : 0.5);  // band ripples
+    orb.swirl += dt * (st === "thinking" ? 1.4 : st === "speaking" ? 0.4 + L * 1.4 : st === "listening" ? 0.3 + L * 0.8 : 0.15);  // clouds
+    orb.spin += dt * (st === "thinking" ? 0.09 : 0.035);  // the planet turns: the spot drifts across
+    if (st === "thinking" || st === "speaking") orb.moon += dt * (st === "thinking" ? 2.1 : 1.2);
+    else {  // back to where the logo has it, the short way round
+      const d = ((MARK.moonRest - orb.moon + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+      orb.moon += d * Math.min(1, dt * 3);
+    }
+  } else orb.moon = MARK.moonRest;
+  const breath = still ? 0 : st === "standby" ? Math.sin(t * 1.1) : st === "thinking" ? Math.sin(t * 2.6) : 0;
+  // ring tip + moon reach 1.97 R from the centre; this leaves room for the swell with the voice
+  const R = Math.min(W / 4.6, H / 2.6) * (1 + 0.025 * breath + (st === "speaking" ? 0.1 : 0.06) * L);
+  const cx = W / 2, cy = H / 2, [oa, ob] = MARK.orbit, cos = Math.cos(MARK.tilt), sin = Math.sin(MARK.tilt);
+  ctx.clearRect(0, 0, W, H);
+  // the glow behind, brighter with the sound
+  let g = ctx.createRadialGradient(cx, cy, R * 0.8, cx, cy, Math.min(R * 1.9, H / 2));  // fades out inside the canvas
+  g.addColorStop(0, rgba(C.red, grey ? 0.06 : 0.12 + 0.32 * L)); g.addColorStop(1, rgba(C.red, 0));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const ring = (from, to) => { ctx.beginPath(); ctx.ellipse(cx, cy, oa * R, ob * R, MARK.tilt, from, to); };
+  const moon = () => {
+    const x = Math.cos(orb.moon) * oa * R, y = Math.sin(orb.moon) * ob * R;
+    ctx.beginPath(); ctx.arc(cx + x * cos - y * sin, cy + x * sin + y * cos, MARK.moonR * R, 0, Math.PI * 2);
+    ctx.fillStyle = C.ink; ctx.fill();
+  };
+  const moonBehind = Math.sin(orb.moon) < 0;
+  ctx.lineCap = "round";
+  ctx.strokeStyle = C.ink; ctx.lineWidth = MARK.ring * R; ring(Math.PI, 2 * Math.PI); ctx.stroke();  // the ring's far side
+  if (moonBehind) moon();
+  // the planet
   ctx.save();
-  ctx.beginPath(); ctx.arc(c, c, R, 0, Math.PI * 2); ctx.clip();
-  g = ctx.createRadialGradient(c - R * 0.3, c - R * 0.35, R * 0.1, c, c, R);
-  g.addColorStop(0, C.coral); g.addColorStop(0.55, C.red); g.addColorStop(1, C.deep);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
-  const blobs = [[C.amber, 0, 0.62], [C.orange, 1.9, 0.55], [C.coral, 3.7, 0.5], [C.blue, 5.1, 0.42]];
-  blobs.forEach(([col, off, a], k) => {
-    const ang = orb.phase * (1 + k * 0.27) + off;
-    const rad = R * (0.32 + 0.14 * Math.sin(orb.phase * 0.7 + k * 1.3));
-    const bx = c + Math.cos(ang) * rad, by = c + Math.sin(ang * 1.21) * rad * 0.85;
-    const br = R * (0.48 + 0.22 * (bands[Math.min(4, k + 1)] || 0) + 0.12 * L);
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = C.red; ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
+  [[C.amber, 0, 0.45], [C.orange, 2.1, 0.4], [C.coral, 4.2, 0.4]].forEach(([col, off, a], k) => {  // clouds swirling underneath
+    const ang = orb.swirl * (1 + k * 0.27) + off, rad = R * (0.3 + 0.14 * Math.sin(orb.swirl * 0.7 + k * 1.3));
+    const bx = cx + Math.cos(ang) * rad, by = cy + Math.sin(ang * 1.21) * rad * 0.7;
+    const br = R * (0.5 + 0.22 * (bands[k + 1] || 0) + 0.12 * L);
     const bg = ctx.createRadialGradient(bx, by, 0, bx, by, br);
-    bg.addColorStop(0, rgba(col, k === 3 ? a * 0.45 : a)); bg.addColorStop(1, rgba(col, 0));
-    ctx.fillStyle = bg; ctx.fillRect(0, 0, S, S);
+    bg.addColorStop(0, rgba(col, a)); bg.addColorStop(1, rgba(col, 0));
+    ctx.fillStyle = bg; ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
   });
-  g = ctx.createRadialGradient(c - R * 0.38, c - R * 0.42, 0, c - R * 0.38, c - R * 0.42, R * 0.75);  // light from above
-  g.addColorStop(0, "rgba(255,255,255,.34)"); g.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
-  g = ctx.createRadialGradient(c + R * 0.35, c + R * 0.5, 0, c + R * 0.35, c + R * 0.5, R * 0.9);  // and a soft shade below
-  g.addColorStop(0, "rgba(0,0,0,.2)"); g.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
+  MARK.bands.forEach(([y0, hgt, col], k) => {  // the cloud bands, rippling
+    const amp = R * (0.012 + (still ? 0 : 0.05 * L * (0.5 + (bands[k] || 0)) + (st === "thinking" ? 0.012 : 0)));
+    const kx = (2.2 + k * 0.7) / R, ph = orb.phase * (1 + k * 0.23) + k * 1.9;
+    ctx.beginPath();
+    for (let x = -R; x <= R + 0.1; x += R / 24) {
+      const y = cy + y0 * R + amp * Math.sin(x * kx + ph);
+      x === -R ? ctx.moveTo(cx + x, y) : ctx.lineTo(cx + x, y);
+    }
+    for (let x = R; x >= -R - 0.1; x -= R / 24) ctx.lineTo(cx + x, cy + (y0 + hgt) * R + amp * Math.sin(x * kx + ph + 0.6));
+    ctx.closePath(); ctx.fillStyle = rgba(C[col], 0.88); ctx.fill();
+  });
+  const [sx, sy, srx, sry] = MARK.spot, drift = ((sx + orb.spin + 1.3) % 2.6) - 1.3;  // wraps round the far side
+  ctx.beginPath(); ctx.ellipse(cx + drift * R, cy + sy * R, srx * R * (1 - 0.5 * Math.abs(drift) ** 3), sry * R, 0, 0, Math.PI * 2);
+  ctx.fillStyle = C.spot; ctx.fill();
+  g = ctx.createRadialGradient(cx - R * 0.4, cy - R * 0.45, 0, cx - R * 0.4, cy - R * 0.45, R * 0.95);  // light from above
+  g.addColorStop(0, "rgba(255,255,255,.24)"); g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g; ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
+  g = ctx.createRadialGradient(cx + R * 0.3, cy + R * 0.45, R * 0.2, cx + R * 0.3, cy + R * 0.45, R * 1.1);  // shade below
+  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,.24)");
+  ctx.fillStyle = g; ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
   ctx.restore();
+  // the ring's near side, cut out of the planet like the logo's
+  ctx.save();  // the cut-out only where the ring crosses the planet, so it never nicks the ring's far side
+  ctx.beginPath(); ctx.arc(cx, cy, R * 1.02, 0, Math.PI * 2); ctx.clip();
+  ctx.strokeStyle = C.bg; ctx.lineWidth = MARK.knock * R; ring(0, Math.PI); ctx.stroke();
+  ctx.restore();
+  ctx.strokeStyle = C.ink; ctx.lineWidth = MARK.ring * R; ring(0, Math.PI); ctx.stroke();
+  if (!moonBehind) moon();
 }
 
 function animateOrb() {
