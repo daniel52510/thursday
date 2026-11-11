@@ -54,7 +54,8 @@ BC_TAIL_MS = 60   # trailing silence kept: the server stops listening while a cl
 
 
 def _speak(text: str, voice: str = "leo") -> bytes:
-    body = {"text": text} if voice == "leo" else {"text": text, "voice": voice}
+    tts_voice = os.getenv("TARA_TTS_VOICE", "cara") if voice == "tara" else voice  # her persona's voice (voice_ws)
+    body = {"text": text} if voice == "leo" else {"text": text, "voice": tts_voice}
     req = urllib.request.Request(f"{TTS_URL}/speak/file", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as res:

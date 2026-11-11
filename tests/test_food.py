@@ -16,6 +16,10 @@ def journal(monkeypatch, tmp_path):
     monkeypatch.setattr(trainer, "profile", lambda: {"weight_lb": 300.0, "height": "6 ft 5 in", "age": "27"})
     monkeypatch.setattr(food, "_day_kind", lambda day: "cardio")
     monkeypatch.setattr(food, "_active_kcal", lambda: None)
+    # The planned day stands whatever the clock says: after 7 pm with nothing logged, coach.effective_kind turns it
+    # into a rest day (-150 kcal), and these tests failed every evening (found 2026-11-10, 7:46 pm).
+    import coach
+    monkeypatch.setattr(coach, "SKIP_AFTER_HOUR", 24)
     TURN.set({"user": "owner", "conversation": "c", "turn": 1, "user_said": "x"})
 
 

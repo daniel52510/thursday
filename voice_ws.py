@@ -707,7 +707,8 @@ FILLER_DIR = os.path.join(os.getenv("THURSDAY_BRAIN_DIR", "./brain"), "fillers")
 
 def _filler_path(voice: str, line: str) -> str:
     import hashlib
-    return os.path.join(FILLER_DIR, voice, hashlib.sha1(line.encode()).hexdigest()[:16] + ".wav")
+    spoken_by = TARA_TTS_VOICE if voice == "tara" else voice  # cached per actual voice: a switch re-renders them
+    return os.path.join(FILLER_DIR, spoken_by, hashlib.sha1(line.encode()).hexdigest()[:16] + ".wav")
 
 
 async def _render_fillers() -> None:
@@ -800,9 +801,14 @@ def _speakable(text: str) -> str:
     return speech_text.say(_TIME.sub(_say_time, text))  # units, money, dates said the way a person would
 
 
+# The voice her persona speaks with on the voice server. Since 2026-11-10 "cara", the conversational fine-tune
+# (~/thursday-voice DEVLOG S3; it won Daniel's blind A/B); "tara" is the stock Orpheus voice to roll back to.
+TARA_TTS_VOICE = os.getenv("TARA_TTS_VOICE", "cara")
+
+
 def _tts_body(text: str, style: dict | None) -> dict:
-    """The TTS request: Tara's voice when she's picked (mind.voice_style), else the server's default (Rocky's leo)."""
-    return {"text": text, "voice": "tara"} if (style or {}).get("voice") == "tara" else {"text": text}
+    """The TTS request: her voice when she's picked (mind.voice_style), else the server's default (Rocky's leo)."""
+    return {"text": text, "voice": TARA_TTS_VOICE} if (style or {}).get("voice") == "tara" else {"text": text}
 
 
 async def _tts(http: httpx.AsyncClient, text: str, style: dict | None = None) -> bytes | None:
